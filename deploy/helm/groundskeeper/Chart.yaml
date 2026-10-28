@@ -1,0 +1,17 @@
+apiVersion: v2
+name: groundskeeper
+description: A self-hosted recorder, map and guarded control panel for Yarbo robots.
+type: application
+# Chart version — bump on chart changes, independent of the app.
+version: 0.1.0
+# The Groundskeeper release this chart defaults to. Override with image.tag.
+appVersion: "0.19.2"
+home: https://github.com/Groundskeeper-robot/groundskeeper
+sources:
+  - https://github.com/Groundskeeper-robot/groundskeeper
+keywords:
+  - yarbo
+  - robot
+  - mower
+  - recorder
+  - home-automation
