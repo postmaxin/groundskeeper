@@ -482,3 +482,12 @@ def test_the_writer_asks_the_plan_state_again_before_it_sends(tmp_path, monkeypa
     assert o.write_hold("save_nogozone") is None
     o.rec.run_id = 7
     assert "running" in o.write_hold("save_nogozone")
+
+
+def test_a_saved_serial_reaches_the_cloud_client_with_no_robot_address(tmp_path, monkeypatch):
+    """Cloud-only: no local broker address, so apply_robot must still hand the configured serial to Ops."""
+    o = _ops(tmp_path, monkeypatch)
+    o.cfg.set("robot", {"sn": "YB0000DEMO0001"})
+    assert not o.cfg.yarbo_host and o.cloud.sn is None
+    run(o.rec.apply_robot())
+    assert o.rec.sn == "YB0000DEMO0001" and o.cloud.sn == "YB0000DEMO0001"

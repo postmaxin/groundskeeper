@@ -18,6 +18,11 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
   or email domains get in, and the panel refuses to start with single sign-on on and neither set. `PANEL_PASSWORD=off`
   turns the password off once it works. See Help → Settings → Signing in.
 
+### Fixed
+
+- **Cloud-only: a serial saved in Settings → Robot reaches the cloud connection at once** (#15). With no robot address
+  set, the card kept saying "waiting for the robot's serial" until the panel restarted.
+
 ## 0.19.6 — 2026-11-09
 
 ### Added
