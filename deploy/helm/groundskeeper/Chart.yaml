@@ -5,7 +5,7 @@ type: application
 # Chart version — bump on chart changes, independent of the app.
 version: 0.1.0
 # The Groundskeeper release this chart defaults to. Override with image.tag.
-appVersion: "0.19.2"
+appVersion: "0.19.6"
 home: https://github.com/Groundskeeper-robot/groundskeeper
 sources:
   - https://github.com/Groundskeeper-robot/groundskeeper
