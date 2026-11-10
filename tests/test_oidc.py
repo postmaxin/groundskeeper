@@ -299,7 +299,8 @@ def test_a_token_signed_by_a_key_the_provider_does_not_publish_is_refused(panel)
 
 def test_the_provider_s_own_refusal_is_shown_on_the_sign_in_page(panel):
     p = panel()
-    r = sign_in(p, tamper=lambda b: {"error": "access_denied", "error_description": "You said no.", "state": b["state"]})
+    said_no = {"error": "access_denied", "error_description": "You said no."}
+    r = sign_in(p, tamper=lambda b: {**said_no, "state": b["state"]})
     assert refused(r) == "the sign-in provider said: You said no." and not signed_in(p)
 
 
@@ -351,7 +352,8 @@ def test_with_the_password_off_there_is_no_setup_code_and_no_password_sign_in(pa
     p.auth.set_password("correct horse")                          # set before it was turned off
     assert p.c.post("/api/auth/login", json={"password": "correct horse"}).status_code == 403
     sign_in(p)
-    assert p.c.post("/api/auth/password", json={"current": "correct horse", "password": "battery staple"}).status_code == 403
+    change = {"current": "correct horse", "password": "battery staple"}
+    assert p.c.post("/api/auth/password", json=change).status_code == 403
 
 
 def test_the_sign_in_page_learns_what_to_show(panel):
