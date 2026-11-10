@@ -1,5 +1,6 @@
 /* The sign-in page: the password, or on first run the setup code from the panel's log plus a new password
-   (app/auth.py). On success it goes back to where the user was headed. */
+   (app/auth.py), and "Sign in with <provider>" when OIDC is set up (app/oidc.py). On success it goes back to where
+   the user was headed. */
 "use strict";
 (async function () {
   const $ = (s) => document.querySelector(s);
@@ -17,6 +18,17 @@
   let st;
   try { st = await (await fetch("/api/auth/status", { cache: "no-store" })).json(); } catch { err("The panel is not answering."); return; }
   if (st.disabled || st.signed_in) return next();
+  const params = new URLSearchParams(location.search);
+  err(params.get("error"));                       // a refused OIDC sign-in comes back here with the reason
+  if (st.oidc) {
+    const go = "/api/auth/oidc/start?" + new URLSearchParams({ next: params.get("next") || "/" });
+    const btn = $("#oidc");
+    btn.textContent = `Sign in with ${st.oidc.name}`;
+    btn.href = go;
+    btn.hidden = false;
+    if (st.oidc.auto_login && !params.has("error")) return location.assign(go);
+  }
+  if (st.password === false) return;               // PANEL_PASSWORD=off: the provider is the only way in
   const form = st.password_set ? $("#login") : $("#setup");
   form.hidden = false;
   form.querySelector("input").focus();

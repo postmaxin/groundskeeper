@@ -16,6 +16,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import Body, FastAPI, HTTPException, Request
@@ -24,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import areasettings
 from . import auth as auth_mod
+from . import oidc as oidc_mod
 from . import backups as backups_mod
 from . import corrections
 from . import robotscan
@@ -77,6 +79,8 @@ def stamp(html: str) -> str:
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     env = config.load()
+    # Before anything starts: OIDC settings that would let anyone in, or nobody, stop the panel here (app/oidc.py).
+    oidc_settings = oidc_mod.load(env.panel_url, auth_mod.password_enabled(), auth_mod.disabled())
     store = Store(env.data_dir)
     if env.demo:                                 # DEMO=1: a made-up yard and its history (app/demo.py), once
         from . import demo
@@ -92,6 +96,7 @@ async def lifespan(app: FastAPI):
     app.state.elevation = Elevation(env.data_dir)
     app.state.auth = auth_mod.Auth(store)
     app.state.auth.announce()
+    app.state.oidc = oidc_mod.OIDC(oidc_settings, app.state.auth._key) if oidc_settings else None
     task = asyncio.create_task(recorder.run(), name="recorder")
     ops_task = asyncio.create_task(ops.start(), name="ops")
     upkeep_task = asyncio.create_task(imagery_upkeep(app), name="imagery-upkeep")
@@ -107,6 +112,8 @@ async def lifespan(app: FastAPI):
             recorder.transport.stop()
         await imagery.close()
         await recorder.ha.close()
+        if app.state.oidc:
+            await app.state.oidc.close()
 
 
 app = FastAPI(title="Groundskeeper", lifespan=lifespan, docs_url="/api/docs", redoc_url=None,
@@ -167,12 +174,23 @@ def _auth(request: Request) -> "auth_mod.Auth":
     return request.app.state.auth
 
 
-def _with_session(body: dict, request: Request, token: str) -> JSONResponse:
-    resp = JSONResponse(body)
+def _secure(request: Request) -> bool:
+    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+
+
+def _set_session(resp, request: Request, token: str):
     resp.set_cookie(auth_mod.COOKIE, token, max_age=auth_mod.SESSION_DAYS * 86400, httponly=True, samesite="lax",
-                    secure=request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https",
-                    path="/")
+                    secure=_secure(request), path="/")
     return resp
+
+
+def _with_session(body: dict, request: Request, token: str) -> JSONResponse:
+    return _set_session(JSONResponse(body), request, token)
+
+
+def _password_on() -> None:
+    if not auth_mod.password_enabled():
+        raise HTTPException(403, "password sign-in is off on this panel")
 
 
 def _addr(request: Request) -> str:
@@ -182,14 +200,17 @@ def _addr(request: Request) -> str:
 @app.get("/api/auth/status")
 async def auth_status(request: Request):
     a = _auth(request)
+    o = getattr(request.app.state, "oidc", None)
     return {"disabled": auth_mod.disabled(), "password_set": a.has_password(),
             "signed_in": auth_mod.disabled() or a.session_ok(request.cookies.get(auth_mod.COOKIE)),
-            "min_password": auth_mod.MIN_PASSWORD}
+            "min_password": auth_mod.MIN_PASSWORD, "password": auth_mod.password_enabled(),
+            "oidc": {"name": o.settings.name, "auto_login": o.settings.auto_login} if o else None}
 
 
 @app.post("/api/auth/setup")
 async def auth_setup(request: Request, body: dict = Body(...)):
     """First run: the setup code from the panel's log and a new password."""
+    _password_on()
     a, addr = _auth(request), _addr(request)
     if (wait := a.locked_for(addr)) > 0:
         raise HTTPException(429, f"too many tries; wait {int(wait) + 1} s")
@@ -206,6 +227,7 @@ async def auth_setup(request: Request, body: dict = Body(...)):
 
 @app.post("/api/auth/login")
 async def auth_login(request: Request, body: dict = Body(...)):
+    _password_on()
     a, addr = _auth(request), _addr(request)
     if (wait := a.locked_for(addr)) > 0:
         raise HTTPException(429, f"too many tries; wait {int(wait) + 1} s")
@@ -215,6 +237,49 @@ async def auth_login(request: Request, body: dict = Body(...)):
         raise HTTPException(403, "wrong password")
     a.succeeded(addr)
     return _with_session({"ok": True}, request, a.new_session(request.headers.get("user-agent", "")))
+
+
+def _back_to_sign_in(message: str) -> RedirectResponse:
+    resp = RedirectResponse("/login.html?" + urlencode({"error": message[:200]}), status_code=303)
+    resp.delete_cookie(oidc_mod.COOKIE, path=oidc_mod.COOKIE_PATH)
+    return resp
+
+
+@app.get("/api/auth/oidc/start")
+async def auth_oidc_start(request: Request, next: str = "/"):
+    """Off to the OIDC provider (app/oidc.py), with the flow's state, nonce and PKCE verifier in a signed cookie."""
+    o = getattr(request.app.state, "oidc", None)
+    if o is None:
+        raise HTTPException(404, "OIDC sign-in is not set up on this panel")
+    try:
+        url, flow = await o.begin(next)
+    except oidc_mod.OIDCError as exc:
+        return _back_to_sign_in(str(exc))
+    resp = RedirectResponse(url, status_code=303)
+    resp.set_cookie(oidc_mod.COOKIE, flow, max_age=oidc_mod.FLOW_S, httponly=True, samesite="lax",
+                    secure=_secure(request), path=oidc_mod.COOKIE_PATH)
+    return resp
+
+
+@app.get("/api/auth/oidc/callback")
+async def auth_oidc_callback(request: Request):
+    """Back from the provider: check everything it sent, then the same session the password gives."""
+    o = getattr(request.app.state, "oidc", None)
+    if o is None:
+        raise HTTPException(404, "OIDC sign-in is not set up on this panel")
+    a = _auth(request)
+    try:
+        who = await o.finish(dict(request.query_params), request.cookies.get(oidc_mod.COOKIE))
+    except oidc_mod.OIDCError as exc:
+        log.warning("OIDC sign-in refused: %s", exc)
+        if isinstance(exc, oidc_mod.NotAllowed):   # someone the provider vouched for; stray callbacks only reach the log
+            a.store.event("auth", f"{exc.user} signed in with {o.settings.name} but is not allowed to use this panel")
+        return _back_to_sign_in(str(exc))
+    token = a.new_session(request.headers.get("user-agent", ""), user=who["user"])
+    a.store.event("auth", f"{who['user']} signed in with {o.settings.name}")
+    resp = _set_session(RedirectResponse(who["next"], status_code=303), request, token)
+    resp.delete_cookie(oidc_mod.COOKIE, path=oidc_mod.COOKIE_PATH)
+    return resp
 
 
 @app.post("/api/auth/logout")
@@ -230,13 +295,14 @@ def _person(request: Request) -> None:
     if auth_mod.disabled():
         return
     if not _auth(request).session_ok(request.cookies.get(auth_mod.COOKIE)):
-        raise HTTPException(403, "sign in with the password to change this")
+        raise HTTPException(403, "sign in to change this")
 
 
 @app.post("/api/auth/password")
 async def auth_password(request: Request, body: dict = Body(...)):
     """Change the password (needs the current one). Every other session is signed out."""
     _person(request)
+    _password_on()
     a, addr = _auth(request), _addr(request)
     if (wait := a.locked_for(addr)) > 0:
         raise HTTPException(429, f"too many tries; wait {int(wait) + 1} s")

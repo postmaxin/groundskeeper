@@ -54,6 +54,33 @@ someone else on your network cannot claim the panel before you do. Sessions last
   whether it is busy mowing.
 - **Proxy that signs people in itself?** `PANEL_AUTH=off` turns the panel's own sign-in off. Never
   do this when anyone else on the network can reach the panel: it would let them start the robot.
+  If the proxy is there for single sign-on, use the panel's own OpenID Connect sign-in instead (below).
+
+### Single sign-on (OpenID Connect)
+
+The panel can let people sign in through an OpenID Connect provider you already run, such as Authentik, Keycloak
+or Authelia, or a hosted one like Google. It works like Grafana's generic OAuth sign-in, and the settings are named
+after Grafana's. Set them in the panel's environment (`docker run -e`, compose or the Helm chart's `env`/`envFrom`;
+keep the secret in a secret):
+
+| Setting | What it is |
+|---|---|
+| `OIDC_ISSUER` | The provider's issuer address (https). The panel reads its `/.well-known/openid-configuration`. |
+| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | The client you registered at the provider. |
+| `OIDC_ALLOWED_GROUPS` | Comma-separated groups that may use the panel, read from the `groups` claim (`OIDC_GROUPS_CLAIM` to rename). |
+| `OIDC_ALLOWED_DOMAINS` | Comma-separated email domains that may use the panel. The provider must say the email is verified. |
+| `OIDC_NAME` | The button label, "Sign in with …". |
+| `OIDC_SCOPES` | Default `openid profile email`. Add the scope your provider needs for groups. |
+| `OIDC_AUTO_LOGIN` | `on` sends the sign-in page straight to the provider. |
+| `PANEL_PASSWORD` | `off` turns the password off once single sign-on works: no password form, no setup code. |
+| `PANEL_URL` | Required: the address people open. The provider sends them back to `PANEL_URL/api/auth/oidc/callback`, so register that as the client's redirect URI. |
+
+- **Who gets in:** only people in an allowed group or domain, and everyone who gets in has full use of the panel,
+  as with the password. Unlike Grafana, the panel refuses to start with single sign-on on and neither
+  `OIDC_ALLOWED_GROUPS` nor `OIDC_ALLOWED_DOMAINS` set: it would let every account at the provider drive the robot.
+- **Sessions** are the same 30-day sessions the password gives. Signing out ends the panel's session, not the
+  provider's. The event log names who signed in, and anyone turned away.
+- **Provider down?** Set `PANEL_PASSWORD` back on (and, if you never set one, the log shows a setup code).
 
 ## Wi-Fi survey
 
