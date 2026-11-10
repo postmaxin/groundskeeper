@@ -439,8 +439,10 @@ The panel does not get into the robot, and no video passes through the panel. It
    raised with the maintainers first).
 
 Rules:
-- **People only.** The token route needs a person's session. API tokens are refused (it is not in `TOKEN_WRITES`) and
-  the MCP server does not offer it, because token, key and salt together are a live, decryptable view of the yard.
+- **People only.** The token route is a POST (not a safe method, so API tokens are refused by default and it is
+  deliberately not added to `TOKEN_WRITES`) **and** checks for a person's session explicitly with `_person`. The
+  `TOKEN_WRITES` exclusion alone would not do: API tokens may make any GET. The MCP server does not offer the route,
+  because token, key and salt together are a live, decryptable view of the yard.
   The response is `Cache-Control: no-store`.
 - **Off by default.** A setting, off, with the person's confirmation on turning it on: the viewer's browser then
   connects to Agora, which sees the device's address and the camera's channel name. Off means the route refuses, the

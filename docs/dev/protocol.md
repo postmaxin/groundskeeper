@@ -167,18 +167,20 @@ shows them as reported. Wi-Fi strength is not in the device message; only a scan
 The robot's cameras are not served on the LAN. The robot publishes each camera to Agora's real-time network, and the
 phone app joins as a viewer with a token it asks Yarbo's cloud for. Everything below is a **planned route** (`design.md`
 §13): the panel does not do it yet. Evidence is a recorder that has run daily against one robot and a live check of the
-token request, not a stored capture of the app, so each line is marked **[confirmed]** (seen working) or
-**[unconfirmed]**. No value here is real; serials, tokens, keys and salts are synthetic or shortened.
+token request, not a stored capture of the app, so each line is marked **[observed]** (seen working in that recorder or
+check, with no capture to link) or **[unconfirmed]**. Nothing here is **[captured]**; the maintainers' rule is that
+robot behaviour comes from a capture of the official app, so a capture is still wanted for the observed lines.
+No value here is real; serials, tokens, keys and salts are synthetic or shortened.
 
 **Switching the view on.** The app publishes `smart_vision_control {"state":1}` on `snowbot/{SN}/app/smart_vision_control`
-over the cloud broker (see the table above). **[confirmed]** that the robot publishes video after `{"state":1}`.
+over the cloud broker (see the table above). **[observed]** that the robot publishes video after `{"state":1}`.
 `{"state":0}` is the app's "off". **[unconfirmed, untested]**: what `{"state":0}` does to a viewer who is watching in
 the official app at the same time, and whether it changes anything during a run besides the live view (obstacle
 detection in particular). Until those are tested, a client should send only `{"state":1}`.
 
 **Token request.** An authenticated POST to the cloud's *robot service*, a different host from the `data-api.yarbo.ai`
 used for sign-in and broker discovery (an AWS API Gateway stage; the host is not recorded in this document). The
-sign-in JWT, as `Authorization: Bearer <jwt>`, is accepted by it **[confirmed]**. How the app discovers the host is
+sign-in JWT, as `Authorization: Bearer <jwt>`, is accepted by it **[observed]**. How the app discovers the host is
 **[unconfirmed]**.
 
 ```
@@ -194,27 +196,27 @@ Authorization: Bearer <jwt>
  "message": "...", "sign": "..."}
 ```
 
-- `code` `"00000"` is success. Any other code is an error with a `message`. **[confirmed]**
+- `code` `"00000"` is success. Any other code is an error with a `message`. **[observed]**
 - `data.token` is an Agora AccessToken2 (`007` + base64 of zlib-compressed bytes). `data.key` and `data.salt` are the
   stream's encryption material. Together they give a live, decryptable view, so treat all three as secrets.
 - **The App ID is not a response field.** It is the 32 hex characters embedded in the token (decompress the base64
-  after `007` and match `[0-9a-f]{32}`). **[confirmed]** It belongs to Yarbo's Agora project. Never commit one.
+  after `007` and match `[0-9a-f]{32}`). **[observed]** It belongs to Yarbo's Agora project. Never commit one.
 - The token is minted for the `uid` in the request, so the viewer must join with exactly that `uid`.
 - **Lifetime is not known** **[unconfirmed]**: the recorder fetches once per session and has not seen one expire.
-- **Auth failures** **[confirmed]**: HTTP 401, and HTTP 200 with a body `code` of `A0230` (seen when every session was
+- **Auth failures** **[observed]**: HTTP 401, and HTTP 200 with a body `code` of `A0230` (seen when every session was
   invalidated at once on 2026-10-25). A client should refresh its sign-in once and retry once.
 
 **Channels and uid.**
 
-- One channel per camera: `<SN>_<cam>_image`, with `<cam>` one of `middle`, `left`, `right`, `back`. **[confirmed]**
+- One channel per camera: `<SN>_<cam>_image`, with `<cam>` one of `middle`, `left`, `right`, `back`. **[observed]**
   by the recorder, which asks for four tokens, one per channel. An older note that the channel is just the serial
   (one token) is **[unconfirmed]** and treated as stale.
 - `uid` must be non-zero. **The robot publishes as uid 1**, so a viewer must use another non-zero uid.
-  **[confirmed]** The recorder uses a fixed base plus a camera index.
+  **[observed]** The recorder uses a fixed base plus a camera index.
 - Which camera is which on the robot depends on the head fitted: `middle` is the front camera and what it sees
   changes with the head module. **[unconfirmed]** beyond the recorder's mower and leaf-blower use.
 
-**Joining and decrypting.** **[confirmed]** with the native Agora SDK; **[unconfirmed]** with the browser SDK.
+**Joining and decrypting.** **[observed]** with the native Agora SDK; **[unconfirmed]** with the browser SDK.
 
 - The stream is encrypted. The recorder uses AES-128-GCM2 (Agora mode 7), with `key` as received and `salt`
   **base64-decoded to bytes** (the response carries it as base64 text).
