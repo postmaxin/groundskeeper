@@ -119,6 +119,12 @@ def test_a_failed_subscribe_leaves_and_shows_a_sanitized_error():
     assert "007tok" not in json.dumps(seg)
 
 
+@needs_node
+def test_control_switched_on_after_the_last_render_still_sends_the_command():
+    seg = segment(run_flow(), "control-just-on")
+    assert seg[0][:2] == ["post", "/api/control/send"]
+
+
 def test_the_source_never_names_state_zero_log_upload_or_the_console():
     assert "enableLogUpload" not in CODE
     assert not re.search(r"console\.", CODE)

@@ -96,5 +96,10 @@ const settle = async () => { for (let i = 0; i < 20; i++) await tick(); };
   knobs.subscribeFail = true;
   mark("publish-fails"); try { await client.handlers["user-published"](SDK_USER, "video"); } catch { /* unhandled in the old code */ } await settle(); phase();
   knobs.subscribeFail = false; sandbox.camerasStop(); await settle();
+  // 5. Control switched on after the last card render: the command still goes out (the latest status is read).
+  await sandbox.camerasCard({ ops: { control_enabled: false } });
+  sandbox.state.status = { ops: { control_enabled: true } };
+  mark("control-just-on"); sandbox.camerasOpen(); await settle();
+  mark("cleanup2"); sandbox.camerasStop(); await settle(); sandbox.state.status = {};
   console.log(JSON.stringify(calls));
 })();

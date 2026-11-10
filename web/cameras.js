@@ -195,7 +195,9 @@ async function camerasStart({ on }) {
 // nothing when it was sent, why not when it could not be. A refusal does not stop the video: the cameras may be on
 // already (the app, a run), and joining a channel nobody publishes to costs nothing.
 async function camerasSwitchOn() {
-  if (!cams.controlOn) return "Control is off, so the panel cannot switch the cameras on. They play if the robot already has them on.";
+  // The latest status, not the value the last card render saw: Control may have just been switched on in the top bar.
+  const controlOn = state.status && state.status.ops ? !!state.status.ops.control_enabled : cams.controlOn;
+  if (!controlOn) return "Control is off, so the panel cannot switch the cameras on. They play if the robot already has them on.";
   try {
     const r = await postJSON("/api/control/send", { cmd: "smart_vision_control", args: {}, confirm: true });
     if (r && r.sent) return "";
