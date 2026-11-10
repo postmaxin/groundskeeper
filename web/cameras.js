@@ -22,7 +22,7 @@ const CAM_SLOW_MS = 15000;                         // joined but no video yet: s
 const CAM_SETTINGS_MS = 20000;                     // how long a read of the video setting is trusted
 
 const cams = { open: false, camera: savedCamera(), phase: "closed", message: "", hint: "", client: null, ticket: 0,
-               slowTimer: null, settings: null, settingsAt: 0, card: null, stage: null, sdk: null };
+               slowTimer: null, leaving: Promise.resolve(), settings: null, settingsAt: 0, card: null, stage: null, sdk: null };
 
 function savedCamera() {
   try {
@@ -122,7 +122,9 @@ function camerasLeave() {
   cams.client = null;
   if (client) {
     try { client.removeAllListeners(); } catch { /* already gone */ }
-    Promise.resolve().then(() => client.leave()).catch(() => { /* already left */ });
+    // Remembered, so a start that follows waits for this leave to finish before it makes another client.
+    const left = Promise.resolve().then(() => client.leave()).catch(() => { /* already left */ });
+    cams.leaving = Promise.all([cams.leaving, left]).then(() => {});
   }
   if (cams.stage) cams.stage.replaceChildren();
 }
@@ -151,9 +153,13 @@ async function camerasStart({ on }) {
   camerasSet("connecting", "Connecting…");
   let hint = "";
   try {
+    await cams.leaving;                           // never two live clients: wait out any leave still in flight
+    if (!live()) return;
     if (on) hint = await camerasSwitchOn();
     if (!live()) return;
-    const [join, AgoraRTC] = await Promise.all([postJSON("/api/video/token", { camera }), camerasLoadSdk()]);
+    const join = await postJSON("/api/video/token", { camera });
+    if (!live()) return;
+    const AgoraRTC = await camerasLoadSdk();      // only after the panel has given a token
     if (!live()) return;
     if (AgoraRTC.checkSystemRequirements && !AgoraRTC.checkSystemRequirements()) throw new Error("This browser cannot play the robot's video.");
     // Before any client exists: no usage statistics to Agora, no log upload (never enabled), a quiet console.
@@ -162,6 +168,7 @@ async function camerasStart({ on }) {
     const client = AgoraRTC.createClient({ mode: "live", codec: "h264" });
     cams.client = client;
     await client.setClientRole("audience");
+    if (!live()) return;
     client.setEncryptionConfig("aes-128-gcm2", join.key, camerasBytes(join.salt));
     camerasListen(client, ticket);
     await client.join(join.app_id, join.channel, join.token, join.uid);
@@ -172,7 +179,11 @@ async function camerasStart({ on }) {
         camerasSet("waiting", "No video from the robot yet.", "It may be asleep, or its cameras are off: open the Yarbo app, or switch Control on to wake them.");
       }
     }, CAM_SLOW_MS);
-    for (const u of client.remoteUsers || []) await camerasPlay(client, u, "video", ticket);
+    // Already-present users: subscribe only to the robot, and only if it is publishing video. Otherwise stay in
+    // Waiting; user-published starts the playback.
+    for (const u of client.remoteUsers || []) {
+      if (Number(u.uid) === CAM_ROBOT_UID && u.hasVideo) await camerasPlay(client, u, "video", ticket);
+    }
   } catch (e) {
     if (!live()) return;
     camerasLeave();                               // the tile stays open, in its error state
@@ -196,7 +207,16 @@ async function camerasSwitchOn() {
 
 function camerasListen(client, ticket) {
   const live = () => ticket === cams.ticket && cams.open && cams.client === client;
-  client.on("user-published", async (user, mediaType) => { if (live()) await camerasPlay(client, user, mediaType, ticket); });
+  client.on("user-published", async (user, mediaType) => {
+    if (!live()) return;
+    try {
+      await camerasPlay(client, user, mediaType, ticket);
+    } catch (e) {
+      if (!live()) return;
+      camerasLeave();                             // the tile stays open, in its error state
+      camerasSet("error", camerasWhy(e));
+    }
+  });
   client.on("user-unpublished", (user) => {
     if (live() && Number(user.uid) === CAM_ROBOT_UID) {
       if (cams.stage) cams.stage.replaceChildren();

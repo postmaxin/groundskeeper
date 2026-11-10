@@ -86,6 +86,39 @@ def test_nothing_ever_asks_for_state_zero_or_enables_log_upload():
     assert "enableLogUpload" not in [c[0] for c in calls]
 
 
+@needs_node
+def test_a_slow_leave_and_a_fast_token_never_make_two_live_clients():
+    calls = run_flow()
+    before = segment(calls, "slow-leave")
+    assert "leave" in [c[0] for c in before]
+    assert "createClient" not in [c[0] for c in before]                 # still waiting for the first leave
+    assert [c[0] for c in segment(calls, "slow-leave-released")].count("createClient") == 1
+
+
+@needs_node
+def test_a_refused_token_never_loads_the_sdk():
+    calls = run_flow()
+    seg = segment(calls, "refused-token")
+    assert "sdkRead" not in [c[0] for c in seg]
+    assert ["phase", "error", "The panel refused."] in seg
+
+
+@needs_node
+def test_a_robot_present_but_not_publishing_stays_waiting():
+    seg = segment(run_flow(), "present-not-publishing")
+    names = [c[0] for c in seg]
+    assert "subscribe" not in names and "leave" not in names and "join" in names
+    assert any(c[:2] == ["phase", "waiting"] for c in seg)
+
+
+@needs_node
+def test_a_failed_subscribe_leaves_and_shows_a_sanitized_error():
+    seg = segment(run_flow(), "publish-fails")
+    assert "leave" in [c[0] for c in seg]
+    assert ["phase", "error", "Video error (SUBSCRIBE_FAILED)."] in seg
+    assert "007tok" not in json.dumps(seg)
+
+
 def test_the_source_never_names_state_zero_log_upload_or_the_console():
     assert "enableLogUpload" not in CODE
     assert not re.search(r"console\.", CODE)
