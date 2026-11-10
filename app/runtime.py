@@ -61,6 +61,14 @@ def _url(v, what: str) -> str:
     return v
 
 
+def _https(v, what: str) -> str:
+    """The video service gets the cloud session and returns the stream's key: never over plain http."""
+    v = _url(v, what)
+    if not v.lower().startswith("https://"):
+        raise ValueError(f"{what} must start with https://")
+    return v
+
+
 def _text(v, what: str, pattern: re.Pattern | None = None, example: str = "") -> str:
     if not isinstance(v, str) or not v.strip():
         raise ValueError(f"{what} must not be empty")
@@ -75,7 +83,7 @@ VALIDATE = {
     ("robot", "port"): lambda v: _number(v, 1, 65535, "the port", integer=True),
     ("robot", "sn"): lambda v: _text(v, "the serial", _SN, "YB0000DEMO0001"),
     ("frigate", "url"): lambda v: _url(v, "the Frigate address"),
-    ("video", "service_url"): lambda v: _url(v, "the video service address"),
+    ("video", "service_url"): lambda v: _https(v, "the video service address"),
     ("home_assistant", "url"): lambda v: _url(v, "the Home Assistant address"),
     ("home_assistant", "token"): lambda v: _text(v, "the token"),
     ("weather", "tempest_port"): lambda v: _number(v, 0, 65535, "the UDP port", integer=True),

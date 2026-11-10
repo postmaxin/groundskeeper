@@ -1642,6 +1642,8 @@ async def video_token(request: Request, body: dict = Body(...)):
     base = request.app.state.cfg.robot_service_url      # Settings over YARBO_ROBOT_SERVICE_URL (False: switched off)
     if not base:
         raise HTTPException(503, "robot video is not configured: set YARBO_ROBOT_SERVICE_URL")
+    if not str(base).lower().startswith("https://"):      # an http value from the environment is refused too
+        raise HTTPException(503, "robot video is not configured: the service address must start with https://")
     uid = secrets.randbelow(2**31 - 2) + 2              # chosen here: never 0, never the robot's 1
     http = getattr(request.app.state, "video_http", None)
     own = http is None

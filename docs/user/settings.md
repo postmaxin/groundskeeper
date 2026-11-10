@@ -121,4 +121,4 @@ then connects to Agora's real-time network to play the stream**; the video never
 Yarbo cloud sign-in above, so that must be connected. Only a person signed in to the panel can switch it on or ask
 for a camera: API tokens and AI assistants cannot, and the stream's key is never written to the logs or Events. Set
 the address of the cloud's video service in the same card (**Video service address**) or with the
-`YARBO_ROBOT_SERVICE_URL` environment variable; until it is set the panel answers "not configured". The Live camera tile that plays it comes in a later change.
+`YARBO_ROBOT_SERVICE_URL` environment variable (it must start with `https://`); until it is set the panel answers "not configured". The Live camera tile that plays it comes in a later change.

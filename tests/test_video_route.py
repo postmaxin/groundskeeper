@@ -177,3 +177,20 @@ def test_the_address_can_be_switched_off_over_the_environment(tmp_path):
     rt = Runtime(env(tmp_path, robot_service_url=BASE), Store(str(tmp_path)))
     assert rt.robot_service_url == BASE
     assert rt.set("video", {"service_url": False}) == ["service_url"] and not rt.robot_service_url
+
+
+def test_a_plain_http_address_is_refused_before_any_request(t):
+    from app.runtime import Runtime
+    from tests.test_settings_api import env
+    switch(t)
+    t.cfg.robot_service_url = "http://robot-service.invalid"           # as the environment could supply it
+    r = ask(t)
+    assert r.status_code == 503 and "https://" in r.json()["detail"]
+    assert t.http.posts == []
+    with pytest.raises(ValueError):
+        Runtime(env("."), t.store).set("video", {"service_url": "http://robot-service.invalid"})
+    from app import video
+    import asyncio
+    with pytest.raises(video.VideoTokenError):                         # and the reader itself refuses it
+        asyncio.run(video.fetch(FakeCloud(), t.http, "http://robot-service.invalid", "front", 5))
+    assert t.http.posts == []
