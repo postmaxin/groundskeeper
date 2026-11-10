@@ -771,6 +771,10 @@ class Recorder:
             if getattr(self.cfg, "demo", False):
                 return self._apply_demo_robot()
             if not host:
+                if sn and sn != self.sn:                 # cloud-only: the cloud client still needs the serial
+                    self.sn = sn
+                    if self.on_sn:
+                        self.on_sn(sn)
                 self.robot_error = "no robot address yet: set it in Settings → Robot"
                 return self.local_status()
             if not sn and self.sn and self._applied == (host, port):
