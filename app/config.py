@@ -54,7 +54,8 @@ def load() -> Config:
         demo=demo,
         frigate_url=None if demo else os.environ.get("FRIGATE_URL", "").strip() or None,
         panel_url=os.environ.get("PANEL_URL", "").strip() or None,
-        # Not in this repository: the address of the cloud's robot service is set on the deployment (design.md §13).
+        # Environment only, on purpose: the video route sends the Yarbo session JWT to this address, so no signed-in
+        # person may change it from Settings. Not in this repository either (design.md §13).
         robot_service_url=None if demo else os.environ.get("YARBO_ROBOT_SERVICE_URL", "").strip() or None,
         demo_speed=max(0.1, min(50.0, _num("DEMO_SPEED", 1.0))),
     )

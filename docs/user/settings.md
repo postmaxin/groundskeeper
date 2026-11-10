@@ -119,6 +119,8 @@ Settings → Robot → Yarbo cloud → **Robot video** is **off** on a new insta
 to confirm), a signed-in person can ask the panel for the join details of one of the robot's cameras. **Your browser
 then connects to Agora's real-time network to play the stream**; the video never passes through the panel. It uses the
 Yarbo cloud sign-in above, so that must be connected. Only a person signed in to the panel can switch it on or ask
-for a camera: API tokens and AI assistants cannot, and the stream's key is never written to the logs or Events. Set
-the address of the cloud's video service in the same card (**Video service address**) or with the
-`YARBO_ROBOT_SERVICE_URL` environment variable (it must start with `https://`); until it is set the panel answers "not configured". The Live camera tile that plays it comes in a later change.
+for a camera: API tokens and AI assistants cannot, and the stream's key is never written to the logs or Events. The
+address of the cloud's video service is set only by the `YARBO_ROBOT_SERVICE_URL` environment variable (it must start
+with `https://`), never in Settings, because the panel sends your Yarbo session to it; Settings only shows
+"configured" or "not configured", and until it is set the panel answers "not configured". With `PANEL_AUTH=off`
+anyone who can reach the panel gets the video too. The Live camera tile that plays it comes in a later change.

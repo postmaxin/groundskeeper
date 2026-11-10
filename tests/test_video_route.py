@@ -1,6 +1,7 @@
 """POST /api/video/token and the robot_video_enabled setting (§13): off by default, people only, and no secret in a
 log record, an event or a header it should not be in. Driven through the real app's middleware with a fake recorder,
 cloud and HTTP client; no robot, no network."""
+import asyncio
 import json
 import logging
 from types import SimpleNamespace
@@ -153,44 +154,74 @@ def test_no_secret_is_logged_or_recorded_as_an_event(t, caplog):
     assert "robot video switched ON" in events
 
 
-def test_the_address_is_an_integration_setting_applied_without_a_restart(tmp_path):
-    from app.runtime import Runtime
+def test_no_api_can_set_the_service_url_and_settings_never_shows_it(t, monkeypatch):
+    from app.runtime import GROUPS, Runtime
     from tests.test_settings_api import env
-    store = Store(str(tmp_path))
-    rt = Runtime(env(tmp_path), store)
-    assert rt.robot_service_url is None                                  # no default: unset means "not configured"
-    assert rt.set("video", {"service_url": BASE + "/"}) == ["service_url"]
-    assert rt.robot_service_url == BASE                                  # live, trailing slash dropped
-    assert rt.describe()["video"]["service_url"]["env_name"] == "YARBO_ROBOT_SERVICE_URL"
-    with pytest.raises(ValueError):
-        rt.set("video", {"service_url": "robot-service"})
-    assert Runtime(env(tmp_path), store).robot_service_url == BASE       # survives a restart
-    assert rt.set("video", {"service_url": None}) == ["service_url"] and rt.robot_service_url is None
-    demo = Runtime(env(tmp_path, demo=True), store)
-    with pytest.raises(ValueError):
-        demo.set("video", {"service_url": BASE})                         # a demo instance has no real service
+    assert not any("service" in f or f == "robot_service_url" for g in GROUPS.values() for f in (*g, *g.values()))
+    rt = Runtime(env("."), t.store)
+    main.app.state.cfg = rt                                             # the fixture puts the stand-in back
+    for path, body in (("/api/integrations/video", {"service_url": "https://evil.example"}),
+                       ("/api/integrations/robot", {"service_url": "https://evil.example"}),
+                       ("/api/settings/robot_service_url", "https://evil.example"),
+                       ("/api/settings/video_service_url", "https://evil.example")):
+        assert t.c.put(path, json=body).status_code in (400, 404, 405), path
+    with pytest.raises(KeyError):
+        rt.set("video", {"service_url": "https://evil.example"})
+    assert rt.robot_service_url is None
+    stored = json.dumps([tuple(row) for row in t.store.db.execute("SELECT k, v FROM settings")], default=str)
+    assert "evil.example" not in stored
 
 
-def test_the_address_can_be_switched_off_over_the_environment(tmp_path):
-    from app.runtime import Runtime
-    from tests.test_settings_api import env
-    rt = Runtime(env(tmp_path, robot_service_url=BASE), Store(str(tmp_path)))
-    assert rt.robot_service_url == BASE
-    assert rt.set("video", {"service_url": False}) == ["service_url"] and not rt.robot_service_url
+def test_settings_says_configured_but_never_shows_the_address(tmp_path):
+    from tests.test_settings_api import fake_request, run
+    req, _, _ = fake_request(tmp_path, robot_service_url=BASE)
+    out = run(main.settings(req))
+    assert out["robot_video_configured"] is True and out["robot_video_enabled"] is False
+    assert BASE not in json.dumps(out, default=str) and "robot-service" not in json.dumps(out, default=str)
+    req, _, _ = fake_request(tmp_path)
+    assert run(main.settings(req))["robot_video_configured"] is False
 
 
 def test_a_plain_http_address_is_refused_before_any_request(t):
-    from app.runtime import Runtime
-    from tests.test_settings_api import env
     switch(t)
     t.cfg.robot_service_url = "http://robot-service.invalid"           # as the environment could supply it
     r = ask(t)
     assert r.status_code == 503 and "https://" in r.json()["detail"]
     assert t.http.posts == []
-    with pytest.raises(ValueError):
-        Runtime(env("."), t.store).set("video", {"service_url": "http://robot-service.invalid"})
     from app import video
     import asyncio
     with pytest.raises(video.VideoTokenError):                         # and the reader itself refuses it
         asyncio.run(video.fetch(FakeCloud(), t.http, "http://robot-service.invalid", "front", 5))
     assert t.http.posts == []
+
+
+def test_the_setting_put_needs_a_person_even_with_the_internal_header(t):
+    inner = TestClient(main.app, base_url="http://panel", headers={auth.INTERNAL_HEADER: auth.INTERNAL})
+    assert inner.put("/api/settings/robot_video_enabled", json=True).status_code == 403
+    assert t.store.setting("robot_video_enabled") is None
+
+
+def test_the_uid_is_never_below_two(t, monkeypatch):
+    switch(t)
+    monkeypatch.setattr(main.secrets, "randbelow", lambda n: 0)
+    assert ask(t).json()["uid"] == 2
+    assert t.http.posts[0]["json"]["uid"] == 2
+
+
+def test_errors_never_carry_the_address_or_the_session(t, caplog):
+    import httpx
+    caplog.set_level(logging.DEBUG)
+    switch(t)
+    cases = [
+        lambda u, j, h: FakeResponse(401, b"{}", "application/json"),
+        lambda u, j, h: FakeResponse(500, b"{}", "application/json"),
+        lambda u, j, h: (_ for _ in ()).throw(httpx.ConnectError(f"cannot reach {u} with {h}")),
+    ]
+    for answer in cases:
+        t.http.answer_post = answer
+        main.app.state.ops.cloud.sdk.token = JWT
+        r = ask(t)
+        assert r.status_code in (409, 502), r.status_code
+        for secret in (BASE, "robot-service", JWT, "jwt.refreshed.session", SN):
+            assert secret not in r.text, secret
+            assert secret not in caplog.text, secret

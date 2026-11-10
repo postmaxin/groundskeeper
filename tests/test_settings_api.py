@@ -152,7 +152,7 @@ def test_settings_lists_switches_groups_and_integrations(tmp_path):
     assert out["control_enabled"] is False and out["map_write_enabled"] is False
     assert set(out["conditions"]) == set(ConditionsConfig.__dataclass_fields__)
     assert out["gates"]["min_battery_pct"] == 30
-    assert set(out["integrations"]) == {"robot", "frigate", "home_assistant", "weather", "panel", "video"}
+    assert set(out["integrations"]) == {"robot", "frigate", "home_assistant", "weather", "panel"}
     run(main.put_setting(req, "map_write_enabled", True))
     assert run(main.settings(req))["map_write_enabled"] is True
 

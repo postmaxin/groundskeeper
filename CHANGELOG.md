@@ -9,7 +9,7 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 
 - **Robot video setting** (Settings → Robot → Yarbo cloud, off by default): lets a signed-in person ask for a robot
   camera's join details (`POST /api/video/token`); the viewer's browser then connects to Agora. People only: API tokens
-  and AI assistants are refused, and the stream key is never logged. Needs the video service address (Settings, or `YARBO_ROBOT_SERVICE_URL`); the Live tile
+  and AI assistants are refused, and the stream key is never logged. Needs `YARBO_ROBOT_SERVICE_URL` (environment only); the Live tile
   that plays it follows.
 - **Installable with pip or uv** (`pyproject.toml`): another Python tool can depend on Groundskeeper's `app` package,
   and `uv sync` sets up a checkout. The Docker image and `requirements*.txt` are unchanged, and a test keeps the two
