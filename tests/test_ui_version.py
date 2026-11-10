@@ -10,7 +10,7 @@ def test_every_local_script_and_stylesheet_is_stamped():
     html = asyncio.run(main.index()).body.decode()
     local = re.findall(r'(?:src|href)="(/[^"?#]+\.(?:js|css)(?:\?[^"]*)?)"', html)   # .js / .css only, not .json
     assert local and all(u.endswith(f"?v={main.UI_VERSION}") for u in local), local
-    for name in ("app.js", "ops.js", "imagery.js", "settings.js", "studio.js", "help.js", "style.css"):
+    for name in ("app.js", "ops.js", "cameras.js", "imagery.js", "settings.js", "studio.js", "help.js", "style.css"):
         assert f"/{name}?v=" in html
     assert f'<meta name="ui-version" content="{main.UI_VERSION}">' in html
 

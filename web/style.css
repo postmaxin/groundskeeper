@@ -275,6 +275,10 @@ a { color: var(--link); }
 .card.attention { border-color: var(--warn); box-shadow: 0 0 0 1px color-mix(in srgb, var(--warn) 35%, transparent); }
 .snap { display: block; width: 100%; border-radius: 9px; margin: 8px 0; background: var(--side); aspect-ratio: 16 / 9; object-fit: cover; }
 .camchips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Live's Cameras tile: the robot's own cameras. The stage keeps a 16:9 box whatever the video does. */
+.camscard .camchips { margin-top: 8px; }
+.camsstage { margin-top: 8px; aspect-ratio: 16 / 9; width: 100%; border-radius: 8px; overflow: hidden; background: var(--map-ink); }
+.camsstage video { object-fit: contain; }
 .btn.on { background: var(--pressed); border-color: var(--line3); }
 .btn[disabled] { opacity: .5; cursor: not-allowed; }
 .ctlgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }

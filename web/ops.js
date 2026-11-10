@@ -121,8 +121,8 @@ async function liveExtras(s) {
   const o = s.ops || {};
   // Live can render before the map's plan list arrives; an empty picker would send plan_id 0.
   if (!state.plansCache.length) { try { state.plansCache = (await getJSON("/api/plans")).plans || []; } catch { /* none yet */ } }
-  const fc = await followCamData();
-  const rest = [whyCard(o.why), o.pending ? pendingCard(o.pending, o.control_enabled) : null, controlCard(s)];
+  const [fc, robotCams] = await Promise.all([followCamData(), camerasCard(s)]);   // cameras.js: the robot's own cameras
+  const rest = [whyCard(o.why), o.pending ? pendingCard(o.pending, o.control_enabled) : null, controlCard(s), robotCams];
   if (ops.mode === "camera") {
     const away = !fc.pinned && (!fc.cam || fc.covered === false);
     if (away !== ops.camAway) { ops.camAway = away; syncLiveMode(); }

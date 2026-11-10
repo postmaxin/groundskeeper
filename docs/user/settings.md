@@ -123,4 +123,8 @@ for a camera: API tokens and AI assistants cannot, and the stream's key is never
 address of the cloud's video service is set only by the `YARBO_ROBOT_SERVICE_URL` environment variable (it must start
 with `https://`), never in Settings, because the panel sends your Yarbo session to it; Settings only shows
 "configured" or "not configured", and until it is set the panel answers "not configured". With `PANEL_AUTH=off`
-anyone who can reach the panel gets the video too. The Live camera tile that plays it comes in a later change.
+anyone who can reach the panel gets the video too. The video plays in the **Cameras** tile on [Live](#help/live).
+The panel asks the SDK not to send Agora usage statistics or upload logs, and switches off its remote configuration;
+a network capture to confirm this is pending (issue #35). Agora still sees your browser's address, the panel's address
+(the `Origin` and `Referer` of the SDK's requests) and the camera's channel name, which carries the robot's serial
+number.

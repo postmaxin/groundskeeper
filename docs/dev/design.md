@@ -409,7 +409,8 @@ as `cmd_roller`) are never sent.
 
 ## 13. Robot cameras
 
-**Status: planned, not built.** Wire details, with what is confirmed and what is not, are in
+**Status: built, not yet proved on a robot** (the Live tile is `web/cameras.js`). Wire details, with what is confirmed
+and what is not, are in
 [`protocol.md`](protocol.md#robot-video-agora).
 
 What is known:
@@ -440,9 +441,25 @@ The panel does not get into the robot, and no video passes through the panel. It
    for the phone app (`PHONE_APP_COMMANDS`). It is its own PR for separate review. **Switching off is not decided:**
    what `{"state":0}` does to someone watching in the official app, and during a run (obstacle detection), is untested,
    so a first version sends only `1` and lets the robot or the app turn the view off.
-4. **Placement.** A **Cameras** tile on Live. Live's existing "Camera" layout is the Frigate yard cameras (§11); the
-   two must be told apart in the UI, which may mean renaming that layout (a change to an existing screen, so it is
-   raised with the maintainers first).
+4. **Placement.** A **Cameras** tile on Live (`web/cameras.js`, a card in Live's panel, shown only while the setting is
+   on and the service address is set; the demo shows a placeholder and never loads the SDK). One camera at a time.
+   Opening it asks the controller for `{"state":1}` (with Control off it says so and still tries to play, since the app
+   or a run may have the cameras on), fetches a token, lazy-loads the vendored SDK, calls
+   `AgoraRTC.setParameter` (forced, third argument true, because the SDK ignores a plain call for a key a cached or
+   remote configuration set first) for `ENABLE_EVENT_REPORT`, `UPLOAD_LOG`, `ENABLE_CONFIG_DISTRIBUTE` (a remote push
+   can switch the first two back on mid-session), `ENABLE_PRELOAD` (re-requests the access point with the token every
+   two minutes), `ENABLE_CREATE_CLIENT_PRECONNECT` and a `CREATE_CLIENT_PRECONNECT_MODE` of `report` (`request` fetches
+   Agora hosts), and a random `INSTALL_ID`, all before creating the client (never `enableLogUpload`). The SDK's own
+   `websdk_ng_*` localStorage items (device id, cached settings, preload cache) are cleared when it has loaded and on
+   leaving. A load of the SDK script that hangs gives up after 20 s so the next try loads it again. It joins as
+   an audience member with `aes-128-gcm2`, the key and the base64-decoded salt, and plays uid 1. It leaves the channel
+   on close, camera change, leaving Live, a hidden tab and page close. A token's expiry event rejoins with a fresh token
+   (the route picks the viewer uid, so a token cannot be renewed in place). No CSP is set: `connect-src` cannot admit
+   `*.agora.io` and block `statscollector*.agora.io`, so an allowlist of exact gateway hosts needs a network capture.
+   Live's existing "Camera" layout is the Frigate yard cameras (§11), so the tile's title carries a tooltip saying it is
+   the robot's own; a rename of that layout is raised with the maintainers first. A `no-referrer` policy was
+   considered to hide the panel's address from Agora and rejected: a browser then sends `Origin: null` on the panel's
+   own POSTs, which `auth.same_origin` refuses.
 
 Rules:
 - **People only.** The token route is a POST (not a safe method, so API tokens are refused by default and it is
