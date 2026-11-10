@@ -175,7 +175,8 @@ def test_every_send_is_marked_as_the_panels_own(tmp_path):
     lk.command("pause", {})
     lk.command("pause", {}, route="cloud")
     lk.read("get_device_msg")
-    assert marked == ["pause", "pause", "get_device_msg"]
+    lk.command("smart_vision_control", {"state": 1})    # app/ops.py takes an unmarked echo for the phone app
+    assert marked == ["pause", "pause", "get_device_msg", "smart_vision_control"]
 
 
 def test_a_pause_that_took_is_not_sent_again(tmp_path, monkeypatch):
@@ -187,6 +188,45 @@ def test_a_pause_that_took_is_not_sent_again(tmp_path, monkeypatch):
 
     asyncio.run(go())
     assert cl.sent == []
+
+
+def test_switching_the_cameras_on_does_not_cancel_a_pending_pause_repeat(tmp_path, monkeypatch):
+    c, rec, cl, store = _controller(tmp_path, monkeypatch, {"planning": 1, "planning_paused": 0})
+
+    async def go():
+        await c.send("pause", wait=False)               # went local; not seen yet
+        await c.send("smart_vision_control", wait=False)
+        await asyncio.sleep(0.3)
+
+    asyncio.run(go())
+    assert sorted(cl.sent) == ["pause", "smart_vision_control"]   # the pause repeat still went (cameras: cloud only)
+
+
+def test_the_cameras_go_only_through_the_cloud_until_a_local_send_is_observed(tmp_path, monkeypatch):
+    lk, rec, cl, _ = _link(tmp_path)
+    monkeypatch.setattr(link_mod, "LOCAL_VISION_PROVED", False)
+    assert lk.command("smart_vision_control", {"state": 1}) == "cloud"
+    assert cl.sent == ["smart_vision_control"] and rec.transport.commands == []
+    with pytest.raises(NoRoute):
+        lk.command("smart_vision_control", {"state": 1}, route="local")
+    lk.store.set_setting("robot_route", "local")
+    with pytest.raises(NoRoute):
+        lk.command("smart_vision_control", {"state": 1})
+    lk.store.set_setting("robot_route", "auto")
+    cl.state, cl.connected = "signed out", False
+    with pytest.raises(NoRoute):
+        lk.command("smart_vision_control", {"state": 1})
+    assert cl.sent == ["smart_vision_control"]
+    monkeypatch.setattr(link_mod, "LOCAL_VISION_PROVED", True)
+    assert lk.command("smart_vision_control", {"state": 1}, route="local") == "local"
+
+
+@pytest.mark.parametrize("payload", [{"state": 0}, {}, {"state": 1, "x": 1}, {"state": True}, {"state": 1.0}])
+def test_the_link_refuses_any_camera_payload_but_on(tmp_path, payload):
+    lk, rec, cl, _ = _link(tmp_path)
+    with pytest.raises(NoRoute):
+        lk.command("smart_vision_control", payload)
+    assert cl.sent == [] and rec.transport.commands == []
 
 
 def test_a_start_is_never_sent_again_by_the_other_route(tmp_path, monkeypatch):

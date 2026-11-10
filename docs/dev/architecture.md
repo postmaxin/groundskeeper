@@ -325,7 +325,8 @@ own resolution (at most 4096 px a side), and keeps it.
 - **Cloud:** only `app.control.Controller.send()` publishes. It is called by `POST /api/control/send` (which requires
   `confirm: true`) and by a confirmed or auto-start schedule window. Every call goes through, in order:
   1. **Catalogue:** `start_plan {"id": N}`, `pause {}`, `resume {}`, `stop {}`, `cmd_recharge {"cmd": 2}` (the
-     official SDK payloads). Anything else is refused. **`cmd_vel` (manual drive) is blocked for good.**
+     official SDK payloads), and `smart_vision_control {"state": 1}` (cameras on: people only, cloud only, never
+     off). Anything else is refused. **`cmd_vel` (manual drive) is blocked for good.**
   2. **Master switch** `control_enabled`, **off by default**. Switching it on in Settings → Safety needs typing ENABLE and is
      logged as an event.
   3. **Interlocks.** Every command needs the robot online (snapshot under 2 min old) and the cloud connected.

@@ -26,6 +26,7 @@ mkdir -p web/vendor
 curl -sSfL -o web/vendor/maplibre-gl.js  https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js
 curl -sSfL -o web/vendor/maplibre-gl.css https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css
 curl -sSfL -o web/vendor/three.module.min.js https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js
+curl -sSfL -o web/vendor/AgoraRTC_N-production.js https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.24.9/AgoraRTC_N-production.js
 ```
 
 ### Run it without a robot

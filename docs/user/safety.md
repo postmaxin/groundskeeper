@@ -18,10 +18,11 @@ still notify.
 
 ## What every command passes
 
-Only five commands exist: start a plan, pause, resume, stop, return to dock. **Manual driving is blocked for good.**
+Only five run commands exist: start a plan, pause, resume, stop, return to dock; the sixth only switches the robot's
+cameras on, and only for a person at the panel. **Manual driving is blocked for good.**
 Each one is checked, in order:
 
-1. It is one of those five.
+1. It is one of those commands.
 2. Control is on.
 3. The robot is online (data under 2 minutes old) and the panel can reach it: on your network, or through the
    Yarbo cloud as a fallback.

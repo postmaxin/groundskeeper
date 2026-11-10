@@ -64,6 +64,75 @@ def test_only_catalogue_commands_ever_go_out(tmp_path, cmd):
     assert not r["sent"] and cloud.sent == []
 
 
+def test_the_cameras_go_on_with_state_1_and_nothing_else(tmp_path):
+    store, cloud, c = make_controller(tmp_path, enabled=True)
+    r = run(c.send("smart_vision_control"))
+    assert r["sent"] and r["payload"] == {"state": 1}
+    assert cloud.sent == [("smart_vision_control", {"state": 1})]
+    r = run(c.send("smart_vision_control", {"state": 1}))
+    assert r["sent"] and cloud.sent[-1] == ("smart_vision_control", {"state": 1})
+
+
+@pytest.mark.parametrize("state", [0, 2, -1, None, "1", "0", True, False, 1.0, [1]])
+def test_switching_the_cameras_off_is_refused(tmp_path, state):
+    store, cloud, c = make_controller(tmp_path, enabled=True)
+    r = run(c.send("smart_vision_control", {"state": state}))
+    assert not r["sent"] and "only switches the cameras on" in r["refused"]
+    assert cloud.sent == []
+    assert run(c.send("smart_vision_control", {"state": state}, actor="token"))["sent"] is False
+    assert cloud.sent == []
+
+
+def test_the_cameras_can_go_on_while_a_plan_is_running(tmp_path):
+    store, cloud, c = make_controller(tmp_path, ctx=good_ctx(running=True, battery=None), enabled=True)
+    assert run(c.send("smart_vision_control", actor="user"))["sent"]
+
+
+@pytest.mark.parametrize("actor", ["scheduler", "guard", "mcp", "token", "", "robot"])
+def test_only_a_person_switches_the_cameras_on(tmp_path, actor):
+    store, cloud, c = make_controller(tmp_path, enabled=True)
+    r = run(c.send("smart_vision_control", actor=actor))
+    assert not r["sent"] and "People only" in str(r["checks"]) and cloud.sent == []
+
+
+def test_every_catalogue_command_is_confirmed_by_state_or_run_neutral():
+    from app import recorder
+    assert set(control.CATALOGUE) == set(control.CONFIRM) | control.RUN_NEUTRAL
+    assert not set(control.CONFIRM) & control.RUN_NEUTRAL
+    assert not control.RUN_NEUTRAL & set(control.SAFE_TO_REPEAT)
+    assert not control.RUN_NEUTRAL & recorder.PEOPLE_COMMANDS
+
+
+def test_the_cameras_do_not_hide_a_pauses_result(tmp_path):
+    store, cloud, c = make_controller(tmp_path, ctx=good_ctx(running=True), enabled=True)
+
+    async def go():
+        await c.send("pause", wait="background")
+        before = c.last
+        await c.send("smart_vision_control", wait="background")
+        assert c.last is before and c.last["cmd"] == "pause"
+        await asyncio.sleep(0.1)
+
+    run(go())
+
+
+def test_switching_the_cameras_on_is_not_a_person_taking_over_a_run(tmp_path):
+    store, cloud, c = make_controller(tmp_path, ctx=good_ctx(running=True), enabled=True)
+    assert run(c.send("smart_vision_control"))["sent"]
+    assert c.last_human_cmd_at == 0.0                  # the guards read this to see a person step in
+    assert run(c.send("pause"))["sent"]
+    assert c.last_human_cmd_at > 0.0                   # a real command still counts
+
+
+def test_the_cameras_wait_for_control_the_robot_and_the_route(tmp_path):
+    store, cloud, c = make_controller(tmp_path)
+    assert "switched off" in run(c.send("smart_vision_control"))["refused"]
+    store, cloud, c = make_controller(tmp_path, ctx=good_ctx(snapshot_age_s=None), enabled=True)
+    assert not run(c.send("smart_vision_control"))["sent"]
+    store, cloud, c = make_controller(tmp_path, ctx=good_ctx(route_state="no route"), enabled=True)
+    assert not run(c.send("smart_vision_control"))["sent"] and cloud.sent == []
+
+
 def test_payloads_match_the_official_sdk(tmp_path):
     store, cloud, c = make_controller(tmp_path, enabled=True)
     assert run(c.send("start_plan", {"plan_id": 1}))["sent"]
