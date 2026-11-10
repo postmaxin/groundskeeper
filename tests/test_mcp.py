@@ -227,6 +227,13 @@ def test_a_command_goes_through_the_controller_as_mcp_without_override(env):
         call(env, "robot_command", command="cmd_vel", confirm=True)
 
 
+def test_an_assistant_cannot_switch_the_cameras_on(env):
+    env.store.set_setting(mcp_server.SWITCH, True)
+    with pytest.raises(ToolError, match="not a command"):
+        call(env, "robot_command", command="smart_vision_control", confirm=True)
+    assert env.state.ops.controller.sent == []
+
+
 @pytest.mark.parametrize("tool,args", [
     ("maintenance_done", {"item_id": "../schedule/pending/confirm?", "confirm": True}),
     ("maintenance_done", {"item_id": "x/../../schedule/pending/confirm", "confirm": True}),

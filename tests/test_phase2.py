@@ -83,10 +83,37 @@ def test_switching_the_cameras_off_is_refused(tmp_path, state):
     assert cloud.sent == []
 
 
-@pytest.mark.parametrize("actor", ["user", "scheduler", "guard", "mcp", "token"])
-def test_the_cameras_can_go_on_while_a_plan_is_running(tmp_path, actor):
+def test_the_cameras_can_go_on_while_a_plan_is_running(tmp_path):
     store, cloud, c = make_controller(tmp_path, ctx=good_ctx(running=True, battery=None), enabled=True)
-    assert run(c.send("smart_vision_control", actor=actor))["sent"]
+    assert run(c.send("smart_vision_control", actor="user"))["sent"]
+
+
+@pytest.mark.parametrize("actor", ["scheduler", "guard", "mcp", "token", "", "robot"])
+def test_only_a_person_switches_the_cameras_on(tmp_path, actor):
+    store, cloud, c = make_controller(tmp_path, enabled=True)
+    r = run(c.send("smart_vision_control", actor=actor))
+    assert not r["sent"] and "People only" in str(r["checks"]) and cloud.sent == []
+
+
+def test_every_catalogue_command_is_confirmed_by_state_or_run_neutral():
+    from app import recorder
+    assert set(control.CATALOGUE) == set(control.CONFIRM) | control.RUN_NEUTRAL
+    assert not set(control.CONFIRM) & control.RUN_NEUTRAL
+    assert not control.RUN_NEUTRAL & set(control.SAFE_TO_REPEAT)
+    assert not control.RUN_NEUTRAL & recorder.PEOPLE_COMMANDS
+
+
+def test_the_cameras_do_not_hide_a_pauses_result(tmp_path):
+    store, cloud, c = make_controller(tmp_path, ctx=good_ctx(running=True), enabled=True)
+
+    async def go():
+        await c.send("pause", wait="background")
+        before = c.last
+        await c.send("smart_vision_control", wait="background")
+        assert c.last is before and c.last["cmd"] == "pause"
+        await asyncio.sleep(0.1)
+
+    run(go())
 
 
 def test_switching_the_cameras_on_is_not_a_person_taking_over_a_run(tmp_path):

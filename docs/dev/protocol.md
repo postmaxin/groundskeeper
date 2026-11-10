@@ -179,7 +179,9 @@ another cloud session switched off the official app's live view on the owner's p
 else watching. **[unconfirmed, untested]**: whether it changes anything during a run besides the live view (obstacle
 detection in particular). That is why a client sends only `{"state":1}`: the panel's controller refuses any other
 state (`control.check`, "Cameras on only") and leaves switching off to the robot or the app. `{"state":1}` is allowed
-idle or during a run, with the same robot-online and route checks as pause, stop and dock.
+idle or during a run, with the same robot-online and route checks as pause, stop and dock. Only a person at the panel
+can send it (not tokens, the MCP server, the scheduler or the guards), and only through the cloud broker, the one
+route observed (`LOCAL_VISION_PROVED` in `app/link.py`, off until a local send is observed).
 
 **Token request.** An authenticated POST to the cloud's *robot service*, a different host from the `data-api.yarbo.ai`
 used for sign-in and broker discovery (an AWS API Gateway stage; the host is not recorded in this document). The

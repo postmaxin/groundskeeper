@@ -1,7 +1,8 @@
 """Robot control (spec §10). The only module that can command the robot, and it is OFF until switched on.
 
 Every request passes, in order:
-1. the catalogue (five official run commands; anything else, including manual drive, is refused),
+1. the catalogue (five official run commands and the cameras-on switch; anything else, including manual drive, is
+   refused),
 2. the master switch (setting `control_enabled`, default False),
 3. the interlocks for that command (§10.3), enforced here and not only in the UI,
 then goes out through app.link.RobotLink (the robot's local broker first, the Yarbo cloud as a fallback) and is
@@ -128,6 +129,8 @@ def check(cmd: str, args: dict, ctx: dict, cfg: dict, actor: str) -> list[dict]:
         # Allowed idle or running, like pause, stop and dock: it only starts the robot's video, so the route and
         # online checks are all it needs. The one extra rule is that "on" is the only thing that can be asked for.
         # An absent state means on; any other value (0, 2, "1", true, 1.0) fails closed.
+        add("People only", actor == "user",
+            "a person at the panel" if actor == "user" else f"{actor} may not switch the cameras on: the video is for people")
         s = args.get("state", 1)
         add("Cameras on only", type(s) is int and s == 1,
             "switching on" if type(s) is int and s == 1 else f"state {s!r} refused: the panel only switches the cameras on")
@@ -204,6 +207,9 @@ def verdict(checks: list[dict], override: bool) -> tuple[bool, str]:
 # could restart a plan.
 SAFE_TO_REPEAT = ("pause", "stop", "cmd_recharge")
 REROUTE_AFTER_S = 10
+# Commands that say nothing about the run: they never stand down another command's repeat (_seq), never count as a
+# person stepping in (last_human_cmd_at) and never replace the status stream's `last` (a Pause's result stays visible).
+RUN_NEUTRAL = frozenset({"smart_vision_control"})
 
 
 class Controller:
@@ -348,13 +354,13 @@ class Controller:
                 if cmd in ("start_plan", "resume"):
                     self.start_out = {"cmd": cmd, "at": time.time()}   # before the send: a send that fails half-way holds too
                 route = self.link.command(cmd, payload)
-                if cmd != "smart_vision_control":
-                    # Switching the cameras on says nothing about the run. It must not bump _seq (a pause or dock
-                    # still waiting to be seen would stand down its other-route repeat) nor look like a person taking
-                    # over (the guards, ops._people_cmd_at, would stop retrying a pause or dock that didn't take).
+                # A run-neutral command (RUN_NEUTRAL) must not bump _seq (a pause or dock still waiting to be seen
+                # would stand down its other-route repeat) nor look like a person taking over (the guards,
+                # ops._people_cmd_at, would stop retrying a pause or dock that didn't take).
+                if cmd not in RUN_NEUTRAL:
                     self._seq += 1
-                    self._spawn(self._follow_up(cmd, payload, args, route, self._seq, actor))
-                if actor != "guard" and cmd != "smart_vision_control":
+                self._spawn(self._follow_up(cmd, payload, args, route, self._seq, actor))
+                if actor != "guard" and cmd not in RUN_NEUTRAL:
                     self.last_human_cmd_at = time.time()
                 result = {"sent": True, "cmd": cmd, "payload": payload, "checks": checks, "route": route}
             except Refused as r:
@@ -368,7 +374,9 @@ class Controller:
         # Confirmation runs outside the lock: a Pause pressed while a start is still being confirmed goes out now.
         background = result["sent"] and wait == "background"
         if background:
-            self.last = {"cmd": cmd, "at": started, "actor": actor, "confirmed": None, "confirm": "checking", "done": False}
+            last = {"cmd": cmd, "at": started, "actor": actor, "confirmed": None, "confirm": "checking", "done": False}
+            if cmd not in RUN_NEUTRAL:
+                self.last = last        # else a camera-on would hide a Pause's result from the panel's toast
             result.update(confirmed=None, confirm="checking", at=started)
         elif result["sent"] and not wait:
             fut.cancel()
@@ -380,7 +388,7 @@ class Controller:
         result["latency_ms"] = round((time.time() - started) * 1000)
         rowid = self.store.log_control(actor, result.get("route") or "none", cmd, json.dumps(args), result)
         if background:
-            task = asyncio.get_running_loop().create_task(self._watch(cmd, fut, self.last, rowid, dict(result)))
+            task = asyncio.get_running_loop().create_task(self._watch(cmd, fut, last, rowid, dict(result)))
         elif result.get("confirmed") is False and not result.get("reply"):
             task = asyncio.get_running_loop().create_task(self._watch_late(cmd, rowid, dict(result), result, {}))
         else:
