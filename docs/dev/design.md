@@ -35,7 +35,7 @@ recorded, and guarded.
 | **Health & Maintenance** | RTK/RTCM, HaLow, battery cells, motors, firmware, error dictionary, service timers | §15 |
 | **Insights** | Aggregates across runs, seasons and years | §16 |
 | **Integrations** | Home Assistant entities and alerts, webhooks, an MCP server for AI assistants, notifications | §17 |
-| **Robot cameras** | Not available; see §13 | §13 |
+| **Robot cameras** | Planned: a Cameras tile on Live, people only, off by default; see §13 | §13 |
 
 ### Non-goals
 
@@ -58,7 +58,7 @@ recorded, and guarded.
 | Where the phone app's traffic goes | — | **Cloud, even on the home Wi-Fi** |
 | Official run commands | Not used (see §10.2) | Yes; the panel's control route |
 | Map / plan / schedule writes | Not used | Yes, as captured from the app (`map-writes.md`) |
-| Camera video | No | No: the live-view toggle is on MQTT, the stream is not (§13) |
+| Camera video | No | Planned, not on MQTT: the switch is, the stream is Agora's (§13) |
 
 Details and ACLs are in [`protocol.md`](protocol.md).
 
@@ -408,16 +408,57 @@ as `cmd_roller`) are never sent.
 
 ## 13. Robot cameras
 
+**Status: planned, not built.** Wire details, with what is confirmed and what is not, are in
+[`protocol.md`](protocol.md#robot-video-agora).
+
 What is known:
 - The robot's cameras sit on a network **internal to the robot**, not on the household LAN.
 - The robot's LAN address exposes SSH, the MQTT broker ports (1883, 8883, 8083 WebSocket, 8084 TLS) and a few HTTP
   ports; none of them serves video on common stream or API paths.
 - Opening the app's live view sends `smart_vision_control {"state":1}` over the **cloud** broker. The robot
-  acknowledges it, and **no stream URL, SDP or token appears on MQTT**: the video is negotiated elsewhere and leaves
-  through the cloud.
-- There is no official RTSP, ONVIF or streaming API.
+  acknowledges it, and **no stream URL, SDP or token appears on MQTT**.
+- The video itself goes through **Agora's real-time network**. The app asks Yarbo's cloud for a token (one channel
+  per camera) and joins with it; the response also carries the stream's encryption key and salt. There is no
+  official RTSP, ONVIF or streaming API, and no LAN path: a viewer at home still receives from Agora.
 
-So the panel shows no robot video. It does not try to get into the robot to find one.
+The panel does not get into the robot, and no video passes through the panel. It follows the app's route:
+
+1. **Token.** A new read in `app/cloud.py` (not MQTT, not a publish) asks the cloud's robot service for a token, with
+   the sign-in the panel already holds. The server chooses a camera from a fixed allowlist (front, left, right, back)
+   and a random viewer uid (never the robot's uid 1), and returns the join details to the browser.
+2. **Playback.** The browser plays the stream with Agora's Web SDK, **vendored** under `web/vendor/` with a pinned
+   version and a checksummed Dockerfile download, like MapLibre and three.js. Nothing loads from a CDN at runtime, and
+   the script is fetched only when the setting is on and someone opens the viewer.
+3. **Switching on.** The Cameras panel sends `smart_vision_control {"state":1}` when it opens, through
+   `control.CATALOGUE` and `control.check`, marked as the panel's own send so `app/ops.py` does not mistake its echo
+   for the phone app (`PHONE_APP_COMMANDS`). It is its own PR for separate review. **Switching off is not decided:**
+   what `{"state":0}` does to someone watching in the official app, and during a run (obstacle detection), is untested,
+   so a first version sends only `1` and lets the robot or the app turn the view off.
+4. **Placement.** A **Cameras** tile on Live. Live's existing "Camera" layout is the Frigate yard cameras (§11); the
+   two must be told apart in the UI, which may mean renaming that layout (a change to an existing screen, so it is
+   raised with the maintainers first).
+
+Rules:
+- **People only.** The token route is a POST (not a safe method, so API tokens are refused by default and it is
+  deliberately not added to `TOKEN_WRITES`) **and** checks for a person's session explicitly with `_person`. The
+  `TOKEN_WRITES` exclusion alone would not do: API tokens may make any GET. The MCP server does not offer the route,
+  because token, key and salt together are a live, decryptable view of the yard.
+  The response is `Cache-Control: no-store`.
+- **Off by default.** A setting, off, with the person's confirmation on turning it on: the viewer's browser then
+  connects to Agora, which sees the device's address and the camera's channel name. Off means the route refuses, the
+  SDK is never downloaded and the button is hidden. The docs say "encrypted in transit", not "private from Yarbo or
+  Agora", since the key comes from Yarbo's cloud.
+- **No secrets in logs.** Token, key, salt, App ID, channel, uid and the sign-in JWT never reach a log, the event log,
+  the URL, `localStorage` or the console. A log line says only which camera and ok or the error class.
+- **A good citizen.** Agora bills per minute of video received, per stream, to the App ID's owner (Yarbo). So: one
+  camera at a time, video only while the panel is open, leave the channel when the tab is hidden or closed. A 2x2 grid
+  would be four streams and four uploads from the robot, so it is deferred.
+- **Demo.** Demo mode shows a synthetic test pattern and never contacts the cloud or Agora.
+- **Not testable offline:** decryption and real video. Tests use fakes and a stubbed SDK; the real stream is checked by
+  the owner on a robot, and PRs say "not tried on a robot" until then.
+
+Open until tested on a robot: token lifetime, whether the robot streams without `{"state":1}` (for example during a
+run), H.264 only, the browser SDK's decryption with a bytes salt, and any cap on viewers.
 
 ---
 

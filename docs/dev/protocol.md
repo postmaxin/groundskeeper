@@ -155,12 +155,80 @@ shows them as reported. Wi-Fi strength is not in the device message; only a scan
 | `set_working_state` | `{"state":1}` | Keep-awake, about every 10 s while the app is open |
 | `cmd_vel` | `{"vel":0.0,"rev":0.0}` | **Manual drive** (linear/angular velocity). The app zeroes it on opening and streams it from its joystick. Not in the SDK. **Never send it.** |
 | `cmd_roller` | `{"vel": 1000}` | A motor command sent in bursts around blade switches and on opening. Never send it |
-| `smart_vision_control` | `{"state":0}` / `{"state":1}` | Live view off/on. Reply: "Smart vision control command sent: N". No stream URL, SDP or token on MQTT |
+| `smart_vision_control` | `{"state":0}` / `{"state":1}` | Live view off/on. Reply: "Smart vision control command sent: N". No stream URL, SDP or token on MQTT. See [Robot video](#robot-video-agora) |
 | `mower_head_sensor_switch` | `{"cmd": 0}` or `{"state": -99}` | A status query on opening; reply state 33, "status query feedback" |
 | `wireless_charging_cmd` | `{"cmd": 0}` | Sent by the app on opening and closing |
 | `cmd_recharge` | `{"cmd": 2}` | Return to dock |
 | `cmd_motor_protect` | `{"state": 15}` | Seen once after a boundary recording |
 | `correct_map` | `{}` | The app's map-drift correction. Refused with state −5 "yarbo rtk status is not 4" without a fixed RTK; never sent by the panel |
+
+## Robot video (Agora)
+
+The robot's cameras are not served on the LAN. The robot publishes each camera to Agora's real-time network, and the
+phone app joins as a viewer with a token it asks Yarbo's cloud for. Everything below is a **planned route** (`design.md`
+§13): the panel does not do it yet. Evidence is a recorder that has run daily against one robot and a live check of the
+token request, not a stored capture of the app, so each line is marked **[observed]** (seen working in that recorder or
+check, with no capture to link) or **[unconfirmed]**. Nothing here is **[captured]**; the maintainers' rule is that
+robot behaviour comes from a capture of the official app, so a capture is still wanted for the observed lines.
+No value here is real; serials, tokens, keys and salts are synthetic or shortened.
+
+**Switching the view on.** The app publishes `smart_vision_control {"state":1}` on `snowbot/{SN}/app/smart_vision_control`
+over the cloud broker (see the table above). **[observed]** that the robot publishes video after `{"state":1}`.
+`{"state":0}` is the app's "off". **[unconfirmed, untested]**: what `{"state":0}` does to a viewer who is watching in
+the official app at the same time, and whether it changes anything during a run besides the live view (obstacle
+detection in particular). Until those are tested, a client should send only `{"state":1}`.
+
+**Token request.** An authenticated POST to the cloud's *robot service*, a different host from the `data-api.yarbo.ai`
+used for sign-in and broker discovery (an AWS API Gateway stage; the host is not recorded in this document). The
+sign-in JWT, as `Authorization: Bearer <jwt>`, is accepted by it **[observed]**. How the app discovers the host is
+**[unconfirmed]**.
+
+```
+POST <robot-service>/yarbo/robot-service/robot/commonUser/getAgoraToken
+Authorization: Bearer <jwt>
+
+{"channel_name": "YB0000DEMO0001_middle_image", "sn": "YB0000DEMO0001", "uid": 888882}
+```
+
+```
+{"code": "00000",
+ "data": {"token": "007eJxSYmBg...", "key": "<hex>", "salt": "<base64>"},
+ "message": "...", "sign": "..."}
+```
+
+- `code` `"00000"` is success. Any other code is an error with a `message`. **[observed]**
+- `data.token` is an Agora AccessToken2 (`007` + base64 of zlib-compressed bytes). `data.key` and `data.salt` are the
+  stream's encryption material. Together they give a live, decryptable view, so treat all three as secrets.
+- **The App ID is not a response field.** It is the 32 hex characters embedded in the token (decompress the base64
+  after `007` and match `[0-9a-f]{32}`). **[observed]** It belongs to Yarbo's Agora project. Never commit one.
+- The token is minted for the `uid` in the request, so the viewer must join with exactly that `uid`.
+- **Lifetime is not known** **[unconfirmed]**: the recorder fetches once per session and has not seen one expire.
+- **Auth failures** **[observed]**: HTTP 401, and HTTP 200 with a body `code` of `A0230` (seen when every session was
+  invalidated at once on 2026-10-25). A client should refresh its sign-in once and retry once.
+
+**Channels and uid.**
+
+- One channel per camera: `<SN>_<cam>_image`, with `<cam>` one of `middle`, `left`, `right`, `back`. **[observed]**
+  by the recorder, which asks for four tokens, one per channel. An older note that the channel is just the serial
+  (one token) is **[unconfirmed]** and treated as stale.
+- `uid` must be non-zero. **The robot publishes as uid 1**, so a viewer must use another non-zero uid.
+  **[observed]** The recorder uses a fixed base plus a camera index.
+- Which camera is which on the robot depends on the head fitted: `middle` is the front camera and what it sees
+  changes with the head module. **[unconfirmed]** beyond the recorder's mower and leaf-blower use.
+
+**Joining and decrypting.** **[observed]** with the native Agora SDK; **[unconfirmed]** with the browser SDK.
+
+- The stream is encrypted. The recorder uses AES-128-GCM2 (Agora mode 7), with `key` as received and `salt`
+  **base64-decoded to bytes** (the response carries it as base64 text).
+- The recorder joins as a broadcaster but publishes nothing; a browser viewer would join as audience.
+  **[unconfirmed]**
+- Frames arrive as H.264. The recorder also maps a codec id for HEVC, which has **[unconfirmed]** never been seen.
+- With no publisher (robot asleep or the view not switched on) the join still succeeds and no video arrives. The
+  recorder allows a couple of seconds after `{"state":1}` before expecting frames.
+- The browser Web SDK needs the salt as a `Uint8Array`. **[unconfirmed]**
+- Agora bills received minutes per stream to the owner of the App ID (Yarbo), not to the household. A client should
+  watch one camera at a time and leave the channel when nobody is looking. There is no LAN route: a viewer on the home
+  network still pulls the video from Agora.
 
 ## Low-confidence config
 
