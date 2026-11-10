@@ -12,8 +12,6 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-replicaCount: 1
-
 # The panel's HTTP port (container and service).
 port: 8425
 

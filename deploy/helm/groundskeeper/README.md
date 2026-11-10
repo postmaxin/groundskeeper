@@ -27,7 +27,6 @@ kubectl -n groundskeeper port-forward svc/groundskeeper 8425:8425
 |---|---|---|
 | `image.repository` | `ghcr.io/groundskeeper-robot/groundskeeper` | Image repository |
 | `image.tag` | `""` (chart `appVersion`) | Image tag |
-| `replicaCount` | `1` | Single writer only (RWO volume) |
 | `port` | `8425` | Panel HTTP port (container + service) |
 | `puid` / `pgid` | `1000` | uid/gid the panel runs as; owns `/data` |
 | `env` | `{}` | Extra plain env vars (secrets go via `envFrom`) |

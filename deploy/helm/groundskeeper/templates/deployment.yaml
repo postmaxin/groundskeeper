@@ -5,8 +5,9 @@ metadata:
   labels:
     {{- include "groundskeeper.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.replicaCount }}
-  # The panel owns a single ReadWriteOnce volume; never run two writers against it.
+  # Always one: the panel's locks are per process, so a second pod could send robot commands and map writes
+  # at the same time as the first, and both would write the same /data. Not a value on purpose.
+  replicas: 1
   strategy:
     type: Recreate
   selector:
