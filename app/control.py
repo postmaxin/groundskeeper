@@ -349,7 +349,9 @@ class Controller:
                 route = self.link.command(cmd, payload)
                 self._seq += 1
                 self._spawn(self._follow_up(cmd, payload, args, route, self._seq, actor))
-                if actor != "guard":
+                if actor != "guard" and cmd != "smart_vision_control":
+                    # Switching the cameras on says nothing about the run: it must not look like a person taking
+                    # over, or the guards (ops._people_cmd_at) would stop retrying a pause or dock that didn't take.
                     self.last_human_cmd_at = time.time()
                 result = {"sent": True, "cmd": cmd, "payload": payload, "checks": checks, "route": route}
             except Refused as r:

@@ -89,6 +89,14 @@ def test_the_cameras_can_go_on_while_a_plan_is_running(tmp_path, actor):
     assert run(c.send("smart_vision_control", actor=actor))["sent"]
 
 
+def test_switching_the_cameras_on_is_not_a_person_taking_over_a_run(tmp_path):
+    store, cloud, c = make_controller(tmp_path, ctx=good_ctx(running=True), enabled=True)
+    assert run(c.send("smart_vision_control"))["sent"]
+    assert c.last_human_cmd_at == 0.0                  # the guards read this to see a person step in
+    assert run(c.send("pause"))["sent"]
+    assert c.last_human_cmd_at > 0.0                   # a real command still counts
+
+
 def test_the_cameras_wait_for_control_the_robot_and_the_route(tmp_path):
     store, cloud, c = make_controller(tmp_path)
     assert "switched off" in run(c.send("smart_vision_control"))["refused"]
