@@ -264,7 +264,10 @@ async def auth_oidc_start(request: Request, next: str = "/", moved: str = ""):
     # (an IP, another name), start again at PANEL_URL. Once only: a proxy that rewrites Host must not loop.
     here = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
     there = urlsplit(o.settings.panel).netloc
-    if not moved and here.lower() != there.lower():
+    # ...and over https when PANEL_URL is https: the flow cookie is then Secure, and a browser drops a Secure cookie
+    # set on a plain-http answer, so the sign-in would come back "expired".
+    wrong_scheme = o.settings.panel.startswith("https://") and not _secure(request)
+    if not moved and (here.lower() != there.lower() or wrong_scheme):
         query = urlencode({"next": oidc_mod.safe_next(next), "moved": "1"})
         return RedirectResponse(f"{o.settings.panel}{oidc_mod.START}?{query}", status_code=303)
     try:
