@@ -190,6 +190,18 @@ def test_a_pause_that_took_is_not_sent_again(tmp_path, monkeypatch):
     assert cl.sent == []
 
 
+def test_switching_the_cameras_on_does_not_cancel_a_pending_pause_repeat(tmp_path, monkeypatch):
+    c, rec, cl, store = _controller(tmp_path, monkeypatch, {"planning": 1, "planning_paused": 0})
+
+    async def go():
+        await c.send("pause", wait=False)               # went local; not seen yet
+        await c.send("smart_vision_control", wait=False)
+        await asyncio.sleep(0.3)
+
+    asyncio.run(go())
+    assert cl.sent == ["pause"]                     # the cloud repeat of the pause still happened
+
+
 def test_a_start_is_never_sent_again_by_the_other_route(tmp_path, monkeypatch):
     c, rec, cl, store = _controller(tmp_path, monkeypatch, {"planning": 0, "planning_paused": 0})
 

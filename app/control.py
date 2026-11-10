@@ -26,8 +26,9 @@ CATALOGUE = {
     "resume": {"label": "Resume", "args": ()},
     "stop": {"label": "Stop", "args": ()},
     "cmd_recharge": {"label": "Return to dock", "args": ()},
-    # Switches the robot's cameras on for the live view, nothing else. Only on: "off" also cut the official app's view
-    # on a phone (docs/dev/protocol.md → Robot video), so a client leaves switching off to the robot or the app.
+    # From the official app (docs/dev/protocol.md: Robot video, and the phone-app commands table). Switches the robot's
+    # cameras on for the live view, nothing else. Only on: "off" also cut the official app's view on a phone, so a
+    # client leaves switching off to the robot or the app.
     "smart_vision_control": {"label": "Cameras on", "args": ()},
 }
 HARD_BLOCKED = {"cmd_vel"}  # manual drive: never, from anyone
@@ -347,11 +348,13 @@ class Controller:
                 if cmd in ("start_plan", "resume"):
                     self.start_out = {"cmd": cmd, "at": time.time()}   # before the send: a send that fails half-way holds too
                 route = self.link.command(cmd, payload)
-                self._seq += 1
-                self._spawn(self._follow_up(cmd, payload, args, route, self._seq, actor))
+                if cmd != "smart_vision_control":
+                    # Switching the cameras on says nothing about the run. It must not bump _seq (a pause or dock
+                    # still waiting to be seen would stand down its other-route repeat) nor look like a person taking
+                    # over (the guards, ops._people_cmd_at, would stop retrying a pause or dock that didn't take).
+                    self._seq += 1
+                    self._spawn(self._follow_up(cmd, payload, args, route, self._seq, actor))
                 if actor != "guard" and cmd != "smart_vision_control":
-                    # Switching the cameras on says nothing about the run: it must not look like a person taking
-                    # over, or the guards (ops._people_cmd_at) would stop retrying a pause or dock that didn't take.
                     self.last_human_cmd_at = time.time()
                 result = {"sent": True, "cmd": cmd, "payload": payload, "checks": checks, "route": route}
             except Refused as r:
