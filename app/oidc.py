@@ -32,7 +32,7 @@ import secrets
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote_plus, urlencode, urlsplit
 
 import httpx
 import jwt
@@ -49,16 +49,28 @@ LEEWAY_S = 60                         # clock difference allowed on exp / iat
 ASYMMETRIC = frozenset({"RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512", "EdDSA"})
 
 
+# What the sign-in page may be told. Only these codes go into its address, and web/login.js turns each into a fixed
+# sentence, so nobody can put words of their own on the panel's real sign-in page.
+CODES = frozenset({"unavailable", "provider", "denied", "expired", "token", "not_allowed"})
+
+
 class OIDCError(Exception):
-    """A sign-in that must not go on. The message is shown on the sign-in page, so it never holds a token."""
+    """A sign-in that must not go on. `code` (one of CODES) is for the sign-in page; the message is for the log only.
+    `spent` says the flow cookie was this sign-in's own (it matched), so it is used up."""
+
+    def __init__(self, code: str, detail: str):
+        if code not in CODES:
+            raise ValueError(code)
+        super().__init__(detail)
+        self.code, self.spent = code, False
 
 
 class NotAllowed(OIDCError):
-    """The provider vouched for this person, but they are outside the allowed groups and domains."""
+    """The provider vouched for this account, but it is outside the allowed groups and domains."""
 
-    def __init__(self, user: str):
-        super().__init__(f"{user} is not allowed to use this panel")
-        self.user = user
+    def __init__(self, user: str, sub: str):
+        super().__init__("not_allowed", f"{user} (subject {sub}) is not allowed to use this panel")
+        self.user, self.sub = user, sub
 
 
 def _on(name: str) -> bool:
@@ -85,6 +97,7 @@ class Settings:
     groups_claim: str
     allowed_domains: frozenset[str]
     auto_login: bool
+    panel: str                         # PANEL_URL without a trailing slash: where sign-in starts and comes back
     redirect_uri: str
 
 
@@ -108,13 +121,16 @@ def load(panel_url: str | None, password_on: bool, auth_off: bool) -> Settings |
     parts = urlsplit(panel_url or "")
     if parts.scheme not in ("http", "https") or not parts.netloc:
         raise ValueError("OIDC needs PANEL_URL, the address people open, for the provider to send them back to")
+    if parts.scheme == "http":
+        log.warning("PANEL_URL is http://: the sign-in code and its PKCE verifier cross the network unencrypted")
+    panel = f"{parts.scheme}://{parts.netloc}{parts.path.rstrip('/')}"
     return Settings(
         issuer=issuer, client_id=client_id, client_secret=os.environ.get("OIDC_CLIENT_SECRET", "").strip(),
         name=(os.environ.get("OIDC_NAME", "").strip() or "OpenID Connect")[:40],
         scopes=os.environ.get("OIDC_SCOPES", "").strip() or "openid profile email",
         allowed_groups=groups, groups_claim=os.environ.get("OIDC_GROUPS_CLAIM", "").strip() or "groups",
         allowed_domains=frozenset(d.lower().lstrip("@") for d in domains), auto_login=_on("OIDC_AUTO_LOGIN"),
-        redirect_uri=f"{parts.scheme}://{parts.netloc}{CALLBACK}")
+        panel=panel, redirect_uri=panel + CALLBACK)
 
 
 def _b64(data: bytes) -> str:
@@ -126,8 +142,10 @@ def _unb64(text: str) -> bytes:
 
 
 def safe_next(path) -> str:
-    """Only a path in this panel: `//x`, `/\\x` or a full address would send the person somewhere else."""
-    if not isinstance(path, str) or not path.startswith("/") or path.startswith(("//", "/\\")) or "\\" in path:
+    """Only a path in this panel: `//x`, `/\\x`, a full address, or one with spaces or control characters (which a
+    browser may drop, leaving `//`) would send the person somewhere else."""
+    if (not isinstance(path, str) or not path.startswith("/") or path.startswith(("//", "/\\")) or "\\" in path
+            or any(ch.isspace() or not ch.isprintable() for ch in path)):
         return "/"
     return path[:500]
 
@@ -154,17 +172,15 @@ class OIDC:
         try:
             r = await self._http.get(url, **kw)
         except httpx.HTTPError as exc:
-            log.warning("OIDC provider unreachable: %s", exc)
-            raise OIDCError("the sign-in provider is not answering") from None
+            raise OIDCError("unavailable", f"provider unreachable: {exc}") from None
         if r.status_code != 200:
-            log.warning("OIDC provider answered %s for %s", r.status_code, url)
-            raise OIDCError("the sign-in provider refused a request")
+            raise OIDCError("provider", f"provider answered {r.status_code} for {url}")
         try:
             body = r.json()
         except ValueError:
             body = None
         if not isinstance(body, dict):
-            raise OIDCError("the sign-in provider sent something unexpected")
+            raise OIDCError("provider", f"provider sent no JSON object for {url}")
         return body
 
     async def config(self) -> dict:
@@ -173,14 +189,13 @@ class OIDC:
         s = self.settings
         c = await self._get_json(s.issuer.rstrip("/") + "/.well-known/openid-configuration")
         if str(c.get("issuer", "")).rstrip("/") != s.issuer.rstrip("/"):
-            log.warning("OIDC discovery names issuer %r, not %r", c.get("issuer"), s.issuer)
-            raise OIDCError("the sign-in provider's address does not match its own configuration")
+            raise OIDCError("provider", f"discovery names issuer {c.get('issuer')!r}, not {s.issuer!r}")
         for k in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
             if not isinstance(c.get(k), str) or not _https(c[k]):
-                raise OIDCError(f"the sign-in provider's configuration has no https {k}")
+                raise OIDCError("provider", f"discovery has no https {k}")
         if c.get("userinfo_endpoint") is not None and not (isinstance(c["userinfo_endpoint"], str)
                                                            and _https(c["userinfo_endpoint"])):
-            raise OIDCError("the sign-in provider's userinfo address is not https")
+            raise OIDCError("provider", "discovery's userinfo_endpoint is not https")
         self._config, self._config_at, self._jwks = c, time.time(), None
         return c
 
@@ -197,7 +212,7 @@ class OIDC:
                 match = [k for k in match if k.algorithm_name == alg]
             if len(match) == 1:
                 return match[0]
-        raise OIDCError("the sign-in token was signed with a key the provider does not publish")
+        raise OIDCError("token", f"ID token signed with a key the provider does not publish (kid {kid!r})")
 
     # -- the flow cookie ---------------------------------------------------------------------------------------------
     def _seal(self, flow: dict) -> str:
@@ -235,18 +250,27 @@ class OIDC:
         return url, self._seal(flow)
 
     async def finish(self, query: dict, cookie) -> dict:
-        """Check what the provider sent back. Returns {"user", "sub", "next"} for someone who may sign in."""
-        if query.get("error"):
-            text = "".join(ch for ch in str(query.get("error_description") or query["error"]) if ch.isprintable())
-            raise OIDCError(f"the sign-in provider said: {text[:160]}")
+        """Check what the provider sent back. Returns {"user", "sub", "next"} for someone who may sign in.
+        Nothing is believed, not even an error, until the flow cookie and `state` show it is this browser's sign-in."""
         flow = self._open(cookie)
         if flow is None:
-            raise OIDCError("this sign-in expired or was started in another browser; try again")
+            raise OIDCError("expired", "no valid flow cookie (expired, another browser, or forged)")
         if not hmac.compare_digest(str(query.get("state", "")).encode(), str(flow.get("state")).encode()):
-            raise OIDCError("this sign-in does not match the one started here; try again")
+            raise OIDCError("expired", "state does not match this browser's sign-in")
+        try:
+            return await self._finish(query, flow)
+        except OIDCError as exc:
+            exc.spent = True
+            raise
+
+    async def _finish(self, query: dict, flow: dict) -> dict:
+        if query.get("error"):
+            text = "".join(ch for ch in str(query.get("error_description") or query["error"]) if ch.isprintable())
+            raise OIDCError("denied" if query["error"] == "access_denied" else "provider",
+                            f"provider said: {text[:160]}")
         code = query.get("code")
         if not isinstance(code, str) or not code:
-            raise OIDCError("the sign-in provider sent no code")
+            raise OIDCError("provider", "no code in the callback")
         tokens = await self._exchange(code, flow["verifier"])
         claims = await self._check_id_token(tokens.get("id_token"), flow["nonce"])
         info = claims
@@ -255,58 +279,56 @@ class OIDC:
         user = next((str(info[k]) for k in ("preferred_username", "email", "sub") if info.get(k)), claims["sub"])
         user = "".join(ch for ch in user if ch.isprintable())[:60]
         if not self._allowed(info):
-            raise NotAllowed(user)
-        return {"user": user, "sub": str(claims["sub"]), "next": flow["next"]}
+            raise NotAllowed(user, str(claims["sub"])[:120])
+        return {"user": user, "sub": str(claims["sub"])[:120], "next": flow["next"]}
 
     async def _exchange(self, code: str, verifier: str) -> dict:
         s, c = self.settings, await self.config()
         data = {"grant_type": "authorization_code", "code": code, "redirect_uri": s.redirect_uri,
                 "code_verifier": verifier, "client_id": s.client_id}
-        auth = None
+        headers = {"Accept": "application/json"}
         if s.client_secret:
             methods = c.get("token_endpoint_auth_methods_supported") or ["client_secret_basic"]
-            if "client_secret_basic" in methods:
-                auth = (s.client_id, s.client_secret)
+            if "client_secret_basic" in methods:      # RFC 6749 2.3.1: each part form-encoded before base64
+                pair = f"{quote_plus(s.client_id)}:{quote_plus(s.client_secret)}"
+                headers["Authorization"] = "Basic " + base64.b64encode(pair.encode()).decode()
             else:
                 data["client_secret"] = s.client_secret
         try:
-            r = await self._http.post(c["token_endpoint"], data=data, auth=auth, headers={"Accept": "application/json"})
+            r = await self._http.post(c["token_endpoint"], data=data, headers=headers)
         except httpx.HTTPError as exc:
-            log.warning("OIDC token endpoint unreachable: %s", exc)
-            raise OIDCError("the sign-in provider is not answering") from None
+            raise OIDCError("unavailable", f"token endpoint unreachable: {exc}") from None
         try:
             body = r.json()
         except ValueError:
             body = None
         if r.status_code != 200 or not isinstance(body, dict) or not isinstance(body.get("id_token"), str):
-            log.warning("OIDC token endpoint answered %s", r.status_code)
-            raise OIDCError("the sign-in provider did not accept the sign-in")
+            raise OIDCError("provider", f"token endpoint answered {r.status_code}")
         return body
 
     async def _check_id_token(self, token, nonce: str) -> dict:
         s, c = self.settings, await self.config()
         if not isinstance(token, str):
-            raise OIDCError("the sign-in provider sent no ID token")
+            raise OIDCError("provider", "no ID token")
         try:
             header = jwt.get_unverified_header(token)
         except jwt.PyJWTError:
-            raise OIDCError("the sign-in token is not readable") from None
+            raise OIDCError("token", "ID token header unreadable") from None
         alg = header.get("alg")
         allowed = ASYMMETRIC & set(c.get("id_token_signing_alg_values_supported") or ASYMMETRIC)
         if alg not in allowed:
-            raise OIDCError("the sign-in token is not signed in a way this panel accepts")
+            raise OIDCError("token", f"ID token algorithm {alg!r} is not accepted")
         key = await self._key_for(header.get("kid"), alg)
         try:
             claims = jwt.decode(token, key=key.key, algorithms=[alg], audience=s.client_id, issuer=c["issuer"],
                                 leeway=LEEWAY_S, options={"require": ["exp", "iat", "iss", "aud", "sub"]})
         except jwt.PyJWTError as exc:
-            log.warning("OIDC ID token refused: %s", exc)
-            raise OIDCError("the sign-in token did not check out") from None
+            raise OIDCError("token", f"ID token refused: {exc}") from None
         aud = claims["aud"]
         if ("azp" in claims or (isinstance(aud, list) and len(aud) > 1)) and claims.get("azp") != s.client_id:
-            raise OIDCError("the sign-in token was issued to another application")
+            raise OIDCError("token", "ID token azp names another client")
         if not hmac.compare_digest(str(claims.get("nonce", "")).encode(), nonce.encode()):
-            raise OIDCError("the sign-in token does not belong to this sign-in")
+            raise OIDCError("token", "ID token nonce does not match this sign-in")
         return claims
 
     async def _userinfo(self, access_token, sub) -> dict:
@@ -315,7 +337,7 @@ class OIDC:
             return {}
         info = await self._get_json(url, headers={"Authorization": f"Bearer {access_token}"})
         if info.get("sub") != sub:                         # OIDC Core 5.3.2: userinfo must be about the same person
-            raise OIDCError("the sign-in provider's user details are about someone else")
+            raise OIDCError("token", "userinfo sub differs from the ID token's")
         return info
 
     def _allowed(self, info: dict) -> bool:

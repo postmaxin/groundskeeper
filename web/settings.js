@@ -1167,7 +1167,7 @@ function secAccess(d) {
   const signOut = async (all) => {
     if (all && !confirm("Sign out every browser, this one too?")) return;
     try { await authPost(all ? "/api/auth/signout_all" : "/api/auth/logout"); } catch (e) { toast(e.message); return; }
-    location.href = "/login.html";
+    location.href = "/login.html?signed_out=1";
   };
   const name = h("input", { class: "field slim", placeholder: "What will use it, e.g. Home Assistant", "data-key": "token-name" });
   const create = async () => {

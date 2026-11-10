@@ -78,6 +78,11 @@ keep the secret in a secret):
 - **Who gets in:** only people in an allowed group or domain, and everyone who gets in has full use of the panel,
   as with the password. Unlike Grafana, the panel refuses to start with single sign-on on and neither
   `OIDC_ALLOWED_GROUPS` nor `OIDC_ALLOWED_DOMAINS` set: it would let every account at the provider drive the robot.
+- **Groups are the safer choice.** An allowed domain trusts the provider's word that the email is verified. A
+  provider that lets people type their own email, or brokers other providers, can make that word cheap; with
+  Google, an allowed domain also takes any Google account that has an address there.
+- **Open it at `PANEL_URL`.** Signing in from another address (an IP, another name) first moves you to `PANEL_URL`,
+  because that is where the provider sends you back.
 - **Sessions** are the same 30-day sessions the password gives. Signing out ends the panel's session, not the
   provider's. The event log names who signed in, and anyone turned away.
 - **Provider down?** Set `PANEL_PASSWORD` back on (and, if you never set one, the log shows a setup code).

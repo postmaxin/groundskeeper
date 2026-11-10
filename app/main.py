@@ -16,7 +16,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 from fastapi import Body, FastAPI, HTTPException, Request
@@ -239,22 +239,36 @@ async def auth_login(request: Request, body: dict = Body(...)):
     return _with_session({"ok": True}, request, a.new_session(request.headers.get("user-agent", "")))
 
 
-def _back_to_sign_in(message: str) -> RedirectResponse:
-    resp = RedirectResponse("/login.html?" + urlencode({"error": message[:200]}), status_code=303)
-    resp.delete_cookie(oidc_mod.COOKIE, path=oidc_mod.COOKIE_PATH)
+def _back_to_sign_in(code: str, spent: bool = False) -> RedirectResponse:
+    """To the sign-in page with a code from oidc.CODES only (web/login.js shows a fixed sentence for each). The flow
+    cookie is cleared only when it was this sign-in's own: a stray callback must not cancel one in progress."""
+    resp = RedirectResponse("/login.html?" + urlencode({"error": code}), status_code=303)
+    if spent:
+        resp.delete_cookie(oidc_mod.COOKIE, path=oidc_mod.COOKIE_PATH)
     return resp
 
 
+_REFUSED_EVERY_S = 60                 # at most one "not allowed" event a minute: any account at the provider can try
+
+
 @app.get("/api/auth/oidc/start")
-async def auth_oidc_start(request: Request, next: str = "/"):
+async def auth_oidc_start(request: Request, next: str = "/", moved: str = ""):
     """Off to the OIDC provider (app/oidc.py), with the flow's state, nonce and PKCE verifier in a signed cookie."""
     o = getattr(request.app.state, "oidc", None)
     if o is None:
         raise HTTPException(404, "OIDC sign-in is not set up on this panel")
+    # The provider sends people back to PANEL_URL, so the flow cookie has to be set there. Opened at another address
+    # (an IP, another name), start again at PANEL_URL. Once only: a proxy that rewrites Host must not loop.
+    here = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
+    there = urlsplit(o.settings.panel).netloc
+    if not moved and here.lower() != there.lower():
+        query = urlencode({"next": oidc_mod.safe_next(next), "moved": "1"})
+        return RedirectResponse(f"{o.settings.panel}{oidc_mod.START}?{query}", status_code=303)
     try:
         url, flow = await o.begin(next)
     except oidc_mod.OIDCError as exc:
-        return _back_to_sign_in(str(exc))
+        log.warning("OIDC sign-in could not start: %s", exc)
+        return _back_to_sign_in(exc.code)
     resp = RedirectResponse(url, status_code=303)
     resp.set_cookie(oidc_mod.COOKIE, flow, max_age=oidc_mod.FLOW_S, httponly=True, samesite="lax",
                     secure=_secure(request), path=oidc_mod.COOKIE_PATH)
@@ -271,12 +285,16 @@ async def auth_oidc_callback(request: Request):
     try:
         who = await o.finish(dict(request.query_params), request.cookies.get(oidc_mod.COOKIE))
     except oidc_mod.OIDCError as exc:
-        log.warning("OIDC sign-in refused: %s", exc)
-        if isinstance(exc, oidc_mod.NotAllowed):   # someone the provider vouched for; stray callbacks only reach the log
-            a.store.event("auth", f"{exc.user} signed in with {o.settings.name} but is not allowed to use this panel")
-        return _back_to_sign_in(str(exc))
-    token = a.new_session(request.headers.get("user-agent", ""), user=who["user"])
-    a.store.event("auth", f"{who['user']} signed in with {o.settings.name}")
+        # A callback that isn't this browser's own sign-in (no flow, wrong state) is anyone's to send: log it quietly.
+        log.log(logging.WARNING if exc.spent else logging.INFO, "OIDC sign-in refused: %s", exc)
+        now = time.time()
+        if isinstance(exc, oidc_mod.NotAllowed) and now - getattr(o, "refused_event_at", 0.0) > _REFUSED_EVERY_S:
+            o.refused_event_at = now     # the name is the account's own choice, so it is labelled as such
+            a.store.event("auth", f"an account at {o.settings.name} that is not allowed tried to sign in "
+                                  f"(subject {exc.sub}; it calls itself {exc.user!r})")
+        return _back_to_sign_in(exc.code, exc.spent)
+    token = a.new_session(request.headers.get("user-agent", ""), user=who["user"], sub=who["sub"])
+    a.store.event("auth", f"{who['user']} signed in with {o.settings.name} (subject {who['sub']})")
     resp = _set_session(RedirectResponse(who["next"], status_code=303), request, token)
     resp.delete_cookie(oidc_mod.COOKIE, path=oidc_mod.COOKIE_PATH)
     return resp

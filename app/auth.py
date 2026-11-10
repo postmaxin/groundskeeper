@@ -20,7 +20,7 @@ People can also sign in through an OpenID Connect provider (app/oidc.py); that g
 `PANEL_PASSWORD=off` then turns the password off: no password sign-in, no first-run setup code, no password change.
 
 Stored in the settings table: `auth` {scrypt hash, salt, set}, `auth_sessions` {sha256(session): {created, seen,
-agent, user (OIDC sign-ins)}}, `api_tokens` [{id, name, sha256, hint, created, used}]. Only hashes; a session or
+agent, user and sub (OIDC sign-ins)}}, `api_tokens` [{id, name, sha256, hint, created, used}]. Only hashes; a session or
 token is shown once."""
 import hashlib
 import hmac
@@ -160,14 +160,17 @@ class Auth:
     def _sessions(self) -> dict:
         return self.store.setting("auth_sessions") or {}
 
-    def new_session(self, agent: str = "", user: str | None = None) -> str:
-        """A person's session. `user` is who an OIDC provider said signed in (the password has no name)."""
+    def new_session(self, agent: str = "", user: str | None = None, sub: str | None = None) -> str:
+        """A person's session. `user` and `sub` are who an OIDC provider said signed in: `sub` is the provider's
+        stable id for the account, `user` its display name (the account may choose it). The password has no name."""
         token = secrets.token_urlsafe(32)
         now = time.time()
         live = {k: v for k, v in self._sessions().items() if now - v.get("created", 0) < SESSION_DAYS * 86400}
         live[_sha(token)] = {"created": now, "seen": now, "agent": (agent or "")[:120]}
         if user:
             live[_sha(token)]["user"] = user[:60]
+        if sub:
+            live[_sha(token)]["sub"] = sub[:120]
         self.store.set_setting("auth_sessions", live)
         return token
 
