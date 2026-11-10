@@ -54,6 +54,14 @@ are pink, edge passes violet.
   survey on in [Settings → Robot](#settings/robot).
 - **Problem areas:** a weak-positioning spot also says when HaLow was weak there (−77 dBm or lower) or corrections
   came late. A good link there points at the sky view instead: trees, walls, the house.
+- **Cameras:** the robot's own cameras (front, left, right, back), not the yard cameras of the follow-cam. The tile
+  is there only when [Settings → Robot → Robot video](#help/settings) is on and the video service is set. **Open**
+  switches the robot's cameras on (needs Control on; with Control off it says so and plays only if the cameras are
+  already on, for example from the Yarbo app) and shows one camera at a time: pick Front, Left, Right or Back. The
+  state beside the title is *Connecting*, *Waiting for the robot* (cameras off or the robot asleep), *Live* or an
+  error with **Try again**. The video comes from Agora's network to your browser and plays only while the tile is
+  open: **Close**, another page, a hidden tab or a closed page stop it. The panel never switches the cameras off,
+  because that would cut the Yarbo app's view too; the robot does that itself. The demo shows a placeholder.
 - **Control card:** pick a plan and see its areas. Only the buttons that make sense in the robot's state are on.
   Needs control switched on ([Safety](#help/safety)). Hover a button that is off to see why; on a phone or a narrow
   window a line under the buttons says it instead.

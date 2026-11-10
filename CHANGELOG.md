@@ -7,16 +7,19 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 
 ### Added
 
+- **A Cameras tile on Live** shows the robot's own cameras (front, left, right, back), one at a time, while the tile
+  is open. It switches the cameras on (Control on, never off), plays the stream with Agora's SDK from this panel
+  (usage statistics off, no log upload) and leaves the channel when closed, on another page or a hidden tab. Shown
+  only with Robot video on and the service address set; the demo shows a placeholder.
 - **Robot video setting** (Settings → Robot → Yarbo cloud, off by default): lets a signed-in person ask for a robot
   camera's join details (`POST /api/video/token`); the viewer's browser then connects to Agora. People only: API tokens
   and AI assistants are refused, and the stream key is never logged. Needs `YARBO_ROBOT_SERVICE_URL` (environment only); the Live tile
-  that plays it follows.
+  that plays it is the Cameras tile.
 - **The controller can switch the robot's cameras on** (`smart_vision_control {"state":1}`, #20): the first step of
   the camera view. It goes through the same interlocks as other run commands (control on, robot online, a route),
   is marked as the panel's own so it is not taken for the phone app, and nothing can send "off" (state 0 is
   refused). Only a signed-in person can send it (not an API token, an assistant, the scheduler or a guard), and
-  only through the cloud. It can already be sent with `POST /api/control/send` when Control is on; there is no
-  camera view or button yet.
+  only through the cloud. The Cameras tile on Live sends it when opened.
 - **Installable with pip or uv** (`pyproject.toml`): another Python tool can depend on Groundskeeper's `app` package,
   and `uv sync` sets up a checkout. The Docker image and `requirements*.txt` are unchanged, and a test keeps the two
   dependency lists the same. Running the panel itself still needs a checkout or the container.

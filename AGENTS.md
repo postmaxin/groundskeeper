@@ -72,7 +72,7 @@ These come on top of the rules below, which apply to everyone.
 | `app/mcp_server.py` | MCP server for AI assistants (`ROUTES` allowlist, scrubbed output) |
 | `app/imagery/`, `catalog/` | Aerial imagery: protocols, catalog data (one JSON file per source) |
 | `app/demo.py`, `app/demo_robot.py` | Demo mode: synthetic history and a simulated robot |
-| `web/` | Plain JS, no build step: `app.js` (shell, Live, Runs), `studio.js`, `settings.js`, `ops.js`, `imagery.js`, `help.js`, `robot3d.js` |
+| `web/` | Plain JS, no build step: `app.js` (shell, Live, Runs), `studio.js`, `settings.js`, `ops.js`, `cameras.js` (the robot cameras tile), `imagery.js`, `help.js`, `robot3d.js` |
 | `docs/user/` | In-app Help pages (served by the panel) |
 | `docs/dev/` | Design (`design.md`, cited from code as §N), protocol, map writes, robot states, UI rules |
 | `tests/` | pytest; fakes for the robot, HTTP and stores; all synthetic. `tests/test_guards.py` checks the rules below |

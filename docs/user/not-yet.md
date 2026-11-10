@@ -14,6 +14,5 @@ What the panel cannot do today, and what would unlock it. A line goes when the f
 | Show the driving between areas in a plan's route preview | Asking the robot for its whole-plan preview (`preview_plan_path`) once and reading the reply; each area's own route already shows |
 | Change how far the robot drives without an RTK fix (50 m in an area, 10 m on pathways) | A capture of the app changing it; the panel already shows the values per area |
 | Restart or shut down the robot | A capture of the app doing it, with the robot docked |
-| Show the robot's cameras | The robot serves them only on an internal network; needs access to the robot itself |
 | Map writes, backups and the safety switches from an AI assistant | Not planned: those stay in the panel, with you |
 | Drive the robot by hand | Never: manual driving is blocked on purpose |
