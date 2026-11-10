@@ -11,8 +11,12 @@
    - Video runs only while the tile is open and the tab is showing Live. Closing it, changing camera, leaving Live,
      hiding the tab and closing the page all leave the channel.
    - The token, key and salt live in local variables of one function call. They are not kept on `cams`, in the DOM, in
-     storage or the URL, and nothing here writes to the console.
-   - The SDK's usage statistics are switched off before the client exists and its log upload is never enabled. */
+     storage or the URL, and nothing here writes to the console. (The SDK keeps a few `websdk_ng_*` items of its own
+     in this panel's localStorage: a device id, a cache of its settings and of a preload. This file clears them when
+     the SDK has loaded and when the channel is left; none of them holds the token, key or salt.)
+   - Agora's SDK is told, before any client exists, not to send usage statistics, not to upload logs, not to fetch
+     remote configuration (which could switch the two back on mid-session), not to preload the access point or
+     preconnect, and to use a random device id. See camerasQuietSdk. */
 "use strict";
 
 const CAM_CHOICES = [["front", "Front"], ["left", "Left"], ["right", "Right"], ["back", "Back"]];
@@ -20,9 +24,22 @@ const CAM_SDK_URL = "/vendor/AgoraRTC_N-production.js";
 const CAM_ROBOT_UID = 1;                           // the robot publishes as uid 1 (app/video.py ROBOT_UID)
 const CAM_SLOW_MS = 15000;                         // joined but no video yet: say why it may be
 const CAM_SETTINGS_MS = 20000;                     // how long a read of the video setting is trusted
+const CAM_SDK_TIMEOUT_MS = 20000;                  // a script load that hangs gives up, so the next try loads again
+const CAM_SDK_STORAGE = "websdk_ng_";              // the prefix of what the SDK itself keeps in localStorage
+// Switched off for the SDK (4.24.9, read from the vendored bundle). Each is written with the third argument true: the
+// SDK ignores a plain setParameter for a key a remote or cached configuration has already set.
+const CAM_SDK_OFF = [
+  ["ENABLE_EVENT_REPORT", false],                  // usage statistics
+  ["UPLOAD_LOG", false],                           // log upload
+  ["ENABLE_CONFIG_DISTRIBUTE", false],             // remote configuration, which can set the two above again
+  ["ENABLE_PRELOAD", false],                       // re-requests the access point with the token every 2 minutes
+  ["ENABLE_CREATE_CLIENT_PRECONNECT", false],      // requests to Agora hosts when a client is created...
+  ["CREATE_CLIENT_PRECONNECT_MODE", "report"],     // ...and "request" is the mode that fetches; "report" does not
+];
 
 const cams = { open: false, camera: savedCamera(), phase: "closed", message: "", hint: "", client: null, ticket: 0,
-               slowTimer: null, leaving: Promise.resolve(), settings: null, settingsAt: 0, card: null, stage: null, sdk: null };
+               slowTimer: null, leaving: Promise.resolve(), settings: null, settingsAt: 0, card: null, stage: null, sdk: null,
+               subscribed: 0 };
 
 function savedCamera() {
   try {
@@ -120,24 +137,53 @@ function camerasLeave() {
   clearTimeout(cams.slowTimer);
   const client = cams.client;
   cams.client = null;
+  camerasForgetSdkStorage();
   if (client) {
     try { client.removeAllListeners(); } catch { /* already gone */ }
     // Remembered, so a start that follows waits for this leave to finish before it makes another client.
-    const left = Promise.resolve().then(() => client.leave()).catch(() => { /* already left */ });
+    const left = Promise.resolve().then(() => client.leave()).catch(() => { /* already left */ })
+      .then(camerasForgetSdkStorage);               // the SDK may write as it leaves
     cams.leaving = Promise.all([cams.leaving, left]).then(() => {});
   }
   if (cams.stage) cams.stage.replaceChildren();
 }
 
+// The SDK keeps a device id and caches of its remote settings in localStorage, and reads the cached settings when it
+// loads. Clear them before it loads (a stale cache could pin a setting on) and after (it writes its device id on load).
+function camerasForgetSdkStorage() {
+  try {
+    const names = Object.keys(localStorage);
+    for (const name of names) if (name.startsWith(CAM_SDK_STORAGE)) localStorage.removeItem(name);
+  } catch { /* no storage */ }
+}
+
 function camerasLoadSdk() {
   if (window.AgoraRTC) return Promise.resolve(window.AgoraRTC);
   cams.sdk ||= new Promise((resolve, reject) => {
+    camerasForgetSdkStorage();
     const el = h("script", { src: CAM_SDK_URL });
-    el.onload = () => (window.AgoraRTC ? resolve(window.AgoraRTC) : reject(new Error("The video library did not load.")));
-    el.onerror = () => reject(new Error("The video library is missing (web/vendor/)."));
+    const timer = setTimeout(() => {
+      try { el.remove(); } catch { /* not attached */ }
+      reject(new Error("The video library took too long to load."));
+    }, CAM_SDK_TIMEOUT_MS);
+    el.onload = () => {
+      clearTimeout(timer);
+      camerasForgetSdkStorage();
+      if (window.AgoraRTC) resolve(window.AgoraRTC); else reject(new Error("The video library did not load."));
+    };
+    el.onerror = () => { clearTimeout(timer); reject(new Error("The video library is missing (web/vendor/).")); };
     document.head.append(el);
   }).catch((e) => { cams.sdk = null; throw e; });
   return cams.sdk;
+}
+
+// Before any client exists: nothing to Agora that the panel does not need (see CAM_SDK_OFF), a device id made up for
+// this start instead of the one the SDK would keep in localStorage, and a quiet console.
+function camerasQuietSdk(AgoraRTC) {
+  for (const [key, value] of CAM_SDK_OFF) AgoraRTC.setParameter(key, value, true);
+  const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Math.random()}`.slice(2);
+  AgoraRTC.setParameter("INSTALL_ID", id, true);
+  AgoraRTC.setLogLevel(4);
 }
 
 const camerasBytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -162,9 +208,7 @@ async function camerasStart({ on }) {
     const AgoraRTC = await camerasLoadSdk();      // only after the panel has given a token
     if (!live()) return;
     if (AgoraRTC.checkSystemRequirements && !AgoraRTC.checkSystemRequirements()) throw new Error("This browser cannot play the robot's video.");
-    // Before any client exists: no usage statistics to Agora, no log upload (never enabled), a quiet console.
-    AgoraRTC.setParameter("ENABLE_EVENT_REPORT", false);
-    AgoraRTC.setLogLevel(4);
+    camerasQuietSdk(AgoraRTC);
     const client = AgoraRTC.createClient({ mode: "live", codec: "h264" });
     cams.client = client;
     await client.setClientRole("audience");
@@ -173,12 +217,15 @@ async function camerasStart({ on }) {
     camerasListen(client, ticket);
     await client.join(join.app_id, join.channel, join.token, join.uid);
     if (!live()) return;
-    camerasSet("waiting", "Waiting for the robot's video…", hint || "The cameras may be off, or the robot asleep.");
-    cams.slowTimer = setTimeout(() => {
-      if (live() && cams.phase === "waiting") {
-        camerasSet("waiting", "No video from the robot yet.", "It may be asleep, or its cameras are off: open the Yarbo app, or switch Control on to wake them.");
-      }
-    }, CAM_SLOW_MS);
+    // The robot may have been publishing already: user-published can have started the video before join returned.
+    if (cams.phase !== "playing") {
+      camerasSet("waiting", "Waiting for the robot's video…", hint || "The cameras may be off, or the robot asleep.");
+      cams.slowTimer = setTimeout(() => {
+        if (live() && cams.phase === "waiting") {
+          camerasSet("waiting", "No video from the robot yet.", "It may be asleep, or its cameras are off: open the Yarbo app, or switch Control on to wake them.");
+        }
+      }, CAM_SLOW_MS);
+    }
     // Already-present users: subscribe only to the robot, and only if it is publishing video. Otherwise stay in
     // Waiting; user-published starts the playback.
     for (const u of client.remoteUsers || []) {
@@ -221,6 +268,7 @@ function camerasListen(client, ticket) {
   });
   client.on("user-unpublished", (user) => {
     if (live() && Number(user.uid) === CAM_ROBOT_UID) {
+      cams.subscribed = 0;                        // a later user-published subscribes again
       if (cams.stage) cams.stage.replaceChildren();
       camerasSet("waiting", "The robot stopped sending video.", "Its cameras may have switched off, or it went to sleep.");
     }
@@ -240,6 +288,8 @@ function camerasListen(client, ticket) {
 
 async function camerasPlay(client, user, mediaType, ticket) {
   if (Number(user.uid) !== CAM_ROBOT_UID || mediaType !== "video") return;
+  if (cams.subscribed === ticket) return;         // user-published and the remoteUsers loop can both get here
+  cams.subscribed = ticket;
   await client.subscribe(user, "video");
   if (ticket !== cams.ticket || !cams.open || !user.videoTrack) return;
   clearTimeout(cams.slowTimer);

@@ -61,7 +61,12 @@ are pink, edge passes violet.
   state beside the title is *Connecting*, *Waiting for the robot* (cameras off or the robot asleep), *Live* or an
   error with **Try again**. The video comes from Agora's network to your browser and plays only while the tile is
   open: **Close**, another page, a hidden tab or a closed page stop it. The panel never switches the cameras off,
-  because that would cut the Yarbo app's view too; the robot does that itself. The demo shows a placeholder.
+  because that would cut the Yarbo app's view too; the robot does that itself. The panel asks Agora's SDK not to send
+  usage statistics or upload logs, and switches off its remote configuration (which could turn those back on); a
+  network capture to confirm this is pending (issue #35). Agora's servers see the panel's address (the `Origin` and
+  `Referer` of the SDK's requests) and your browser's address. The SDK also keeps a few items of its own in this
+  browser's storage; the panel clears them when the SDK has loaded and when the tile leaves the channel. The demo shows
+  a placeholder.
 - **Control card:** pick a plan and see its areas. Only the buttons that make sense in the robot's state are on.
   Needs control switched on ([Safety](#help/safety)). Hover a button that is off to see why; on a phone or a narrow
   window a line under the buttons says it instead.

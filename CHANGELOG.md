@@ -9,7 +9,9 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 
 - **A Cameras tile on Live** shows the robot's own cameras (front, left, right, back), one at a time, while the tile
   is open. It switches the cameras on (Control on, never off), plays the stream with Agora's SDK from this panel
-  (usage statistics off, no log upload) and leaves the channel when closed, on another page or a hidden tab. Shown
+  (the panel asks the SDK not to send usage statistics or upload logs, and switches off its remote configuration; a
+  network capture to confirm this is pending, #35; Agora's servers see the panel's address) and leaves the channel
+  when closed, on another page or a hidden tab. Shown
   only with Robot video on and the service address set; the demo shows a placeholder.
 - **Robot video setting** (Settings → Robot → Yarbo cloud, off by default): lets a signed-in person ask for a robot
   camera's join details (`POST /api/video/token`); the viewer's browser then connects to Agora. People only: API tokens
