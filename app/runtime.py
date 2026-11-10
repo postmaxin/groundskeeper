@@ -17,21 +17,24 @@ from .config import Config
 GROUPS: dict[str, dict[str, str]] = {
     "robot": {"host": "yarbo_host", "port": "yarbo_port", "sn": "yarbo_sn"},
     "frigate": {"url": "frigate_url"},
+    "video": {"service_url": "robot_service_url"},      # §13: read per request, nothing to apply
     "home_assistant": {"url": "ha_url", "token": "ha_token"},
     "weather": {"tempest_port": "tempest_port"},
     "panel": {"url": "panel_url", "poll_idle_s": "poll_idle_s", "poll_active_s": "poll_active_s",
               "map_refresh_s": "map_refresh_s", "raw_every_s": "raw_every_s", "raw_keep_days": "raw_keep_days",
               "run_idle_end_s": "run_idle_end_s"},
 }
-ENV_NAMES = {"yarbo_host": "YARBO_HOST", "yarbo_port": "YARBO_PORT", "yarbo_sn": "YARBO_SN", "frigate_url": "FRIGATE_URL",
+ENV_NAMES = {"robot_service_url": "YARBO_ROBOT_SERVICE_URL",
+             "yarbo_host": "YARBO_HOST", "yarbo_port": "YARBO_PORT", "yarbo_sn": "YARBO_SN", "frigate_url": "FRIGATE_URL",
              "ha_url": "HA_URL", "ha_token": "HA_TOKEN", "tempest_port": "TEMPEST_PORT", "panel_url": "PANEL_URL",
              "poll_idle_s": "POLL_IDLE_S", "poll_active_s": "POLL_ACTIVE_S", "map_refresh_s": "MAP_REFRESH_S",
              "raw_every_s": "RAW_EVERY_S", "raw_keep_days": "RAW_KEEP_DAYS", "run_idle_end_s": "RUN_IDLE_END_S"}
 SECRETS = {("home_assistant", "token")}
 # DEMO=1 talks to no robot, Home Assistant, Frigate or Tempest: these groups keep the environment's (empty) values.
-DEMO_LOCKED = ("robot", "frigate", "home_assistant", "weather")
+DEMO_LOCKED = ("robot", "frigate", "home_assistant", "weather", "video")
 # false stored here means "switched off", even when the environment has a value
-OFFABLE = {("robot", "host"), ("robot", "sn"), ("frigate", "url"), ("home_assistant", "url"), ("home_assistant", "token"),
+OFFABLE = {("robot", "host"), ("robot", "sn"), ("frigate", "url"), ("video", "service_url"), ("home_assistant", "url"),
+           ("home_assistant", "token"),
            ("panel", "url")}
 log = logging.getLogger(__name__)
 _ATTR = {attr: (group, field) for group, fields in GROUPS.items() for field, attr in fields.items()}
@@ -72,6 +75,7 @@ VALIDATE = {
     ("robot", "port"): lambda v: _number(v, 1, 65535, "the port", integer=True),
     ("robot", "sn"): lambda v: _text(v, "the serial", _SN, "YB0000DEMO0001"),
     ("frigate", "url"): lambda v: _url(v, "the Frigate address"),
+    ("video", "service_url"): lambda v: _url(v, "the video service address"),
     ("home_assistant", "url"): lambda v: _url(v, "the Home Assistant address"),
     ("home_assistant", "token"): lambda v: _text(v, "the token"),
     ("weather", "tempest_port"): lambda v: _number(v, 0, 65535, "the UDP port", integer=True),

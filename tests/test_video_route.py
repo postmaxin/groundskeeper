@@ -151,3 +151,29 @@ def test_no_secret_is_logged_or_recorded_as_an_event(t, caplog):
         assert secret not in events, secret
         assert secret not in stored, secret
     assert "robot video switched ON" in events
+
+
+def test_the_address_is_an_integration_setting_applied_without_a_restart(tmp_path):
+    from app.runtime import Runtime
+    from tests.test_settings_api import env
+    store = Store(str(tmp_path))
+    rt = Runtime(env(tmp_path), store)
+    assert rt.robot_service_url is None                                  # no default: unset means "not configured"
+    assert rt.set("video", {"service_url": BASE + "/"}) == ["service_url"]
+    assert rt.robot_service_url == BASE                                  # live, trailing slash dropped
+    assert rt.describe()["video"]["service_url"]["env_name"] == "YARBO_ROBOT_SERVICE_URL"
+    with pytest.raises(ValueError):
+        rt.set("video", {"service_url": "robot-service"})
+    assert Runtime(env(tmp_path), store).robot_service_url == BASE       # survives a restart
+    assert rt.set("video", {"service_url": None}) == ["service_url"] and rt.robot_service_url is None
+    demo = Runtime(env(tmp_path, demo=True), store)
+    with pytest.raises(ValueError):
+        demo.set("video", {"service_url": BASE})                         # a demo instance has no real service
+
+
+def test_the_address_can_be_switched_off_over_the_environment(tmp_path):
+    from app.runtime import Runtime
+    from tests.test_settings_api import env
+    rt = Runtime(env(tmp_path, robot_service_url=BASE), Store(str(tmp_path)))
+    assert rt.robot_service_url == BASE
+    assert rt.set("video", {"service_url": False}) == ["service_url"] and not rt.robot_service_url

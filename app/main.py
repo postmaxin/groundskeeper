@@ -1639,7 +1639,7 @@ async def video_token(request: Request, body: dict = Body(...)):
     camera = body.get("camera")
     if not isinstance(camera, str) or camera not in video_mod.CAMERAS:
         raise HTTPException(400, f"camera: one of {', '.join(video_mod.CAMERAS)}")
-    base = request.app.state.cfg.robot_service_url
+    base = request.app.state.cfg.robot_service_url      # Settings over YARBO_ROBOT_SERVICE_URL (False: switched off)
     if not base:
         raise HTTPException(503, "robot video is not configured: set YARBO_ROBOT_SERVICE_URL")
     uid = secrets.randbelow(2**31 - 2) + 2              # chosen here: never 0, never the robot's 1

@@ -29,7 +29,7 @@ class Config:
     frigate_url: str | None
     panel_url: str | None
     demo_speed: float = 1.0
-    robot_service_url: str | None = None   # YARBO_ROBOT_SERVICE_URL: the cloud's robot service (video token, §13); no default
+    robot_service_url: str | None = None   # YARBO_ROBOT_SERVICE_URL: the robot service (§13); no default
 
 
 def load() -> Config:

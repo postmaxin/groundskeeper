@@ -575,7 +575,7 @@ function robotCards(d) {
   const ig = d.st.integrations?.robot || {};
   const signedIn = ["connected", "connecting", "reconnecting"].includes(cloud.state);
   const cloudColor = cloud.state === "connected" ? GREEN : cloud.state === "needs login" ? CORAL : signedIn ? AMBER : MUTED;
-  const seen = s.ops?.phone_app_seen_s;
+  const seen = s.ops?.phone_app_seen_s, vs = d.st.integrations?.video?.service_url || {};
   return { conn: robotConnection(d, ig, t, r),
     route: routeCard(d),
     robot: scard("Robot",
@@ -597,6 +597,8 @@ function robotCards(d) {
       cloud.broker ? srow("Broker", null, mono(cloud.broker)) : null,
       cloud.commands_sent ? srow("Commands sent", "Through this session.", String(cloud.commands_sent)) : null,
       cloud.error ? srow("Last error", null, colored(CORAL, cloud.error)) : null,
+      intStack("Video service address", "The Yarbo cloud's robot service, which hands out the camera tokens. Not recorded in the panel's code: set it here or with YARBO_ROBOT_SERVICE_URL.", "video", "service_url", vs,
+        textCtl({ key: "video_service_url", value: ival(vs), placeholder: "https://…", type: "url", onsave: (v) => saveIntegration("video", { service_url: v === null ? emptied(vs) : v }) })),
       srow("Robot video", ["Lets a signed-in person watch the robot's cameras. The video goes from Agora's network to your browser, ",
                            "so turning it on makes the browser connect to Agora. Off unless you switch it on; assistants and API tokens can't use it."],
         sstate(d.st.robot_video_enabled ? AMBER : MUTED, d.st.robot_video_enabled ? "ON" : "Off"),
