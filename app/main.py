@@ -174,13 +174,16 @@ def _auth(request: Request) -> "auth_mod.Auth":
     return request.app.state.auth
 
 
-def _secure(request: Request) -> bool:
-    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+def _secure(request: Request, panel: str | None = None) -> bool:
+    """Should a cookie be Secure? `panel`: the OIDC flow's PANEL_URL. Sign-in with OIDC always ends on that address,
+    so an https one is proof enough even behind a proxy that doesn't say X-Forwarded-Proto."""
+    return (request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+            or bool(panel and panel.startswith("https://")))
 
 
-def _set_session(resp, request: Request, token: str):
+def _set_session(resp, request: Request, token: str, panel: str | None = None):
     resp.set_cookie(auth_mod.COOKIE, token, max_age=auth_mod.SESSION_DAYS * 86400, httponly=True, samesite="lax",
-                    secure=_secure(request), path="/")
+                    secure=_secure(request, panel), path="/")
     return resp
 
 
@@ -271,7 +274,7 @@ async def auth_oidc_start(request: Request, next: str = "/", moved: str = ""):
         return _back_to_sign_in(exc.code)
     resp = RedirectResponse(url, status_code=303)
     resp.set_cookie(oidc_mod.COOKIE, flow, max_age=oidc_mod.FLOW_S, httponly=True, samesite="lax",
-                    secure=_secure(request), path=oidc_mod.COOKIE_PATH)
+                    secure=_secure(request, o.settings.panel), path=oidc_mod.COOKIE_PATH)
     return resp
 
 
@@ -295,7 +298,7 @@ async def auth_oidc_callback(request: Request):
         return _back_to_sign_in(exc.code, exc.spent)
     token = a.new_session(request.headers.get("user-agent", ""), user=who["user"], sub=who["sub"])
     a.store.event("auth", f"{who['user']} signed in with {o.settings.name} (subject {who['sub']})")
-    resp = _set_session(RedirectResponse(who["next"], status_code=303), request, token)
+    resp = _set_session(RedirectResponse(who["next"], status_code=303), request, token, o.settings.panel)
     resp.delete_cookie(oidc_mod.COOKIE, path=oidc_mod.COOKIE_PATH)
     return resp
 

@@ -439,6 +439,24 @@ def test_a_proxy_that_rewrites_host_does_not_make_it_loop(panel):
     assert r.headers["location"].startswith("https://idp.example.test/authorize?")
 
 
+def test_an_https_panel_url_makes_the_cookies_secure_behind_a_quiet_proxy(panel):
+    p = panel(panel_url="https://panel.test")                    # TLS ends at a proxy that sends no X-Forwarded-Proto
+    start = p.c.get("/api/auth/oidc/start", follow_redirects=False)
+    assert "secure" in start.headers["set-cookie"].lower()
+    back = p.idp.authorize(start.headers["location"])
+    flow = start.cookies.get(oidc.COOKIE)
+    p.c.cookies.set(oidc.COOKIE, flow, domain="panel.test", path=oidc.COOKIE_PATH)   # the client won't resend it on http
+    done = p.c.get("/api/auth/oidc/callback?" + urlencode(back), follow_redirects=False)
+    assert done.headers["location"] == "/"
+    session = [c for c in done.headers.get_list("set-cookie") if c.startswith(auth.COOKIE + "=")]
+    assert session and "secure" in session[0].lower()
+
+
+def test_an_http_panel_url_leaves_it_to_the_request(panel):
+    p = panel()
+    assert "secure" not in p.c.get("/api/auth/oidc/start", follow_redirects=False).headers["set-cookie"].lower()
+
+
 def test_behind_a_proxy_the_forwarded_host_counts(panel):
     p = panel(panel_url="https://gk.example.test")
     r = p.c.get("/api/auth/oidc/start", headers={"x-forwarded-host": "gk.example.test"}, follow_redirects=False)
