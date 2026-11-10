@@ -1,7 +1,7 @@
 # Groundskeeper Helm chart
 
-Run [Groundskeeper](https://github.com/Groundskeeper-robot/groundskeeper) on Kubernetes: one Deployment, a Service,
-and a PersistentVolumeClaim for its `/data`. Everything site-specific (the robot's address, Home Assistant, Frigate,
+Run [Groundskeeper](https://github.com/Groundskeeper-robot/groundskeeper) on Kubernetes: a StatefulSet of one pod, a
+Service, and a PersistentVolumeClaim for its `/data`. Everything site-specific (the robot's address, Home Assistant, Frigate,
 imagery) is configured in the panel's **Settings** UI after it starts — not in `values.yaml`.
 
 > Groundskeeper controls a machine with blades and stores the location of a home. Control, map writing, guard
@@ -63,3 +63,7 @@ The entrypoint then skips the chown and runs directly as that user; `fsGroup` ma
   configured in the UI.
 - `hostNetwork` is only for receiving a Tempest weather station's UDP broadcast. Leave it off otherwise; the panel
   is reachable through the Service regardless.
+- **One panel at a time.** The chart runs exactly one pod, as a StatefulSet, so a replacement (after an eviction, a
+  node drain or `kubectl delete pod`) starts only once the old pod has exited. Two panels at once could both send
+  robot commands. Don't force-delete the pod (`--grace-period=0 --force`) while its node is still running: that skips
+  the wait.

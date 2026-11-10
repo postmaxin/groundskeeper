@@ -1,15 +1,16 @@
 apiVersion: apps/v1
-kind: Deployment
+# A StatefulSet, not a Deployment: when its pod is deleted or evicted, the replacement only starts once the old pod
+# has exited. A Deployment starts the new pod at once, so for a while two panels could both send robot commands and
+# map writes (their locks are per process) and both write /data.
+kind: StatefulSet
 metadata:
   name: {{ include "groundskeeper.fullname" . }}
   labels:
     {{- include "groundskeeper.labels" . | nindent 4 }}
 spec:
-  # Always one: the panel's locks are per process, so a second pod could send robot commands and map writes
-  # at the same time as the first, and both would write the same /data. Not a value on purpose.
+  # Always one, for the same reason. Not a value on purpose.
   replicas: 1
-  strategy:
-    type: Recreate
+  serviceName: {{ include "groundskeeper.fullname" . }}
   selector:
     matchLabels:
       {{- include "groundskeeper.selectorLabels" . | nindent 6 }}
