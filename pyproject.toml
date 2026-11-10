@@ -44,5 +44,7 @@ dev = [
 [tool.hatch.version]
 path = "app/version.py"               # __version__
 
+# The wheel is the library (app/). The panel's bundled catalog/, web/ and docs/ are found beside app/, so running
+# the panel itself still needs a checkout or the container (#9).
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
