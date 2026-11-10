@@ -423,9 +423,11 @@ What is known:
 
 The panel does not get into the robot, and no video passes through the panel. It follows the app's route:
 
-1. **Token.** A new read in `app/cloud.py` (not MQTT, not a publish) asks the cloud's robot service for a token, with
-   the sign-in the panel already holds. The server chooses a camera from a fixed allowlist (front, left, right, back)
-   and a random viewer uid (never the robot's uid 1), and returns the join details to the browser.
+1. **Token.** A new read, `app/video.py` (not MQTT, not a publish), asks the cloud's robot service for a token, with
+   the sign-in `app/cloud.py` already holds. The server chooses a camera from a fixed allowlist (front, left, right,
+   back) and a random viewer uid (never the robot's uid 1), and returns the join details to the browser. The read is
+   built; the route is not. The robot service's address is not in this repository: the caller passes it in, with no
+   default.
 2. **Playback.** The browser plays the stream with Agora's Web SDK, **vendored** under `web/vendor/` with a pinned
    version and a checksummed Dockerfile download, like MapLibre and three.js. Nothing loads from a CDN at runtime, and
    the script is fetched only when the setting is on and someone opens the viewer.

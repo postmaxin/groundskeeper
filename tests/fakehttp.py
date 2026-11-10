@@ -49,8 +49,10 @@ def size_of(params: dict) -> tuple[int, int]:
 
 
 class FakeHTTP:
-    def __init__(self, answer=None, delay=None):
+    def __init__(self, answer=None, delay=None, answer_post=None):
         self.calls: list[dict] = []
+        self.posts: list[dict] = []
+        self.answer_post = answer_post           # (url, json_body, headers) -> FakeResponse
         self.answer = answer or (lambda url, params, headers: FakeResponse(200, jpeg(noise(*size_of(params)))))
         self.delay = delay                       # (url, params) -> seconds to wait before answering
 
@@ -61,6 +63,12 @@ class FakeHTTP:
         if self.delay:
             await asyncio.sleep(self.delay(url, dict(params or {})))
         return self.answer(url, dict(params or {}), dict(headers or {}))
+
+    async def post(self, url, json=None, headers=None, **_):
+        self.posts.append({"url": url, "json": dict(json or {}), "headers": dict(headers or {})})
+        if self.answer_post is None:
+            raise AssertionError(f"must not post to {url}")
+        return self.answer_post(url, dict(json or {}), dict(headers or {}))
 
     def stream(self, method, url, params=None, headers=None, **_):
         fake = self
