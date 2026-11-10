@@ -34,6 +34,7 @@ kubectl -n groundskeeper port-forward svc/groundskeeper 8425:8425
 | `persistence.enabled` | `true` | Create a PVC for `/data` |
 | `persistence.storageClass` | `""` | `""` = cluster default |
 | `persistence.size` | `2Gi` | PVC size |
+| `persistence.keepOnUninstall` | `true` | Keep the chart-created PVC after `helm uninstall` (a reinstall then needs `persistence.existingClaim`) |
 | `persistence.existingClaim` | `""` | Use an existing PVC instead |
 | `service.type` | `ClusterIP` | Service type |
 | `service.port` | `8425` | Service port |

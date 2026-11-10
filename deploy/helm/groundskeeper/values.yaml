@@ -34,6 +34,9 @@ persistence:
   accessModes:
     - ReadWriteOnce
   size: 2Gi
+  # Keep the PVC (history, settings, login) when the release is uninstalled. Delete it yourself with kubectl
+  # to remove the data; set false to let `helm uninstall` delete it.
+  keepOnUninstall: true
   # Use an existing PVC instead of creating one.
   existingClaim: ""
 
