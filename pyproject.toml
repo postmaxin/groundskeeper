@@ -26,6 +26,7 @@ dependencies = [
     "pillow>=13.0.0,<14",
     "numpy>=2.5.4,<3",
     "mcp>=2.3,<3",
+    "pyjwt[crypto]>=2.10.1,<3",       # OIDC ID tokens (app/oidc.py); mcp needs it too
 ]
 
 [project.urls]

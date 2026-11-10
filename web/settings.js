@@ -1167,7 +1167,7 @@ function secAccess(d) {
   const signOut = async (all) => {
     if (all && !confirm("Sign out every browser, this one too?")) return;
     try { await authPost(all ? "/api/auth/signout_all" : "/api/auth/logout"); } catch (e) { toast(e.message); return; }
-    location.href = "/login.html";
+    location.href = "/login.html?signed_out=1";
   };
   const name = h("input", { class: "field slim", placeholder: "What will use it, e.g. Home Assistant", "data-key": "token-name" });
   const create = async () => {
@@ -1182,11 +1182,16 @@ function secAccess(d) {
   };
   const tokens = a.tokens || [];
   return [
-    scard("Password",
-      srow("Change password", "Signs out every other browser.", h("div", { class: "row gap wrap" }, cur, npw, sbtn("Change", change))),
+    scard(a.password === false ? "Sign-in" : "Password",
+      a.oidc ? srow(`Sign in with ${a.oidc.name}`, "OpenID Connect, set in the panel's environment (OIDC_*): only the allowed groups and domains get in.",
+        sstate(GREEN, "On")) : null,
+      a.password === false
+        ? srow("Password", "PANEL_PASSWORD=off: the password and first-run setup are off.", sstate(MUTED, "Off"))
+        : srow("Change password", "Signs out every other browser.", h("div", { class: "row gap wrap" }, cur, npw, sbtn("Change", change))),
       srow("Sign out", "This browser, or every browser signed in.",
         h("div", { class: "row gap wrap" }, sbtn("Sign out", () => signOut(false)), sbtn("Sign out everywhere", () => signOut(true)))),
-      sfoot("Forgot the password? Run ", mono("python -m app.auth reset"), " in the container and restart it; its log shows a new setup code.")),
+      a.password === false ? null
+        : sfoot("Forgot the password? Run ", mono("python -m app.auth reset"), " in the container and restart it; its log shows a new setup code.")),
     scard("API tokens",
       snote(h("span", null, "For programs that call the panel's API, such as a Home Assistant integration or a script: header ",
             mono("Authorization: Bearer <token>"), ". A token can read, and can ask for robot commands while control is on, under the strictest checks: anything unknown blocks a start or resume, and it cannot override. ",

@@ -195,7 +195,10 @@ def test_every_robot_command_is_documented(cmd):
 
 # Every path that skips sign-in. Adding one is a security decision: change this set in the same PR and say why.
 OPEN_PATHS = {"/health", "/login.html", "/login.js", "/style.css", "/favicon.ico", "/manifest.json",
-              "/api/auth/status", "/api/auth/login", "/api/auth/setup"}
+              "/api/auth/status", "/api/auth/login", "/api/auth/setup",
+              # OIDC sign-in: out to the provider and back. Both are no-ops (404) unless OIDC_ISSUER is set, and the
+              # callback only signs someone in after the signed flow cookie, the ID token and the allowlist check out.
+              "/api/auth/oidc/start", "/api/auth/oidc/callback"}
 
 
 def test_open_paths_are_pinned():

@@ -53,7 +53,8 @@ def test_health_and_sign_in_page_stay_open(client):
     h = client.c.get("/health").json()
     assert h["ok"] and h["busy"] is True                      # deploy's "not mid-mow" check needs no sign-in
     assert client.c.get("/api/auth/status").json() == {"disabled": False, "password_set": False, "signed_in": False,
-                                                       "min_password": auth.MIN_PASSWORD}
+                                                       "min_password": auth.MIN_PASSWORD, "password": True,
+                                                       "oidc": None}
     assert not auth.needs_auth("/login.html") and not auth.needs_auth("/brand/favicon.svg")
     assert not auth.needs_auth("/mcp")                        # the MCP server checks its own token
 

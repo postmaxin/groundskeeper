@@ -1,5 +1,6 @@
 /* The sign-in page: the password, or on first run the setup code from the panel's log plus a new password
-   (app/auth.py). On success it goes back to where the user was headed. */
+   (app/auth.py), and "Sign in with <provider>" when OIDC is set up (app/oidc.py). On success it goes back to where
+   the user was headed. */
 "use strict";
 (async function () {
   const $ = (s) => document.querySelector(s);
@@ -17,6 +18,28 @@
   let st;
   try { st = await (await fetch("/api/auth/status", { cache: "no-store" })).json(); } catch { err("The panel is not answering."); return; }
   if (st.disabled || st.signed_in) return next();
+  const params = new URLSearchParams(location.search);
+  // A refused OIDC sign-in comes back with a code (app/oidc.py CODES). Only these fixed sentences are shown, so a
+  // link can't put words of its own on this page.
+  const REASONS = {
+    unavailable: "The sign-in provider is not answering. Try again in a minute.",
+    provider: "The sign-in provider did not complete the sign-in. The panel's log says why.",
+    denied: "The sign-in was cancelled at the provider.",
+    expired: "That sign-in expired or was started in another browser. Try again.",
+    token: "The sign-in provider's answer did not check out, so you are not signed in. The panel's log says why.",
+    not_allowed: "That account is not allowed to use this panel.",
+  };
+  if (params.has("error")) err(REASONS[params.get("error")] || "Signing in did not work. Try again.");
+  if (st.oidc) {
+    const go = "/api/auth/oidc/start?" + new URLSearchParams({ next: params.get("next") || "/" });
+    const btn = $("#oidc");
+    btn.textContent = `Sign in with ${st.oidc.name}`;
+    btn.href = go;
+    btn.hidden = false;
+    // Not straight back after signing out (the provider would sign you in again) or after a refusal.
+    if (st.oidc.auto_login && !params.has("error") && !params.has("signed_out")) return location.assign(go);
+  }
+  if (st.password === false) return;               // PANEL_PASSWORD=off: the provider is the only way in
   const form = st.password_set ? $("#login") : $("#setup");
   form.hidden = false;
   form.querySelector("input").focus();

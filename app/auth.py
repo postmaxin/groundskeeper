@@ -16,8 +16,12 @@ it and the sessions; the next start prints a new code.
 `PANEL_AUTH=off` turns all of this off, for a panel behind a reverse proxy that does its own sign-in. Never on a
 panel others on the network can reach.
 
+People can also sign in through an OpenID Connect provider (app/oidc.py); that gives the same session.
+`PANEL_PASSWORD=off` then turns the password off: no password sign-in, no first-run setup code, no password change.
+
 Stored in the settings table: `auth` {scrypt hash, salt, set}, `auth_sessions` {sha256(session): {created, seen,
-agent}}, `api_tokens` [{id, name, sha256, hint, created, used}]. Only hashes; a session or token is shown once."""
+agent, user and sub (OIDC sign-ins)}}, `api_tokens` [{id, name, sha256, hint, created, used}]. Only hashes; a session or
+token is shown once."""
 import hashlib
 import hmac
 import logging
@@ -41,7 +45,8 @@ INTERNAL = secrets.token_urlsafe(32)   # the MCP server's in-process calls (neve
 
 # Paths anyone may load: the sign-in page and what it needs, and /health (for Docker and uptime checks).
 OPEN_PATHS = {"/health", "/login.html", "/login.js", "/style.css", "/favicon.ico", "/manifest.json",
-              "/api/auth/status", "/api/auth/login", "/api/auth/setup"}
+              "/api/auth/status", "/api/auth/login", "/api/auth/setup",
+              "/api/auth/oidc/start", "/api/auth/oidc/callback"}     # OIDC: the way out to the provider and back
 OPEN_PREFIXES = ("/brand/",)
 # Locked: data. The static UI files (plain JS/CSS from this repo) carry no data and stay open; "/" redirects.
 LOCKED_PREFIXES = ("/api/", "/tiles/", "/imagery/")
@@ -56,6 +61,11 @@ SIGNED_TTL_S = 3600
 
 def disabled() -> bool:
     return os.environ.get("PANEL_AUTH", "").strip().lower() in ("off", "0", "false", "no")
+
+
+def password_enabled() -> bool:
+    """PANEL_PASSWORD=off: people sign in through OIDC only (app/oidc.py refuses to start without it)."""
+    return os.environ.get("PANEL_PASSWORD", "").strip().lower() not in ("off", "0", "false", "no")
 
 
 def _same(a, b) -> bool:
@@ -94,6 +104,9 @@ class Auth:
         if disabled():
             log.warning("PANEL_AUTH=off: anyone who can reach this panel can use it, including robot control")
             return
+        if not password_enabled():
+            log.info("PANEL_PASSWORD=off: password sign-in and first-run setup are off; people sign in with OIDC")
+            return
         if self.has_password():
             return
         self.setup_code = "-".join(secrets.token_hex(2).upper() for _ in range(3))
@@ -107,12 +120,14 @@ class Auth:
 
     def check_password(self, password: str) -> bool:
         a = self.store.setting("auth") or {}
-        if not a.get("hash") or not isinstance(password, str):
+        if not password_enabled() or not a.get("hash") or not isinstance(password, str):
             return False
         return _same(_scrypt(password, bytes.fromhex(a["salt"])), a["hash"])
 
     def setup(self, code: str, password: str) -> str:
         """First run: the code from the log plus a new password. Returns a session."""
+        if not password_enabled():
+            raise PermissionError("password sign-in is off on this panel")
         if self.has_password():
             raise PermissionError("a password is already set; sign in instead")
         if not self.setup_code or not isinstance(code, str) or not _same(code.strip().upper(), self.setup_code):
@@ -145,11 +160,17 @@ class Auth:
     def _sessions(self) -> dict:
         return self.store.setting("auth_sessions") or {}
 
-    def new_session(self, agent: str = "") -> str:
+    def new_session(self, agent: str = "", user: str | None = None, sub: str | None = None) -> str:
+        """A person's session. `user` and `sub` are who an OIDC provider said signed in: `sub` is the provider's
+        stable id for the account, `user` its display name (the account may choose it). The password has no name."""
         token = secrets.token_urlsafe(32)
         now = time.time()
         live = {k: v for k, v in self._sessions().items() if now - v.get("created", 0) < SESSION_DAYS * 86400}
         live[_sha(token)] = {"created": now, "seen": now, "agent": (agent or "")[:120]}
+        if user:
+            live[_sha(token)]["user"] = user[:60]
+        if sub:
+            live[_sha(token)]["sub"] = sub[:120]
         self.store.set_setting("auth_sessions", live)
         return token
 
