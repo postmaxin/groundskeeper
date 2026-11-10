@@ -124,9 +124,14 @@ def load(panel_url: str | None, password_on: bool, auth_off: bool) -> Settings |
     if parts.path.strip("/") or parts.query or parts.fragment:
         # The panel serves itself from the root (/login.js, /api/...), so it can't live under a path prefix.
         raise ValueError("PANEL_URL must be the panel's own address with no path, e.g. https://panel.example.com")
+    if parts.username is not None or parts.password is not None:
+        raise ValueError("PANEL_URL must not carry a user name or password: it is sent to the provider")
     if parts.scheme == "http":
         log.warning("PANEL_URL is http://: the sign-in code and its PKCE verifier cross the network unencrypted")
-    panel = f"{parts.scheme}://{parts.netloc}"
+    host = f"[{parts.hostname}]" if ":" in (parts.hostname or "") else parts.hostname
+    default = {"http": 80, "https": 443}[parts.scheme]
+    port = "" if parts.port in (None, default) else f":{parts.port}"      # :443 never equals the Host header
+    panel = f"{parts.scheme}://{host}{port}"
     return Settings(
         issuer=issuer, client_id=client_id, client_secret=os.environ.get("OIDC_CLIENT_SECRET", "").strip(),
         name=(os.environ.get("OIDC_NAME", "").strip() or "OpenID Connect")[:40],
@@ -284,7 +289,7 @@ class OIDC:
                 (s.allowed_groups and s.groups_claim not in claims)
                 or (s.allowed_domains and ("email" not in claims or "email_verified" not in claims))):
             info = self._merge(claims, await self._userinfo(tokens.get("access_token"), claims["sub"]))
-        user =next((str(info[k]) for k in ("preferred_username", "email", "sub") if info.get(k)), claims["sub"])
+        user = next((str(info[k]) for k in ("preferred_username", "email", "sub") if info.get(k)), claims["sub"])
         user = "".join(ch for ch in user if ch.isprintable())[:60]
         if not self._allowed(info):
             raise NotAllowed(user, str(claims["sub"])[:120])

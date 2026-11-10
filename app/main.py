@@ -188,7 +188,13 @@ def _set_session(resp, request: Request, token: str, panel: str | None = None):
 
 
 def _with_session(body: dict, request: Request, token: str) -> JSONResponse:
-    return _set_session(JSONResponse(body), request, token)
+    """A password session. Secure as for OIDC when the request is for PANEL_URL's own host and that is https (a
+    TLS proxy may not say X-Forwarded-Proto); not for another address, such as a LAN IP over plain http."""
+    panel = getattr(getattr(request.app.state, "cfg", None), "panel_url", None)
+    here = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
+    if not panel or urlsplit(panel).netloc.lower() != here.lower():
+        panel = None
+    return _set_session(JSONResponse(body), request, token, panel)
 
 
 def _password_on() -> None:

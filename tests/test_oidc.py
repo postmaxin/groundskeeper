@@ -156,6 +156,11 @@ def sign_in(p, next_path="/", tamper=None):
     return p.c.get("/api/auth/oidc/callback?" + urlencode(back), follow_redirects=False)
 
 
+def cookie_attrs(header: str) -> set[str]:
+    """The attribute names of one Set-Cookie header (Secure, HttpOnly, ...), lower-case; not its value."""
+    return {part.split("=", 1)[0].strip().lower() for part in header.split(";")[1:]}
+
+
 def signed_in(p) -> bool:
     return p.c.get("/api/auth/status").json()["signed_in"]
 
@@ -195,6 +200,20 @@ def test_a_client_secret_with_reserved_characters_is_form_encoded(panel):
     assert sign_in(p).headers["location"] == "/" and signed_in(p)
     raw = base64.b64decode(p.idp.token_requests[0]["auth"][6:]).decode()
     assert raw == "panel-client:p%25ss%3Aw%2Brd"
+
+
+@pytest.mark.parametrize("url, panel", [("https://panel.test:443", "https://panel.test"),
+                                        ("http://Panel.Test:80/", "http://panel.test"),
+                                        ("https://panel.test:8443", "https://panel.test:8443")])
+def test_panel_url_is_normalised(monkeypatch, url, panel):
+    _env(monkeypatch, **OIDC_ENV)
+    assert oidc.load(url, True, False).panel == panel
+
+
+def test_a_panel_url_with_credentials_is_refused(monkeypatch):
+    _env(monkeypatch, **OIDC_ENV)
+    with pytest.raises(ValueError, match="user name or password"):
+        oidc.load("https://u:p@panel.test", True, False)
 
 
 @pytest.mark.parametrize("url", ["http://panel.test/gk/", "http://panel.test/gk", "http://panel.test/?x=1"])
@@ -280,6 +299,29 @@ def test_userinfo_is_read_when_the_token_lacks_what_decides(panel):
     p.idp.userinfo_status = 500
     assert refused(sign_in(p)) == "provider" and not signed_in(p)
     assert p.idp.userinfo_reads == 1
+
+
+@pytest.mark.parametrize("token, info", [
+    ({"groups": [], "email": "tess@other.example"}, {"groups": ["lawn admins"]}),           # an empty list in the token is the answer
+    ({"groups": None, "email": "tess@other.example"}, {"groups": ["lawn admins"]}),
+    ({"groups": {"lawn admins": True}, "email": "tess@other.example"}, {"groups": ["lawn admins"]}),
+    ({"groups": [], "email_verified": None}, {"email": "tess@example.org", "email_verified": True}),
+])
+def test_what_the_token_says_is_not_overruled_by_userinfo(panel, token, info):
+    p = panel(OIDC_ALLOWED_DOMAINS="example.org")
+    p.idp.claims, p.idp.userinfo = token, info
+    assert refused(sign_in(p)) == "not_allowed" and not signed_in(p)
+    assert p.idp.userinfo_reads == 0
+
+
+def test_a_password_session_is_secure_on_the_https_panel_url_host_only(panel, monkeypatch):
+    p = panel(panel_url="https://panel.test")
+    monkeypatch.setattr(main.app.state, "cfg", SimpleNamespace(panel_url="https://panel.test"), raising=False)
+    p.auth.set_password("correct horse")
+    r = p.c.post("/api/auth/login", json={"password": "correct horse"})       # TLS proxy without X-Forwarded-Proto
+    assert r.status_code == 200 and "secure" in cookie_attrs(r.headers["set-cookie"])
+    lan = p.c.post("/api/auth/login", json={"password": "correct horse"}, headers={"host": "192.0.2.10:8425"})
+    assert lan.status_code == 200 and "secure" not in cookie_attrs(lan.headers["set-cookie"])
 
 
 def test_userinfo_can_confirm_the_same_address(panel):
@@ -442,14 +484,14 @@ def test_a_proxy_that_rewrites_host_does_not_make_it_loop(panel):
 def test_an_https_panel_url_makes_the_cookies_secure_behind_a_quiet_proxy(panel):
     p = panel(panel_url="https://panel.test")                    # TLS ends at a proxy that sends no X-Forwarded-Proto
     start = p.c.get("/api/auth/oidc/start?moved=1", follow_redirects=False)       # after the one move to https
-    assert "secure" in start.headers["set-cookie"].lower()
+    assert "secure" in cookie_attrs(start.headers["set-cookie"])
     back = p.idp.authorize(start.headers["location"])
     flow = start.cookies.get(oidc.COOKIE)
     p.c.cookies.set(oidc.COOKIE, flow, domain="panel.test", path=oidc.COOKIE_PATH)   # the client won't resend it on http
     done = p.c.get("/api/auth/oidc/callback?" + urlencode(back), follow_redirects=False)
     assert done.headers["location"] == "/"
     session = [c for c in done.headers.get_list("set-cookie") if c.startswith(auth.COOKIE + "=")]
-    assert session and "secure" in session[0].lower()
+    assert session and "secure" in cookie_attrs(session[0])
 
 
 def test_plain_http_on_the_panel_s_own_name_moves_to_https_first(panel):
@@ -463,7 +505,7 @@ def test_plain_http_on_the_panel_s_own_name_moves_to_https_first(panel):
 
 def test_an_http_panel_url_leaves_it_to_the_request(panel):
     p = panel()
-    assert "secure" not in p.c.get("/api/auth/oidc/start", follow_redirects=False).headers["set-cookie"].lower()
+    assert "secure" not in cookie_attrs(p.c.get("/api/auth/oidc/start", follow_redirects=False).headers["set-cookie"])
 
 
 def test_behind_a_proxy_the_forwarded_host_counts(panel):
