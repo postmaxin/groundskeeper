@@ -1,0 +1,98 @@
+# Default values for the Groundskeeper chart.
+# Everything site-specific (the robot's address, Frigate, Home Assistant, ...) is configured in the panel's
+# Settings UI after it is running — not here.
+
+image:
+  repository: ghcr.io/groundskeeper-robot/groundskeeper
+  # Defaults to the chart's appVersion when left empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# The panel's HTTP port (container and service).
+port: 8425
+
+# uid/gid the panel runs as; it owns /data. The image starts as root and drops to these (its entrypoint).
+puid: 1000
+pgid: 1000
+
+# Extra plain environment variables (e.g. defaults you would otherwise set in the UI).
+# A secret value (such as a Home Assistant token) belongs in envFrom -> a Secret, not here.
+env: {}
+# e.g.
+#   - secretRef:
+#       name: groundskeeper-env
+envFrom: []
+
+persistence:
+  enabled: true
+  # "" uses the cluster's default StorageClass.
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 2Gi
+  # Keep the PVC (history, settings, login) when the release is uninstalled. Delete it yourself with kubectl
+  # to remove the data; set false to let `helm uninstall` delete it.
+  keepOnUninstall: true
+  # Use an existing PVC instead of creating one.
+  existingClaim: ""
+
+service:
+  type: ClusterIP
+  port: 8425
+  annotations: {}
+
+# Host networking is ONLY needed to receive a WeatherFlow Tempest weather station's UDP broadcast (:50222).
+# Leave it off unless you have one; the panel is reachable via the Service either way.
+hostNetwork: false
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: groundskeeper.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources: {}
+# e.g.
+#   limits:
+#     memory: 512Mi
+#   requests:
+#     cpu: 100m
+#     memory: 256Mi
+
+# Pod/container security. Default (empty): the image entrypoint starts as root and drops to puid:pgid, and hands
+# /data to that user once — the same as the upstream docker-compose. To run fully non-root instead, set:
+#   podSecurityContext: { runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000 }
+# (the entrypoint then skips the chown and runs directly as that user; the PVC is made group-writable by fsGroup).
+podSecurityContext: {}
+securityContext: {}
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 60
+  timeoutSeconds: 10
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 3
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

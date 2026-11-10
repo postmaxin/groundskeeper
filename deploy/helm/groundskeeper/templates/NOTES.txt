@@ -1,0 +1,18 @@
+Groundskeeper is installed as "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+1. Reach the panel:
+{{- if .Values.ingress.enabled }}
+   {{ if .Values.ingress.tls }}https{{ else }}http{{ end }}://{{ (index .Values.ingress.hosts 0).host }}
+{{- else if eq .Values.service.type "ClusterIP" }}
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "groundskeeper.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+   then open http://127.0.0.1:{{ .Values.service.port }}
+{{- else }}
+   The Service type is {{ .Values.service.type }} on port {{ .Values.service.port }}.
+{{- end }}
+
+2. Finish setup IN THE PANEL (Settings): the robot's address, Home Assistant, Frigate, imagery, and so on.
+
+3. SAFETY: control, map writing, guard auto-resume and assistant commands are all OFF on a new install.
+   Turn them on deliberately in Settings -> Safety. This panel can drive a machine with blades.
+
+Data is stored on {{ if .Values.persistence.enabled }}a PersistentVolumeClaim ({{ .Values.persistence.size }}){{ else }}an emptyDir (NOT persistent — set persistence.enabled=true){{ end }}.
