@@ -133,8 +133,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // 8. The robot stops publishing: back to Waiting (another uid stopping changes nothing), and it can resume.
   mark("robot-plays"); await client.handlers["user-published"](SDK_USER, "video"); await settle();
   mark("unpublished"); phase();
-  client.handlers["user-unpublished"]({ uid: 2 }); phase();
-  client.handlers["user-unpublished"]({ uid: 1 }); phase();
+  client.handlers["user-unpublished"]({ uid: 2 }, "video"); phase();
+  client.handlers["user-unpublished"]({ uid: 1 }, "audio"); phase();   // audio stopping leaves the video playing
+  client.handlers["user-unpublished"]({ uid: 1 }, "video"); phase();
   mark("republished"); await client.handlers["user-published"](SDK_USER, "video"); await settle(); phase();
   // 9. A decryption failure leaves and says so.
   mark("crypt-error"); client.handlers["crypt-error"](); phase();

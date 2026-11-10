@@ -155,7 +155,7 @@ def test_only_the_robots_video_is_played():
 def test_the_robot_stopping_its_video_goes_back_to_waiting_and_a_republish_plays_again():
     calls = run_flow()
     phases = [c[1:] for c in segment(calls, "unpublished") if c[0] == "phase"]
-    assert phases == [["playing", ""], ["playing", ""], ["waiting", "The robot stopped sending video."]]
+    assert phases == [["playing", ""], ["playing", ""], ["playing", ""], ["waiting", "The robot stopped sending video."]]
     again = segment(calls, "republished")
     assert ["subscribe", 1, "video"] in again and ["phase", "playing", ""] in again
 

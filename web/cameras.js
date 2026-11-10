@@ -266,8 +266,8 @@ function camerasListen(client, ticket) {
       camerasSet("error", camerasWhy(e));
     }
   });
-  client.on("user-unpublished", (user) => {
-    if (live() && Number(user.uid) === CAM_ROBOT_UID) {
+  client.on("user-unpublished", (user, mediaType) => {
+    if (live() && Number(user.uid) === CAM_ROBOT_UID && mediaType === "video") {   // not the robot's audio stopping
       cams.subscribed = 0;                        // a later user-published subscribes again
       if (cams.stage) cams.stage.replaceChildren();
       camerasSet("waiting", "The robot stopped sending video.", "Its cameras may have switched off, or it went to sleep.");
