@@ -67,3 +67,17 @@ The entrypoint then skips the chown and runs directly as that user; `fsGroup` ma
   node drain or `kubectl delete pod`) starts only once the old pod has exited. Two panels at once could both send
   robot commands. Don't force-delete the pod (`--grace-period=0 --force`) while its node is still running: that skips
   the wait.
+
+## Upgrading from 0.1.0
+
+Chart 0.1.0 ran the panel as a Deployment; 0.2.0 runs it as a StatefulSet. `helm upgrade` creates the new
+StatefulSet before it removes the old Deployment, so the two panels would overlap on the same `/data` volume. A Helm
+hook can't safely wait for the old pod to exit, so stop it first:
+
+```sh
+kubectl scale deployment <release-fullname> --replicas=0
+kubectl wait --for=delete pod -l app.kubernetes.io/instance=<release> --timeout=120s
+helm upgrade <release> deploy/helm/groundskeeper
+```
+
+Only upgrades from 0.1.0 need this; a fresh install is unaffected.
