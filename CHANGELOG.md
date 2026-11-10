@@ -10,7 +10,9 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 - **The controller can switch the robot's cameras on** (`smart_vision_control {"state":1}`, #20): the first step of
   the camera view. It goes through the same interlocks as other run commands (control on, robot online, a route),
   is marked as the panel's own so it is not taken for the phone app, and nothing can send "off" (state 0 is
-  refused). No route or screen uses it yet.
+  refused). Only a signed-in person can send it (not an API token, an assistant, the scheduler or a guard), and
+  only through the cloud. It can already be sent with `POST /api/control/send` when Control is on; there is no
+  camera view or button yet.
 - **Installable with pip or uv** (`pyproject.toml`): another Python tool can depend on Groundskeeper's `app` package,
   and `uv sync` sets up a checkout. The Docker image and `requirements*.txt` are unchanged, and a test keeps the two
   dependency lists the same. Running the panel itself still needs a checkout or the container.
