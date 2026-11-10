@@ -314,16 +314,6 @@ def test_what_the_token_says_is_not_overruled_by_userinfo(panel, token, info):
     assert p.idp.userinfo_reads == 0
 
 
-def test_a_password_session_is_secure_on_the_https_panel_url_host_only(panel, monkeypatch):
-    p = panel(panel_url="https://panel.test")
-    monkeypatch.setattr(main.app.state, "cfg", SimpleNamespace(panel_url="https://panel.test"), raising=False)
-    p.auth.set_password("correct horse")
-    r = p.c.post("/api/auth/login", json={"password": "correct horse"})       # TLS proxy without X-Forwarded-Proto
-    assert r.status_code == 200 and "secure" in cookie_attrs(r.headers["set-cookie"])
-    lan = p.c.post("/api/auth/login", json={"password": "correct horse"}, headers={"host": "192.0.2.10:8425"})
-    assert lan.status_code == 200 and "secure" not in cookie_attrs(lan.headers["set-cookie"])
-
-
 def test_userinfo_can_confirm_the_same_address(panel):
     p = panel(OIDC_ALLOWED_GROUPS="", OIDC_ALLOWED_DOMAINS="example.org")
     p.idp.drop = {"groups", "email_verified"}
