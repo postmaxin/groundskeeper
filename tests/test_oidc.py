@@ -45,6 +45,8 @@ class Provider:
         self.claims: dict = {}                           # overrides / additions to the ID token
         self.drop: set = set()                           # claims to leave out of the ID token
         self.userinfo: dict = {}
+        self.userinfo_status = 200                       # 500: userinfo has a bad moment
+        self.userinfo_reads = 0
         self.codes: dict = {}
         self.jwks_reads = 0
         self.token_requests: list = []
@@ -105,6 +107,9 @@ class Provider:
                                              "id_token": self.id_token(q)})
         if url == "https://idp.example.test/userinfo":
             assert request.headers.get("authorization") == "Bearer at-1"
+            self.userinfo_reads += 1
+            if self.userinfo_status != 200:
+                return httpx.Response(self.userinfo_status)
             return httpx.Response(200, json={"sub": "user-1", **self.userinfo})
         return httpx.Response(404)
 
@@ -255,6 +260,26 @@ def test_a_verified_flag_for_another_address_does_not_vouch_for_this_one(panel):
     p.idp.drop = {"groups", "email_verified"}                         # the ID token's address, no flag
     p.idp.userinfo = {"email": "someone@elsewhere.example", "email_verified": True}
     assert refused(sign_in(p)) == "not_allowed" and not signed_in(p)
+
+
+@pytest.mark.parametrize("env, drop", [
+    ({"OIDC_ALLOWED_GROUPS": "", "OIDC_ALLOWED_DOMAINS": "example.org"}, {"groups"}),   # the token's email settles it
+    ({"OIDC_ALLOWED_DOMAINS": "example.org"}, {"email", "email_verified"}),            # the token's group settles it
+])
+def test_userinfo_is_not_read_when_the_id_token_already_settles_it(panel, env, drop):
+    p = panel(**env)
+    p.idp.drop = drop
+    p.idp.userinfo_status = 500
+    assert sign_in(p).headers["location"] == "/" and signed_in(p)
+    assert p.idp.userinfo_reads == 0
+
+
+def test_userinfo_is_read_when_the_token_lacks_what_decides(panel):
+    p = panel()
+    p.idp.drop = {"groups"}
+    p.idp.userinfo_status = 500
+    assert refused(sign_in(p)) == "provider" and not signed_in(p)
+    assert p.idp.userinfo_reads == 1
 
 
 def test_userinfo_can_confirm_the_same_address(panel):

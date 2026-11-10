@@ -277,20 +277,14 @@ class OIDC:
         tokens = await self._exchange(code, flow["verifier"])
         claims = await self._check_id_token(tokens.get("id_token"), flow["nonce"])
         s = self.settings
-        extra: dict = {}
-        if (s.groups_claim not in claims
+        info = self._merge(claims, {})
+        # Userinfo only when the ID token alone doesn't let them in and lacks a claim an allowlist needs: a sign-in
+        # the token already settles must not fail because userinfo had a bad moment.
+        if not self._allowed(info) and (
+                (s.allowed_groups and s.groups_claim not in claims)
                 or (s.allowed_domains and ("email" not in claims or "email_verified" not in claims))):
-            extra = await self._userinfo(tokens.get("access_token"), claims["sub"])
-        info = {**extra, **claims}
-        # The email and its verified flag are one pair, always from the same place: a flag about another address
-        # must never vouch for this one. Userinfo may only fill in the flag for the very same address.
-        if "email" in claims:
-            info["email_verified"] = claims.get("email_verified")
-            if info["email_verified"] is None and extra.get("email") == claims["email"]:
-                info["email_verified"] = extra.get("email_verified")
-        else:
-            info["email"], info["email_verified"] = extra.get("email"), extra.get("email_verified")
-        user = next((str(info[k]) for k in ("preferred_username", "email", "sub") if info.get(k)), claims["sub"])
+            info = self._merge(claims, await self._userinfo(tokens.get("access_token"), claims["sub"]))
+        user =next((str(info[k]) for k in ("preferred_username", "email", "sub") if info.get(k)), claims["sub"])
         user = "".join(ch for ch in user if ch.isprintable())[:60]
         if not self._allowed(info):
             raise NotAllowed(user, str(claims["sub"])[:120])
@@ -352,6 +346,20 @@ class OIDC:
         info = await self._get_json(url, headers={"Authorization": f"Bearer {access_token}"})
         if info.get("sub") != sub:                         # OIDC Core 5.3.2: userinfo must be about the same person
             raise OIDCError("token", "userinfo sub differs from the ID token's")
+        return info
+
+    @staticmethod
+    def _merge(claims: dict, extra: dict) -> dict:
+        """The ID token's claims over userinfo's. The email and its verified flag are one pair, always from the same
+        place: a flag about another address must never vouch for this one. Userinfo may only fill in the flag for
+        the very same address."""
+        info = {**extra, **claims}
+        if "email" in claims:
+            info["email_verified"] = claims.get("email_verified")
+            if info["email_verified"] is None and extra.get("email") == claims["email"]:
+                info["email_verified"] = extra.get("email_verified")
+        else:
+            info["email"], info["email_verified"] = extra.get("email"), extra.get("email_verified")
         return info
 
     def _allowed(self, info: dict) -> bool:
