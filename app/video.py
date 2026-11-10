@@ -84,7 +84,7 @@ async def fetch(cloud, http, base_url: str, camera: str, uid: int) -> VideoToken
     body = {"channel_name": f"{cloud.sn}_{CAMERAS[camera]}_image", "sn": cloud.sn, "uid": uid}
     url = base_url.rstrip("/") + PATH
     for attempt in (1, 2):
-        jwt = getattr(cloud._sdk(), "token", None)
+        jwt = cloud.session_jwt()                  # never builds the SDK client: that is a network call
         if not jwt:
             raise VideoTokenError("not signed in to the Yarbo cloud", auth=True)
         try:
@@ -100,7 +100,7 @@ async def fetch(cloud, http, base_url: str, camera: str, uid: int) -> VideoToken
         if resp.status_code == 401 or code in AUTH_CODES:
             if attempt == 1:
                 log.info("video token: session refused, refreshing once")
-                if not await asyncio.to_thread(cloud._refresh):
+                if not await asyncio.to_thread(cloud._refresh, jwt):
                     raise VideoTokenError("Yarbo cloud session expired; sign in again", auth=True)
                 continue
             log.warning("video token: refused after a refresh")

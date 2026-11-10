@@ -42,6 +42,7 @@ class CloudTransport:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._refresh_lock = threading.Lock()   # one refresh (and its save) at a time: the worker and video reads share it
 
     # -- session ---------------------------------------------------------------------------------------------
     def _sdk(self):
@@ -128,8 +129,24 @@ class CloudTransport:
                 pass
         self.connected = False
 
-    def _refresh(self) -> bool:
+    def session_jwt(self) -> str | None:
+        """The signed-in JWT, or None when signed out. Never builds the SDK client (that fetches config over the
+        network), so it is safe to call from the event loop."""
+        c = self._client
+        if c is None:
+            return None
+        return getattr(c, "token", None) or None
+
+    def _refresh(self, stale_jwt: str | None = None) -> bool:
+        """Refresh the session. If `stale_jwt` is given and the session no longer holds it, another caller has
+        already refreshed: use that and do nothing."""
         from yarbo_robot_sdk.exceptions import TokenExpiredError
+        with self._refresh_lock:
+            if stale_jwt is not None and self.session_jwt() not in (None, stale_jwt):
+                return True
+            return self._refresh_locked(TokenExpiredError)
+
+    def _refresh_locked(self, TokenExpiredError) -> bool:
         try:
             self._sdk()._auth.refresh()
             self._save()

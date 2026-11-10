@@ -55,10 +55,10 @@ class FakeCloud:
         self.refreshes = 0
         self.refresh_ok = refresh_ok
 
-    def _sdk(self):
-        return self.sdk
+    def session_jwt(self):
+        return self.sdk.token
 
-    def _refresh(self):
+    def _refresh(self, stale_jwt=None):
         self.refreshes += 1
         self.sdk.token = "jwt.refreshed.session"
         return self.refresh_ok
@@ -173,3 +173,30 @@ def test_no_secret_appears_in_logs_repr_or_str(caplog):
     for secret in SECRETS + ("jwt.refreshed.session", SN):
         assert secret not in shown, secret
         assert secret not in logs, secret
+
+
+def test_an_uninitialised_cloud_client_is_signed_out_and_is_not_built(tmp_path, monkeypatch):
+    from app.cloud import CloudTransport
+    cloud = CloudTransport(str(tmp_path), SN, lambda *a: None)
+    monkeypatch.setattr(cloud, "_sdk", lambda: pytest.fail("must not build the SDK client (a network call)"))
+    http = FakeHTTP(answer_post=lambda u, j, h: ok_reply())
+    with pytest.raises(video.VideoTokenError) as e:
+        fetch(cloud, http)
+    assert e.value.auth and http.posts == []
+
+
+def test_a_refresh_is_skipped_when_another_caller_already_refreshed(tmp_path):
+    from app.cloud import CloudTransport
+
+    class Auth:
+        calls = 0
+
+        def refresh(self):
+            Auth.calls += 1
+
+    class Client:
+        token = "jwt.newer.session"
+        _auth = Auth()
+    cloud = CloudTransport(str(tmp_path), SN, lambda *a: None)
+    cloud._client = Client()
+    assert cloud._refresh("jwt.older.session") is True and Auth.calls == 0      # someone got there first
