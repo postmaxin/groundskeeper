@@ -26,6 +26,9 @@ CATALOGUE = {
     "resume": {"label": "Resume", "args": ()},
     "stop": {"label": "Stop", "args": ()},
     "cmd_recharge": {"label": "Return to dock", "args": ()},
+    # Switches the robot's cameras on for the live view, nothing else. Only on: "off" also cut the official app's view
+    # on a phone (docs/dev/protocol.md → Robot video), so a client leaves switching off to the robot or the app.
+    "smart_vision_control": {"label": "Cameras on", "args": ()},
 }
 HARD_BLOCKED = {"cmd_vel"}  # manual drive: never, from anyone
 
@@ -72,6 +75,8 @@ def payload_for(cmd: str, args: dict) -> dict:
         return {"id": int(args["plan_id"])}
     if cmd == "cmd_recharge":
         return {"cmd": 2}  # the firmware requires cmd=2 (official SDK)
+    if cmd == "smart_vision_control":
+        return {"state": 1}  # a constant: there is no payload a caller can change into "off"
     return {}
 
 
@@ -118,6 +123,13 @@ def check(cmd: str, args: dict, ctx: dict, cfg: dict, actor: str) -> list[dict]:
             add("Someone home (Alarmo)", ctx["presence"] is True,
                 {True: "yes", False: "Alarmo armed away", None: "unknown"}[ctx["presence"]])
         return out
+    if cmd == "smart_vision_control":
+        # Allowed idle or running, like pause, stop and dock: it only starts the robot's video, so the route and
+        # online checks are all it needs. The one extra rule is that "on" is the only thing that can be asked for.
+        # An absent state means on; any other value (0, 2, "1", true, 1.0) fails closed.
+        s = args.get("state", 1)
+        add("Cameras on only", type(s) is int and s == 1,
+            "switching on" if type(s) is int and s == 1 else f"state {s!r} refused: the panel only switches the cameras on")
     if cmd != "start_plan":
         return out
     plan_ids = {p.get("id") for p in ctx["plans"]}

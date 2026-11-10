@@ -175,7 +175,8 @@ def test_every_send_is_marked_as_the_panels_own(tmp_path):
     lk.command("pause", {})
     lk.command("pause", {}, route="cloud")
     lk.read("get_device_msg")
-    assert marked == ["pause", "pause", "get_device_msg"]
+    lk.command("smart_vision_control", {"state": 1})    # app/ops.py takes an unmarked echo for the phone app
+    assert marked == ["pause", "pause", "get_device_msg", "smart_vision_control"]
 
 
 def test_a_pause_that_took_is_not_sent_again(tmp_path, monkeypatch):
