@@ -174,9 +174,14 @@ No value here is real; serials, tokens, keys and salts are synthetic or shortene
 
 **Switching the view on.** The app publishes `smart_vision_control {"state":1}` on `snowbot/{SN}/app/smart_vision_control`
 over the cloud broker (see the table above). **[observed]** that the robot publishes video after `{"state":1}`.
-`{"state":0}` is the app's "off". **[unconfirmed, untested]**: what `{"state":0}` does to a viewer who is watching in
-the official app at the same time, and whether it changes anything during a run besides the live view (obstacle
-detection in particular). Until those are tested, a client should send only `{"state":1}`.
+`{"state":0}` is the app's "off". **[observed, real robot, 2026-11-10, firmware V3.14.41]**: `{"state":0}` sent from
+another cloud session switched off the official app's live view on the owner's phone, so it cuts the view for anyone
+else watching. **[unconfirmed, untested]**: whether it changes anything during a run besides the live view (obstacle
+detection in particular). That is why a client sends only `{"state":1}`: the panel's controller refuses any other
+state (`control.check`, "Cameras on only") and leaves switching off to the robot or the app. `{"state":1}` is allowed
+idle or during a run, with the same robot-online and route checks as pause, stop and dock. Only a person at the panel
+can send it (not tokens, the MCP server, the scheduler or the guards), and only through the cloud broker, the one
+route observed (`LOCAL_VISION_PROVED` in `app/link.py`, off until a local send is observed).
 
 **Token request.** An authenticated POST to the cloud's *robot service*, a different host from the `data-api.yarbo.ai`
 used for sign-in and broker discovery (an AWS API Gateway stage; the host is not recorded in this document). The

@@ -323,7 +323,8 @@ and blade load. Wheel slip confounds wet grass with slope and turning; without a
 
 ### 10.1 Catalogue
 The source of truth for official commands is the SDK's `devices/yarbo_Y.json` → `control_topics`. The panel exposes
-exactly five run commands: `start_plan`, `pause`, `resume`, `stop`, `cmd_recharge` (return to dock). Everything else
+exactly five run commands: `start_plan`, `pause`, `resume`, `stop`, `cmd_recharge` (return to dock), plus
+`smart_vision_control {"state":1}` (cameras on; people only, cloud only, never off; §13). Everything else
 is refused, and **`cmd_vel` (manual drive) is hard-blocked for every actor**.
 
 The robot sends no reply to run commands on either broker, so a command is **confirmed by the robot's state
