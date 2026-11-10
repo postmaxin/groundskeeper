@@ -29,6 +29,7 @@ class Config:
     frigate_url: str | None
     panel_url: str | None
     demo_speed: float = 1.0
+    robot_service_url: str | None = None   # YARBO_ROBOT_SERVICE_URL: the cloud's robot service (video token, §13); no default
 
 
 def load() -> Config:
@@ -53,5 +54,7 @@ def load() -> Config:
         demo=demo,
         frigate_url=None if demo else os.environ.get("FRIGATE_URL", "").strip() or None,
         panel_url=os.environ.get("PANEL_URL", "").strip() or None,
+        # Not in this repository: the address of the cloud's robot service is set on the deployment (design.md §13).
+        robot_service_url=None if demo else os.environ.get("YARBO_ROBOT_SERVICE_URL", "").strip() or None,
         demo_speed=max(0.1, min(50.0, _num("DEMO_SPEED", 1.0))),
     )

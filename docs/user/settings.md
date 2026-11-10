@@ -112,3 +112,13 @@ You type your Yarbo password in Settings → Robot. It goes straight to Yarbo's 
 logged; only the session is kept on the server. It is optional: the panel reads and commands the robot over your
 network, and uses the cloud only as a fallback when the robot can't be reached there (Settings → Robot → Route to
 the robot shows which way each goes).
+
+### Robot video
+
+Settings → Robot → Yarbo cloud → **Robot video** is **off** on a new install. When you switch it on (the panel asks you
+to confirm), a signed-in person can ask the panel for the join details of one of the robot's cameras. **Your browser
+then connects to Agora's real-time network to play the stream**; the video never passes through the panel. It uses the
+Yarbo cloud sign-in above, so that must be connected. Only a person signed in to the panel can switch it on or ask
+for a camera: API tokens and AI assistants cannot, and the stream's key is never written to the logs or Events. The
+operator sets the address of the cloud's video service with the `YARBO_ROBOT_SERVICE_URL` environment variable; until
+it is set the panel answers "not configured". The Live camera tile that plays it comes in a later change.
