@@ -597,6 +597,17 @@ function robotCards(d) {
       cloud.broker ? srow("Broker", null, mono(cloud.broker)) : null,
       cloud.commands_sent ? srow("Commands sent", "Through this session.", String(cloud.commands_sent)) : null,
       cloud.error ? srow("Last error", null, colored(CORAL, cloud.error)) : null,
+      srow("Video service", "The address of the Yarbo cloud's robot service. It receives your Yarbo session, so it is set only by the YARBO_ROBOT_SERVICE_URL environment variable, never here.",
+        sstate(d.st.robot_video_configured ? GREEN : MUTED, d.st.robot_video_configured ? "configured" : "not configured")),
+      srow("Robot video", ["Lets a signed-in person watch the robot's cameras. The video goes from Agora's network to your browser, ",
+                           "so turning it on makes the browser connect to Agora. Off unless you switch it on; assistants and API tokens can't use it."],
+        sstate(d.st.robot_video_enabled ? AMBER : MUTED, d.st.robot_video_enabled ? "ON" : "Off"),
+        d.st.robot_video_enabled
+          ? sbtn("Switch robot video off", () => saveSetting("robot_video_enabled", false, "Robot video is off."), "btn")
+          : sbtn("Switch robot video on…", () => {
+              if (confirm("Your browser will connect to Agora's network to show the robot's cameras. Switch robot video on?"))
+                saveSetting("robot_video_enabled", true, "Robot video is on.");
+            }, "btn pri")),
       signedIn
         ? srow("Sign out", "Ends the session on the server. Control stops working until you sign in again.",
             sbtn("Sign out", async () => {

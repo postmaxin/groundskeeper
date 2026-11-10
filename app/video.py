@@ -79,6 +79,8 @@ async def fetch(cloud, http, base_url: str, camera: str, uid: int) -> VideoToken
         raise VideoTokenError("invalid viewer uid")
     if not base_url:
         raise VideoTokenError("no video service address is configured")
+    if not base_url.lower().startswith("https://"):           # the session JWT and the stream key must not go in clear
+        raise VideoTokenError("the video service address must start with https://")
     if not cloud.sn:
         raise VideoTokenError("the robot's serial is not set")
     body = {"channel_name": f"{cloud.sn}_{CAMERAS[camera]}_image", "sn": cloud.sn, "uid": uid}

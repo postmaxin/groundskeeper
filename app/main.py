@@ -12,6 +12,7 @@ import json
 import logging
 import math
 import re
+import secrets
 import time
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +33,7 @@ from . import robotscan
 from . import config, control, coverage, geo, insights, mapstudio, mapwrite, telemetry
 from . import ha as ha_mod
 from . import help as help_mod
+from . import video as video_mod
 from . import weather as weather_mod
 from . import why as why_mod
 from .version import version_info
@@ -1279,6 +1281,7 @@ SETTINGS_DEFAULTS = {
     "ha_notify_service": None,
     "webhook_url": None,
     "wifi_survey": "off",
+    "robot_video_enabled": False,    # §13: the viewer's browser joins Agora; people only (POST /api/video/token)
     "robot_route": "auto",           # app/link.py: local first with the cloud as a fallback, or one route only
 }
 
@@ -1290,6 +1293,8 @@ async def settings(request: Request):
     out["conditions"] = rec(request).conditions_config().to_dict()
     out["gates"] = control.gates(store)
     out["integrations"] = request.app.state.cfg.describe()
+    # Only whether it is set, never the address: the route sends the Yarbo session there, so it is environment-only.
+    out["robot_video_configured"] = bool(request.app.state.cfg.robot_service_url)
     out["mcp"] = mcp_server.token_status(store)
     from . import weather as weather_mod
     out["weather_sources"] = weather_mod.config(store.setting("weather_sources"))
@@ -1527,6 +1532,13 @@ async def put_setting(request: Request, key: str, value: Any = Body(None)):
         r.store.set_setting(key, value)
         r.store.event("mcp_control_switched", "AI assistant commands switched ON" if value else "AI assistant commands switched off")
         return {key: value}
+    if key == "robot_video_enabled":
+        _person(request)                  # a person's session, as for the password: not an API token
+        if not isinstance(value, bool):
+            raise HTTPException(400, "true or false")
+        r.store.set_setting(key, value)
+        r.store.event("robot_video_switched", "robot video switched ON" if value else "robot video switched off")
+        return {key: value}
     if key == "robot_route":
         from .link import ROUTE_MODES
         if value not in ROUTE_MODES:
@@ -1613,6 +1625,41 @@ async def put_setting(request: Request, key: str, value: Any = Body(None)):
         r.store.set_setting(key, value)
         return {key: value}
     raise HTTPException(404, f"unknown setting {key!r}")
+
+
+# -- robot video (§13) -----------------------------------------------------------------------------------------
+@app.post("/api/video/token")
+async def video_token(request: Request, body: dict = Body(...)):
+    """Join details for one robot camera: Agora App ID, channel, token, the viewer's uid, and the stream's key and salt.
+    People only: an API token is refused here and in the sign-in middleware (not in TOKEN_WRITES), and the MCP server
+    has no route to it. Off until robot_video_enabled is on. Nothing is logged or recorded as an event except that a
+    token was fetched (never the token, key, salt, channel or address) (§13)."""
+    _person(request)
+    r = rec(request)
+    if not r.store.setting("robot_video_enabled", SETTINGS_DEFAULTS["robot_video_enabled"]):
+        raise HTTPException(403, "robot video is off (Settings → Robot)")
+    camera = body.get("camera")
+    if not isinstance(camera, str) or camera not in video_mod.CAMERAS:
+        raise HTTPException(400, f"camera: one of {', '.join(video_mod.CAMERAS)}")
+    base = request.app.state.cfg.robot_service_url      # environment only (§13)
+    if not base:
+        raise HTTPException(503, "robot video is not configured: set YARBO_ROBOT_SERVICE_URL")
+    if not str(base).lower().startswith("https://"):      # an http value from the environment is refused too
+        raise HTTPException(503, "robot video is not configured: the service address must start with https://")
+    uid = secrets.randbelow(2**31 - 2) + 2              # chosen here: never 0, never the robot's 1
+    http = getattr(request.app.state, "video_http", None)
+    own = http is None
+    if own:
+        http = httpx.AsyncClient(timeout=15)
+    try:
+        tok = await video_mod.fetch(ops(request).cloud, http, base, camera, uid)
+    except video_mod.VideoTokenError as exc:
+        raise HTTPException(409 if exc.auth else 502, str(exc))    # a fixed phrase: no key, salt, token or address
+    finally:
+        if own:
+            await http.aclose()
+    return JSONResponse({"app_id": tok.app_id, "channel": tok.channel, "token": tok.token, "uid": tok.uid,
+                         "key": tok.key, "salt": tok.salt}, headers={"Cache-Control": "no-store"})
 
 
 # -- phase 2: cloud session -----------------------------------------------------------------------------------------

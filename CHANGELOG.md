@@ -7,6 +7,10 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 
 ### Added
 
+- **Robot video setting** (Settings → Robot → Yarbo cloud, off by default): lets a signed-in person ask for a robot
+  camera's join details (`POST /api/video/token`); the viewer's browser then connects to Agora. People only: API tokens
+  and AI assistants are refused, and the stream key is never logged. Needs `YARBO_ROBOT_SERVICE_URL` (environment only); the Live tile
+  that plays it follows.
 - **The controller can switch the robot's cameras on** (`smart_vision_control {"state":1}`, #20): the first step of
   the camera view. It goes through the same interlocks as other run commands (control on, robot online, a route),
   is marked as the panel's own so it is not taken for the phone app, and nothing can send "off" (state 0 is
