@@ -73,7 +73,7 @@ keep the secret in a secret):
 | `OIDC_SCOPES` | Default `openid profile email`. Add the scope your provider needs for groups. |
 | `OIDC_AUTO_LOGIN` | `on` sends the sign-in page straight to the provider. |
 | `PANEL_PASSWORD` | `off` turns the password off once single sign-on works: no password form, no setup code. |
-| `PANEL_URL` | Required: the address people open. The provider sends them back to `PANEL_URL/api/auth/oidc/callback`, so register that as the client's redirect URI. |
+| `PANEL_URL` | Required: the address people open, with no path (the panel serves itself from the root). The provider sends them back to `PANEL_URL/api/auth/oidc/callback`, so register that as the client's redirect URI. |
 
 - **Who gets in:** only people in an allowed group or domain, and everyone who gets in has full use of the panel,
   as with the password. Unlike Grafana, the panel refuses to start with single sign-on on and neither

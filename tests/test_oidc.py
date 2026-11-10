@@ -192,11 +192,12 @@ def test_a_client_secret_with_reserved_characters_is_form_encoded(panel):
     assert raw == "panel-client:p%25ss%3Aw%2Brd"
 
 
-def test_the_callback_keeps_the_path_of_panel_url(panel):
-    p = panel(panel_url="http://panel.test/gk/")
-    start = p.c.get("/api/auth/oidc/start", follow_redirects=False)
-    sent = parse_qs(urlsplit(start.headers["location"]).query)
-    assert sent["redirect_uri"] == ["http://panel.test/gk/api/auth/oidc/callback"]
+@pytest.mark.parametrize("url", ["http://panel.test/gk/", "http://panel.test/gk", "http://panel.test/?x=1"])
+def test_a_panel_url_with_a_path_is_refused(monkeypatch, url):
+    _env(monkeypatch, **OIDC_ENV)
+    with pytest.raises(ValueError, match="no path"):
+        oidc.load(url, True, False)
+    assert oidc.load("http://panel.test/", True, False).redirect_uri == PANEL + oidc.CALLBACK
 
 
 @pytest.mark.parametrize("bad", ["//evil.example", "https://evil.example/", "/\\evil.example", "evil",
@@ -247,6 +248,37 @@ def test_someone_outside_the_allowed_groups_is_refused_and_it_is_noted_once_a_mi
     noted = [e["detail"] for e in p.store.events() if "not allowed tried to sign in" in e["detail"]]
     assert noted == ["an account at Authentik that is not allowed tried to sign in (subject user-1; "
                      "it calls itself 'the owner')"]
+
+
+def test_a_verified_flag_for_another_address_does_not_vouch_for_this_one(panel):
+    p = panel(OIDC_ALLOWED_GROUPS="", OIDC_ALLOWED_DOMAINS="example.org")
+    p.idp.drop = {"groups", "email_verified"}                         # the ID token's address, no flag
+    p.idp.userinfo = {"email": "someone@elsewhere.example", "email_verified": True}
+    assert refused(sign_in(p)) == "not_allowed" and not signed_in(p)
+
+
+def test_userinfo_can_confirm_the_same_address(panel):
+    p = panel(OIDC_ALLOWED_GROUPS="", OIDC_ALLOWED_DOMAINS="example.org")
+    p.idp.drop = {"groups", "email_verified"}
+    p.idp.userinfo = {"email": "tess@example.org", "email_verified": True}
+    assert sign_in(p).headers["location"] == "/" and signed_in(p)
+
+
+def test_an_email_only_in_userinfo_comes_with_its_own_flag(panel):
+    p = panel(OIDC_ALLOWED_GROUPS="", OIDC_ALLOWED_DOMAINS="example.org")
+    p.idp.drop = {"groups", "email", "email_verified"}
+    p.idp.userinfo = {"email": "tess@example.org", "email_verified": True}
+    assert sign_in(p).headers["location"] == "/" and signed_in(p)
+    p.c.cookies.clear()
+    p.idp.claims = {"email_verified": True}                          # a flag in the token, the address elsewhere
+    p.idp.drop = {"groups", "email"}
+    p.idp.userinfo = {"email": "tess@example.org", "email_verified": False}
+    assert refused(sign_in(p)) == "not_allowed"
+
+
+def test_the_sign_in_button_stays_hidden_until_it_is_wanted():
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    assert re.search(r"\.login \.btn\[hidden\][^{]*\{\s*display:\s*none", css)
 
 
 @pytest.mark.parametrize("verified", [False, "true", None])

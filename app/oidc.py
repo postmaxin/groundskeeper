@@ -97,7 +97,7 @@ class Settings:
     groups_claim: str
     allowed_domains: frozenset[str]
     auto_login: bool
-    panel: str                         # PANEL_URL without a trailing slash: where sign-in starts and comes back
+    panel: str                         # PANEL_URL, scheme and host only: where sign-in starts and comes back
     redirect_uri: str
 
 
@@ -121,9 +121,12 @@ def load(panel_url: str | None, password_on: bool, auth_off: bool) -> Settings |
     parts = urlsplit(panel_url or "")
     if parts.scheme not in ("http", "https") or not parts.netloc:
         raise ValueError("OIDC needs PANEL_URL, the address people open, for the provider to send them back to")
+    if parts.path.strip("/") or parts.query or parts.fragment:
+        # The panel serves itself from the root (/login.js, /api/...), so it can't live under a path prefix.
+        raise ValueError("PANEL_URL must be the panel's own address with no path, e.g. https://panel.example.com")
     if parts.scheme == "http":
         log.warning("PANEL_URL is http://: the sign-in code and its PKCE verifier cross the network unencrypted")
-    panel = f"{parts.scheme}://{parts.netloc}{parts.path.rstrip('/')}"
+    panel = f"{parts.scheme}://{parts.netloc}"
     return Settings(
         issuer=issuer, client_id=client_id, client_secret=os.environ.get("OIDC_CLIENT_SECRET", "").strip(),
         name=(os.environ.get("OIDC_NAME", "").strip() or "OpenID Connect")[:40],
@@ -273,9 +276,20 @@ class OIDC:
             raise OIDCError("provider", "no code in the callback")
         tokens = await self._exchange(code, flow["verifier"])
         claims = await self._check_id_token(tokens.get("id_token"), flow["nonce"])
-        info = claims
-        if self.settings.groups_claim not in claims or (self.settings.allowed_domains and "email" not in claims):
-            info = {**await self._userinfo(tokens.get("access_token"), claims["sub"]), **claims}
+        s = self.settings
+        extra: dict = {}
+        if (s.groups_claim not in claims
+                or (s.allowed_domains and ("email" not in claims or "email_verified" not in claims))):
+            extra = await self._userinfo(tokens.get("access_token"), claims["sub"])
+        info = {**extra, **claims}
+        # The email and its verified flag are one pair, always from the same place: a flag about another address
+        # must never vouch for this one. Userinfo may only fill in the flag for the very same address.
+        if "email" in claims:
+            info["email_verified"] = claims.get("email_verified")
+            if info["email_verified"] is None and extra.get("email") == claims["email"]:
+                info["email_verified"] = extra.get("email_verified")
+        else:
+            info["email"], info["email_verified"] = extra.get("email"), extra.get("email_verified")
         user = next((str(info[k]) for k in ("preferred_username", "email", "sub") if info.get(k)), claims["sub"])
         user = "".join(ch for ch in user if ch.isprintable())[:60]
         if not self._allowed(info):
