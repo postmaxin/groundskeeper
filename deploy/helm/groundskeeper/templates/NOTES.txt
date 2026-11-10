@@ -2,7 +2,7 @@ Groundskeeper is installed as "{{ .Release.Name }}" in namespace "{{ .Release.Na
 
 1. Reach the panel:
 {{- if .Values.ingress.enabled }}
-   https://{{ (index .Values.ingress.hosts 0).host }}
+   {{ if .Values.ingress.tls }}https{{ else }}http{{ end }}://{{ (index .Values.ingress.hosts 0).host }}
 {{- else if eq .Values.service.type "ClusterIP" }}
    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "groundskeeper.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
    then open http://127.0.0.1:{{ .Values.service.port }}
