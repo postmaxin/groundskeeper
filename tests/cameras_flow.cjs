@@ -18,7 +18,7 @@ let nextInterval = 1;
 let beats = 0;
 const wsSendOriginal = function (d) { log("ws-send", typeof d === "string" ? d : "<binary>"); };
 const xhrSendOriginal = function (d) { log("xhr-send", typeof d === "string" ? d : "<binary>"); };
-const WRAPPED = '"aes_secret":"d3JhcHBlZC1iYXNlNjQ=","aes_encrypt":true';     // what the real SDK puts in the join message
+const WRAPPED = '"aes_secret":"WRAPPED-BY-THE-SDK","aes_encrypt":true';     // what the real SDK puts in the join message
 const joinMessage = (inner) => `{"_id":7,"_type":"join","_message":{"aes_mode":"aes-128-gcm2",${inner},"aes_salt":"AQID","ts":1731234567890123456}}`;
 const knobs = { beatFail: false, beatReply: { sent: true }, beatGate: null, joinMsg: "default", leaveGate: null, roleGate: null, joinGate: null, joinEmit: false, refuseToken: false, remote: [],
                 subscribeFail: false, joinFail: null, tokenFail: null, tokenGate: null, writeOnLeave: false, sdkPresent: true, fastSdk: false, videoOff: false, scripts: [] };

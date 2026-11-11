@@ -351,7 +351,7 @@ def test_the_real_secret_is_written_into_the_join_message_only_while_joining():
     assert json.loads(xhr[0][1]) == {"aesMode": "aes-128-gcm2", "aesSecret": message["aes_secret"], "uid": 5}
     assert ["restored", True, True] in seg
     # After the join the same message goes out as the SDK made it: wrapped, with its flag, no real secret.
-    assert json.loads(after[0][1])["_message"]["aes_secret"] == "d3JhcHBlZC1iYXNlNjQ=" and '"aes_encrypt":true' in after[0][1]
+    assert json.loads(after[0][1])["_message"]["aes_secret"] == "WRAPPED-BY-THE-SDK" and '"aes_encrypt":true' in after[0][1]
     assert xhr[1] == ["xhr-send", '{"aesSecret":"x"}']
 
 

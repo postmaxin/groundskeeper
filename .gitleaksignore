@@ -1,0 +1,3 @@
+# A synthetic stand-in for the SDK's wrapped secret in a test fixture (commit f41f0ba, since replaced by a value that
+# does not look like a key). Not a real secret; kept as a fingerprint because history is scanned and not rewritten.
+f41f0ba82fa5f55b48a86afdc8114c2be7f0d863:tests/cameras_flow.cjs:generic-api-key:21
