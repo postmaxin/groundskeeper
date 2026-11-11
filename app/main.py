@@ -144,6 +144,8 @@ async def signed_in(request: Request, call_next):
         return JSONResponse({"detail": "cross-site request refused"}, status_code=403)
     if who == "token" and not auth_mod.token_may(request.method, path):
         return JSONResponse({"detail": "an API token cannot change this: sign in with the password"}, status_code=403)
+    if who == "metrics" and not auth_mod.metrics_may(request.method, path):
+        return JSONResponse({"detail": "this API token can only read /api/metrics"}, status_code=403)
     request.state.who = who
     return await call_next(request)
 
@@ -362,10 +364,11 @@ async def auth_tokens(request: Request):
 
 @app.post("/api/auth/tokens")
 async def auth_token_create(request: Request, body: dict = Body(...)):
-    """A named API token for a program (Home Assistant, a script). Shown once; only its hash is kept."""
+    """A named API token for a program (Home Assistant, a script). Shown once; only its hash is kept. `scope` is
+    "full" (the default) or "metrics" (may read only /api/metrics); anything else is a 400."""
     _person(request)
     try:
-        return _auth(request).new_token(body.get("name") or "")
+        return _auth(request).new_token(body.get("name") or "", body.get("scope", "full"))
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
@@ -1714,7 +1717,8 @@ async def control_catalogue(request: Request):
 
 def _actor(request: Request) -> str:
     """Who a command is from, for the interlocks and the audit log: a program with an API token, or a person."""
-    return "token" if getattr(request.state, "who", None) == "token" else "user"
+    who = getattr(request.state, "who", None)
+    return "token" if who in ("token", "metrics") else "user"     # metrics never gets here; the strict actor if it did
 
 
 @app.post("/api/control/preview")

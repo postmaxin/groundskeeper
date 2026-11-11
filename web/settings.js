@@ -1181,8 +1181,14 @@ function secAccess(d) {
     location.href = "/login.html?signed_out=1";
   };
   const name = h("input", { class: "field slim", placeholder: "What will use it, e.g. Home Assistant", "data-key": "token-name" });
+  // The choice lives in setUI, not only in the checkbox: a redraw (a background fetch) rebuilds the checkbox, and
+  // a lost tick would mint a full token where a metrics-only one was asked for.
+  const metricsOnly = h("input", { type: "checkbox", "data-key": "token-metrics", checked: setUI.tokenMetrics || null,
+    onchange: (e) => { setUI.tokenMetrics = e.target.checked; } });
   const create = async () => {
-    try { apiTokenShown = await authPost("/api/auth/tokens", { name: name.value }); } catch (e) { toast(e.message); return; }
+    const body = { name: name.value, scope: setUI.tokenMetrics ? "metrics" : "full" };
+    try { apiTokenShown = await authPost("/api/auth/tokens", body); } catch (e) { toast(e.message); return; }
+    setUI.tokenMetrics = false;
     await renderSettings();
   };
   const revoke = async (t) => {
@@ -1206,13 +1212,19 @@ function secAccess(d) {
     scard("API tokens",
       snote(h("span", null, "For programs that call the panel's API, such as a Home Assistant integration or a script: header ",
             mono("Authorization: Bearer <token>"), ". A token can read, and can ask for robot commands while control is on, under the strictest checks: anything unknown blocks a start or resume, and it cannot override. ",
-            "It cannot change settings, safety switches or the map. AI assistants use their own token (", slink("#settings/assistant", "AI assistant"), ").")),
-      ...tokens.map((t) => srow(t.name, `Created ${when(t.created)} · last used ${t.used ? when(t.used) : "never"}`,
+            "It cannot change settings, safety switches or the map. A metrics-only token reads /api/metrics and nothing else. AI assistants use their own token (", slink("#settings/assistant", "AI assistant"), ").")),
+      ...tokens.map((t) => srow(t.scope === "metrics" ? `${t.name} (metrics only)` : t.name,
+        `Created ${when(t.created)} · last used ${t.used ? when(t.used) : "never"}`,
         h("span", { class: "row gap" }, mono(`…${t.hint}`), sbtn("Revoke", () => revoke(t))))),
-      apiTokenShown ? srow("New token", "Copy it now: it is not shown again.",
+      apiTokenShown ? srow(apiTokenShown.scope === "metrics" ? "New token (metrics only)" : "New token",
+        "Copy it now: it is not shown again.",
         h("div", { class: "row gap wrap" }, mono(apiTokenShown.token),
           sbtn("Copy", () => navigator.clipboard?.writeText(apiTokenShown.token).then(() => toast("Copied.")).catch(() => toast("Copy failed; select it by hand."))))) : null,
-      srow("New token", null, h("div", { class: "row gap wrap" }, name, sbtn("Create", create)))),
+      srow("New token", null, h("div", { class: "row gap wrap" }, name,
+        h("label", { class: "row gap small tapmin",
+          title: "A metrics-only token can read /api/metrics and nothing else. Use it for Prometheus." },
+          metricsOnly, "Metrics only"),
+        sbtn("Create", create)))),
   ];
 }
 
