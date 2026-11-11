@@ -17,6 +17,7 @@ import json
 import logging
 import math
 import statistics
+import threading
 import time
 from pathlib import Path
 
@@ -56,6 +57,10 @@ SESSION_SKIP_REPLIES = {"get_device_msg", "get_map", "get_plan_feedback", "read_
                         "read_low_cfd_config", "get_wifi_list", "get_connect_wifi_name"}
 SESSION_MAX_ENTRIES = 3000
 SESSION_MAX_BYTES = 200_000     # per message
+# The panel's own sends of these two are matched to their echoes one for one (Recorder.own_echo), not by a time window:
+# the Cameras tile sends a keep-awake every 4 s, so any window longer than that would hide the phone app's own beats.
+COUNTED_OWN = frozenset({"set_working_state", "smart_vision_control"})
+OWN_ECHO_S = 5            # an echo of our own send is seen within this long of it
 # Commands that mean a person (phone app, another client) is steering the robot: a guard gives up its pause.
 PEOPLE_COMMANDS = {"start_plan", "pause", "resume", "stop", "cmd_recharge", "cmd_vel"}
 # While doing one of these the robot should be getting somewhere; standing still for minutes means it is stuck
@@ -177,6 +182,9 @@ class Recorder:
         self._area_lock = asyncio.Lock()
         self._preview_lock = asyncio.Lock()
         self._sent: dict[str, float] = {}
+        self._own_lock = threading.Lock()         # own_echo is called from the cloud thread and the event loop
+        self._own_beats: dict[str, deque] = {}    # COUNTED_OWN command -> send times not yet matched to an echo
+        self._own_seen: dict[tuple, bool] = {}    # (name, arrival ts) -> was it ours: one message, one answer
 
         self.tempest: TempestListener | None = None      # made by apply_weather()
         self.conditions: dict | None = None
@@ -231,6 +239,37 @@ class Recorder:
                 self._finish_wifi_survey(rid)
 
     # -- plumbing ----------------------------------------------------------------------------------------------
+    def mark_sent(self, cmd: str) -> None:
+        """The panel sent `cmd` just now (RobotLink calls this after every send): its echo is ours."""
+        now = time.time()
+        self._sent[cmd] = now
+        if cmd in COUNTED_OWN:
+            with self.__dict__.setdefault("_own_lock", threading.Lock()):
+                self.__dict__.setdefault("_own_beats", {}).setdefault(cmd, deque(maxlen=16)).append(now)
+
+    def own_echo(self, name: str, ts: float) -> bool:
+        """Is the message `name` that arrived at `ts` the echo of something this panel sent? One answer per message, so
+        the phone-app detection (ops) and the recorder, which both look at it, agree. Most commands: sent within
+        the last OWN_ECHO_S. The keep-awake and camera-on (COUNTED_OWN): each of our sends accounts for ONE echo
+        and goes unused after OWN_ECHO_S, so the Yarbo app's own beats, arriving seconds after ours, still count as the app's."""
+        if name not in COUNTED_OWN:
+            return ts - self._sent.get(name, 0) < OWN_ECHO_S
+        lock = self.__dict__.setdefault("_own_lock", threading.Lock())
+        with lock:
+            seen = self.__dict__.setdefault("_own_seen", {})
+            if (name, ts) in seen:
+                return seen[(name, ts)]
+            q = self.__dict__.setdefault("_own_beats", {}).setdefault(name, deque(maxlen=16))
+            while q and q[0] < ts - OWN_ECHO_S:
+                q.popleft()                       # never echoed back (or the echo was missed): it matches nothing now
+            ours = bool(q) and q[0] <= ts + 1.0   # a send a moment after the message cannot be what it echoes
+            if ours:
+                q.popleft()
+            seen[(name, ts)] = ours
+            while len(seen) > 64:
+                seen.pop(next(iter(seen)))
+            return ours
+
     def _from_thread(self, topic: str, data, ts: float) -> None:
         if self.loop:
             self.loop.call_soon_threadsafe(self.queue.put_nowait, (topic, data, ts))
@@ -456,7 +495,7 @@ class Recorder:
         elif channel == "device" and name == "heart_beat" and isinstance(data, dict):
             self.heartbeat, self.heartbeat_at = data, ts
         elif channel == "app":
-            ours = ts - self._sent.get(name, 0) < 5
+            ours = self.own_echo(name, ts)
             if not ours and name in PEOPLE_COMMANDS:
                 self.foreign_cmd_at = ts
                 self.foreign_cmds[name] = ts     # by command: a late echo of the panel's own is told apart
@@ -539,7 +578,7 @@ class Recorder:
             if reply_to in SESSION_SKIP_REPLIES and ts - self._sent.get(reply_to, 0) < 5:
                 return                                  # our own read, answered
             key = f"reply/{reply_to}"
-        if channel == "app" and ts - self._sent.get(name, 0) < 5:
+        if channel == "app" and self.own_echo(name, ts):
             return                                      # our own request
         if len(s["entries"]) >= SESSION_MAX_ENTRIES:
             s["dropped"] += 1

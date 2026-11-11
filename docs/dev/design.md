@@ -134,7 +134,8 @@ exponentially from 5 s to 5 min. Sign-in is interactive and the password is neve
 
 ### 5.4 Keep-awake
 The phone app sends `set_working_state {"state":1}` about every 10 s while it is open. Local reads are answered
-while the robot is docked and idle without it, so the panel does not send it.
+while the robot is docked and idle without it, so the panel does not send it, with one exception: the robot streams
+its cameras only while someone sends it, so the Cameras tile asks for one every 4 s while it is open (§13).
 
 ### 5.5 Sharing the robot with the phone app
 The phone app keeps the robot awake (`set_working_state`) and sends its commands through the cloud broker. What
@@ -436,12 +437,27 @@ The panel does not get into the robot, and no video passes through the panel. It
 2. **Playback.** The browser plays the stream with Agora's Web SDK, **vendored** under `web/vendor/` with a pinned
    version and a checksummed Dockerfile download, like MapLibre and three.js. Nothing loads from a CDN at runtime, and
    the script is fetched only when the setting is on and someone opens the viewer.
-3. **Switching on.** The Cameras panel sends `smart_vision_control {"state":1}` when it opens, through
+3. **Keeping it awake.** The robot streams only while someone sends the keep-awake the official app sends while it
+   is open, `set_working_state {"state":1}` (`protocol.md`). While the tile is open (connecting, waiting or playing) the
+   browser asks `POST /api/video/keepalive` at once and then every 4 s; each accepted request makes
+   `Controller.keep_awake` send exactly one beat through `RobotLink.keep_awake_beat` (cloud only, like camera-on,
+   until `LOCAL_KEEPAWAKE_PROVED`). The server never schedules or repeats, so closing the tab stops the beats; the
+   timer belongs to the tile's start (ticket) and `camerasLeave()` clears it. Guards: a person's session (`_person`, not
+   in `TOKEN_WRITES`, not in the MCP `ROUTES`), `robot_video_enabled` and Control on, at most one beat per
+   `KEEP_AWAKE_MIN_S` (3 s) for all viewers together (a quiet `{"sent": false, "limited": true}`), a fixed payload
+   (nothing in the request reaches the robot), never state 0. It is deliberately not in `CATALOGUE`, so
+   `/api/control/send`, the MCP server, the scheduler and the guards cannot send it; it is in `RUN_NEUTRAL`. Audit:
+   one event when the beats start (the first after a gap over `KEEP_AWAKE_GAP_S`, 15 s) and one when they stop (noticed
+   by the 5 s guard loop, or by the next beat), never one per beat. The panel's own `set_working_state` and
+   `smart_vision_control` are matched to their echoes one for one (`Recorder.own_echo`, `COUNTED_OWN`): a time window
+   of 5 s would hide the phone app's own beats, as the panel beats every 4 s. The official app switches the cameras off
+   when it goes to the background, so the panel's video stops until the tile is reopened.
+4. **Switching on.** The Cameras panel sends `smart_vision_control {"state":1}` when it opens, through
    `control.CATALOGUE` and `control.check`, marked as the panel's own send so `app/ops.py` does not mistake its echo
    for the phone app (`PHONE_APP_COMMANDS`). It is its own PR for separate review. **Switching off is not decided:**
    what `{"state":0}` does to someone watching in the official app, and during a run (obstacle detection), is untested,
    so a first version sends only `1` and lets the robot or the app turn the view off.
-4. **Placement.** A **Cameras** tile on Live (`web/cameras.js`, a card in Live's panel, shown only while the setting is
+5. **Placement.** A **Cameras** tile on Live (`web/cameras.js`, a card in Live's panel, shown only while the setting is
    on and the service address is set; the demo shows a placeholder and never loads the SDK). One camera at a time.
    Opening it asks the controller for `{"state":1}` (with Control off it says so and still tries to play, since the app
    or a run may have the cameras on), fetches a token, lazy-loads the vendored SDK, calls
@@ -452,7 +468,13 @@ The panel does not get into the robot, and no video passes through the panel. It
    Agora hosts), and a random `INSTALL_ID`, all before creating the client (never `enableLogUpload`). The SDK's own
    `websdk_ng_*` localStorage items (device id, cached settings, preload cache) are cleared when it has loaded and on
    leaving. A load of the SDK script that hangs gives up after 20 s so the next try loads it again. It joins as
-   an audience member with `aes-128-gcm2`, the key and the base64-decoded salt, and plays uid 1. It leaves the channel
+   an audience member with `aes-128-gcm2`, the key and the base64-decoded salt, and plays uid 1. **Stopgap (#46):** the
+   Web SDK RSA-OAEP-wraps the secret with a built-in 1024-bit key, which holds at most 62 bytes, and the robot's secret
+   is 64, so `join()` throws. The tile gives `setEncryptionConfig` a constant placeholder (not a secret) and, only for
+   the length of `client.join()`, wraps `WebSocket.prototype.send` and `XMLHttpRequest.prototype.send` to write the real
+   secret into the join message (and drop `aes_encrypt`), restoring them in a `finally`; joins run one at a time, and a
+   join message with no secret field fails visibly ("video library changed"). The secret goes unwrapped inside TLS to
+   Agora, whose servers decrypt the stream for the viewer anyway. The vendored SDK is not modified. Retired by #46. It leaves the channel
    on close, camera change, leaving Live, a hidden tab and page close. A token's expiry event rejoins with a fresh token
    (the route picks the viewer uid, so a token cannot be renewed in place). No CSP is set: `connect-src` cannot admit
    `*.agora.io` and block `statscollector*.agora.io`, so an allowlist of exact gateway hosts needs a network capture.

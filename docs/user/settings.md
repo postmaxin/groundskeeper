@@ -124,6 +124,11 @@ address of the cloud's video service is set only by the `YARBO_ROBOT_SERVICE_URL
 with `https://`), never in Settings, because the panel sends your Yarbo session to it; Settings only shows
 "configured" or "not configured", and until it is set the panel answers "not configured". With `PANEL_AUTH=off`
 anyone who can reach the panel gets the video too. The video plays in the **Cameras** tile on [Live](#help/live).
+While that tile is open it also sends the robot a keep-awake every 4 seconds (as the Yarbo app does while open, since
+the robot streams only then): this needs **Control** on, and stops when the tile is closed. The stream's secret is sent
+unwrapped inside TLS to Agora (whose servers decrypt the stream for the browser anyway), because it is longer than
+Agora's Web SDK can wrap; a stopgap pending an Agora fix (issue #46). Allow `*.agora.io` and `*.sd-rtn.com` in ad
+blockers, or the tile cannot connect.
 The panel asks the SDK not to send Agora usage statistics or upload logs, and switches off its remote configuration;
 a network capture to confirm this is pending (issue #35). Agora still sees your browser's address, the panel's address
 (the `Origin` and `Referer` of the SDK's requests) and the camera's channel name, which carries the robot's serial

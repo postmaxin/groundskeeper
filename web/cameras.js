@@ -8,10 +8,15 @@
 
    Rules this file keeps (tests/test_cameras_js.py checks the ones a test can):
    - It never switches the cameras off: state 0 would also cut the official app's view (docs/dev/protocol.md).
+   - While the tile is open (connecting, waiting, playing) it asks the panel for one keep-awake beat every 4 s
+     (POST /api/video/keepalive). The robot streams only while someone keeps it awake, as the official app does. The timer
+     belongs to the start's ticket and camerasLeave() clears it, so every way of stopping stops the beats; the panel
+     itself never repeats a beat, so a closed tab stops them too.
    - Video runs only while the tile is open and the tab is showing Live. Closing it, changing camera, leaving Live,
      hiding the tab and closing the page all leave the channel.
    - The token, key and salt live in local variables of one function call. They are not kept on `cams`, in the DOM, in
-     storage or the URL, and nothing here writes to the console. (The SDK keeps a few `websdk_ng_*` items of its own
+     storage or the URL, and nothing here writes to the console. The stream's secret is longer than Agora's Web SDK
+     can wrap (see camerasJoin), so only around client.join() is it written into the join message in its place. (The SDK keeps a few `websdk_ng_*` items of its own
      in this panel's localStorage: a device id, a cache of its settings and of a preload. This file clears them when
      the SDK has loaded and when the channel is left; none of them holds the token, key or salt.)
    - Agora's SDK is told, before any client exists, not to send usage statistics, not to upload logs, not to fetch
@@ -25,6 +30,13 @@ const CAM_ROBOT_UID = 1;                           // the robot publishes as uid
 const CAM_SLOW_MS = 15000;                         // joined but no video yet: say why it may be
 const CAM_SETTINGS_MS = 20000;                     // how long a read of the video setting is trusted
 const CAM_SDK_TIMEOUT_MS = 20000;                  // a script load that hangs gives up, so the next try loads again
+const CAM_BEAT_MS = 4000;                          // the official app keeps the robot awake about this often while open
+const CAM_JOIN_TIMEOUT_MS = 30000;                 // a join that never settles gives up, so the swap cannot linger
+const CAM_CONTROL_OFF_HINT = "Control is off, so the panel cannot switch the cameras on or keep the robot awake. They play if the robot already has them on.";
+// STOPGAP (#46). The Web SDK wraps the stream's secret with a built-in 1024-bit RSA key, which holds at most 62 bytes;
+// the robot's secret is 64, so join() throws OperationError. This placeholder (NOT a secret) is what the SDK is given;
+// camerasJoin writes the real secret into the join message in its place. Remove both once Agora lifts the limit.
+const CAM_PLACEHOLDER_SECRET = "groundskeeper-placeholder";
 const CAM_SDK_STORAGE = "websdk_ng_";              // the prefix of what the SDK itself keeps in localStorage
 // Switched off for the SDK (4.24.9, read from the vendored bundle). Each is written with the third argument true: the
 // SDK ignores a plain setParameter for a key a remote or cached configuration has already set.
@@ -38,7 +50,7 @@ const CAM_SDK_OFF = [
 ];
 
 const cams = { open: false, camera: savedCamera(), phase: "closed", message: "", hint: "", client: null, ticket: 0,
-               slowTimer: null, leaving: Promise.resolve(), settings: null, settingsAt: 0, card: null, stage: null, sdk: null,
+               slowTimer: null, beatTimer: null, controlOff: false, leaving: Promise.resolve(), settings: null, settingsAt: 0, card: null, stage: null, sdk: null,
                subscribed: 0 };
 
 function savedCamera() {
@@ -135,6 +147,9 @@ function camerasStop(message) {
 function camerasLeave() {
   cams.ticket++;
   clearTimeout(cams.slowTimer);
+  clearInterval(cams.beatTimer);                    // no more keep-awake beats, on every way of stopping
+  cams.beatTimer = null;
+  cams.controlOff = false;
   const client = cams.client;
   cams.client = null;
   camerasForgetSdkStorage();
@@ -186,6 +201,80 @@ function camerasQuietSdk(AgoraRTC) {
   AgoraRTC.setLogLevel(4);
 }
 
+// One keep-awake beat now and one every CAM_BEAT_MS while this start is live. The panel sends exactly one command per
+// accepted request and never repeats, so what stops this stops the beats. A beat that fails shows nothing (it must not
+// break playback); only "Control is off" is said, as the existing hint.
+function camerasBeats(ticket) {
+  const live = () => ticket === cams.ticket && cams.open;
+  const beat = async () => {
+    if (!live()) return;
+    try {
+      const r = await postJSON("/api/video/keepalive", {});
+      if (!live()) return;
+      cams.controlOff = !!(r && r.control_off);       // the panel's word on it, which may be newer than the last status
+      if (cams.controlOff && cams.phase !== "error" && cams.hint !== CAM_CONTROL_OFF_HINT) {
+        cams.hint = CAM_CONTROL_OFF_HINT;
+        camerasDraw();
+      }
+    } catch { /* quiet: the next beat tries again */ }
+  };
+  clearInterval(cams.beatTimer);
+  cams.beatTimer = setInterval(beat, CAM_BEAT_MS);
+  beat();
+}
+
+// Swaps the real secret into one JSON message in place of the SDK's wrapped placeholder, and drops the field that says
+// it was wrapped. Works on the text, not a parsed copy, so nothing else in the message is touched or re-rounded.
+// Returns the message and whether a secret field was found.
+function camerasSwapBody(body, secret) {
+  if (typeof body !== "string" || !/"(?:aes_secret|aesSecret)"/.test(body)) return { body, swapped: false };
+  let out = body.replace(/,\s*"(?:aes_encrypt|aesEncrypt)"\s*:\s*(?:true|false)/g, "")
+    .replace(/"(?:aes_encrypt|aesEncrypt)"\s*:\s*(?:true|false)\s*,?/g, "");
+  let n = 0;
+  out = out.replace(/"(aes_secret|aesSecret)"\s*:\s*"(?:[^"\\]|\\.)*"/g, (_m, key) => { n++; return `"${key}":${JSON.stringify(secret)}`; });
+  return n ? { body: out, swapped: true } : { body, swapped: false };
+}
+
+// STOPGAP (#46): joins with the real stream secret although the Web SDK cannot wrap one this long. The SDK was given a
+// placeholder (CAM_PLACEHOLDER_SECRET), wraps that, and puts it in its join message (a WebSocket text frame, and the
+// access-point request on XMLHttpRequest). For the length of the join only, WebSocket.prototype.send and
+// XMLHttpRequest.prototype.send are wrapped to put the real secret in that message. The connection is wss/TLS, to Agora's
+// servers, which decrypt the stream for the viewer anyway. The functions are put back in a finally; joins run one at a
+// time, so a wrapper never outlives its join or carries another start's secret; the secret stays in this call's locals.
+// Fails (visibly) when the join message had no secret field: the library has changed and the stream would not decrypt.
+let camJoinTail = Promise.resolve();
+function camerasJoin(client, args, secret, live) {
+  const run = camJoinTail.then(() => {
+    if (!live()) throw new Error("This start was closed.");     // never reached the wrapper; the caller is not live either
+    return camerasJoinSwapped(client, args, secret);
+  });
+  camJoinTail = run.catch(() => {});
+  return run;
+}
+
+async function camerasJoinSwapped(client, args, secret) {
+  const wsSend = WebSocket.prototype.send;
+  const xhrSend = XMLHttpRequest.prototype.send;
+  let active = true;
+  let seen = 0;
+  const fix = (body) => { const r = camerasSwapBody(body, secret); if (r.swapped) seen++; return r.body; };
+  const wsWrap = function (data) { return wsSend.call(this, active ? fix(data) : data); };
+  const xhrWrap = function (data) { return xhrSend.call(this, active ? fix(data) : data); };
+  let timer;
+  WebSocket.prototype.send = wsWrap;
+  XMLHttpRequest.prototype.send = xhrWrap;
+  try {
+    await Promise.race([client.join(...args),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("The join timed out.")), CAM_JOIN_TIMEOUT_MS); })]);
+  } finally {
+    active = false;                                 // a wrapper someone else wrapped over stays harmless
+    clearTimeout(timer);
+    if (WebSocket.prototype.send === wsWrap) WebSocket.prototype.send = wsSend;
+    if (XMLHttpRequest.prototype.send === xhrWrap) XMLHttpRequest.prototype.send = xhrSend;
+  }
+  if (!seen) throw new Error("video library changed");
+}
+
 const camerasBytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
 // A short, safe reason for the screen, with the step that failed: our own errors say what they mean; an SDK error is
@@ -212,6 +301,7 @@ async function camerasStart({ on }) {
   try {
     await cams.leaving;                           // never two live clients: wait out any leave still in flight
     if (!live()) return;
+    camerasBeats(ticket);                         // keep the robot awake from now on: it streams only while someone does
     if (on) hint = await camerasSwitchOn();
     if (!live()) return;
     const join = await postJSON("/api/video/token", { camera });
@@ -226,14 +316,15 @@ async function camerasStart({ on }) {
     cams.client = client;
     await client.setClientRole("audience");
     if (!live()) return;
-    client.setEncryptionConfig("aes-128-gcm2", join.key, camerasBytes(join.salt));
+    client.setEncryptionConfig("aes-128-gcm2", CAM_PLACEHOLDER_SECRET, camerasBytes(join.salt));   // the real one: see camerasJoin
     camerasListen(client, ticket);
     step = "Joining";
-    await client.join(join.app_id, join.channel, join.token, join.uid);
+    await camerasJoin(client, [join.app_id, join.channel, join.token, join.uid], join.key, live);
     if (!live()) return;
     // The robot may have been publishing already: user-published can have started the video before join returned.
     if (cams.phase !== "playing") {
-      camerasSet("waiting", "Waiting for the robot's video…", hint || "The cameras may be off, or the robot asleep.");
+      camerasSet("waiting", "Waiting for the robot's video…",
+        hint || (cams.controlOff ? CAM_CONTROL_OFF_HINT : "The cameras may be off, or the robot asleep."));
       cams.slowTimer = setTimeout(() => {
         if (live() && cams.phase === "waiting") {
           camerasSet("waiting", "No video from the robot yet.", "It may be asleep, or its cameras are off: open the Yarbo app, or switch Control on to wake them.");
@@ -259,7 +350,7 @@ async function camerasStart({ on }) {
 async function camerasSwitchOn() {
   // The latest status, not the value the last card render saw: Control may have just been switched on in the top bar.
   const controlOn = state.status && state.status.ops ? !!state.status.ops.control_enabled : cams.controlOn;
-  if (!controlOn) return "Control is off, so the panel cannot switch the cameras on. They play if the robot already has them on.";
+  if (!controlOn) return CAM_CONTROL_OFF_HINT;
   try {
     const r = await postJSON("/api/control/send", { cmd: "smart_vision_control", args: {}, confirm: true });
     if (r && r.sent) return "";

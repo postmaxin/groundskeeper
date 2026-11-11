@@ -55,7 +55,8 @@ def check_read_only(cmd: str) -> None:
 def check_command(cmd: str) -> None:
     """A command the panel may send: a run command or a captured write. cmd_vel never."""
     from . import control, mapwrite          # imported here: both modules sit above this one
-    if cmd in control.HARD_BLOCKED or cmd not in (set(control.CATALOGUE) | set(mapwrite.WRITE_COMMANDS)):
+    allowed = set(control.CATALOGUE) | set(mapwrite.WRITE_COMMANDS) | {control.KEEP_AWAKE}   # + the keep-awake
+    if cmd in control.HARD_BLOCKED or cmd not in allowed:
         raise ReadOnlyViolation(f"refusing to publish {cmd!r}: not a run command or a captured write")
 
 
