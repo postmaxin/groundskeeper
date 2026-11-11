@@ -658,3 +658,17 @@ def test_the_rate_limit_ignores_the_wall_clock(tmp_path, monkeypatch):
     assert asyncio.run(c.keep_awake())["sent"] is True
     monkeypatch.setattr(control.time, "time", lambda: 10 ** 9)
     assert asyncio.run(c.keep_awake()) == {"sent": False, "limited": True}
+
+
+def test_the_apps_slower_beats_cannot_keep_trust_alive_by_eating_credits(tmp_path, monkeypatch):
+    clock = [5000.0]
+    monkeypatch.setattr(recorder.time, "time", lambda: clock[0])
+    r = _recorder(tmp_path, trusted=True)                  # echoes had been arriving ...
+    o = _ops(r)
+    r.app_stream_at = 0.0
+    for _ in range(30):                                     # ... then stop; the app beats 1 s after each of ours
+        r.mark_sent("set_working_state")
+        deliver(o, r, "snowbot/SN/app/set_working_state", {"state": 1}, clock[0] + 1.0)
+        clock[0] += 4
+    assert r._own()["trusted"] is False                     # three unmatched credits withdrew it
+    assert o.phone_app_active(60) is True                   # and the app was never hidden: still active two minutes on

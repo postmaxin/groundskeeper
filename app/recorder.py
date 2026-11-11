@@ -66,7 +66,7 @@ OWN_ECHO_S = 5            # an echo of our own send is seen within this long of 
 OWN_ECHO_COUNTED_S = 1.5
 OWN_UNMATCHED_MAX = 3     # this many credits in a row expiring unmatched: the cloud is not echoing, stop trusting
 OWN_TRUST_AFTER = 3       # this many quick matched echoes in a row (also at the start) earn trust in the matching
-OWN_TRUST_LATENCY_S = 0.5 # ... "quick" meaning within this long of the send (also to be measured)
+OWN_TRUST_LATENCY_S = 0.5 # only a match this quick is ours (a slower one is taken for the app's; to be measured)
 # Commands that mean a person (phone app, another client) is steering the robot: a guard gives up its pause.
 PEOPLE_COMMANDS = {"start_plan", "pause", "resume", "stop", "cmd_recharge", "cmd_vel"}
 # While doing one of these the robot should be getting somewhere; standing still for minutes means it is stuck
@@ -326,11 +326,16 @@ class Recorder:
             q = st["beats"].setdefault(name, deque(maxlen=16))
             if not (q and q[0] <= ts):            # a credit recorded after the message arrived is not its echo
                 return False
-            latency = ts - q.popleft()
+            # A real echo comes back at once; an app beat that lands in the window is slower. A slow one is ambiguous, so it
+            # is never ours (trusted or not) and leaves the credit to expire unmatched: the app's beats can neither earn
+            # trust nor keep it alive by eating credits. (An app beat that lands as quickly as an echo, for several beats
+            # in a row, still cannot be told apart: known, see docs/dev/design.md section 13.)
+            if ts - q[0] > OWN_TRUST_LATENCY_S:
+                st["run"] = 0
+                return False
+            q.popleft()
             st["unmatched"] = 0
-            # A real echo comes back at once; an app beat that happens to land inside the window is slower. Only quick
-            # matches count towards trust, so the app's beats cannot easily earn it.
-            st["run"] = st["run"] + 1 if latency <= OWN_TRUST_LATENCY_S else 0
+            st["run"] += 1
             if not st["trusted"] and st["run"] >= OWN_TRUST_AFTER:
                 st["trusted"] = True
                 if st.pop("was_lost", False):

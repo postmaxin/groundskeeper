@@ -463,6 +463,10 @@ The panel does not get into the robot, and no video passes through the panel. It
    `OWN_ECHO_COUNTED_S` (1.5 s; to be measured on a real robot). A send that the cloud client refuses (paho's return
    code) raises, so its credit is undone. The verdict is decided once per message (ops, for the cloud) and carried to
    the recorder with the message, so two messages with the same timestamp are decided separately.
+   Only a match within `OWN_TRUST_LATENCY_S` is ever ours: a slower one is taken for the app's and the credit expires
+   unmatched, so the app's beats can neither earn trust nor keep it alive. Known gap: with no echo at all, an app beat
+   that lands as quickly as an echo for several beats in a row (the two beats drift into phase) cannot be told apart
+   and can briefly earn trust; the first slower beat or three expired credits withdraw it (issue #48).
 4. **Switching on.** The Cameras panel sends `smart_vision_control {"state":1}` when it opens, through
    `control.CATALOGUE` and `control.check`, marked as the panel's own send so `app/ops.py` does not mistake its echo
    for the phone app (`PHONE_APP_COMMANDS`). It is its own PR for separate review. **Switching off is not decided:**
