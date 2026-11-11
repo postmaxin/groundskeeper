@@ -25,13 +25,16 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
   not in the control catalogue, so `/api/control/send` cannot send it). Events note when it starts and stops, not
   each beat. The panel's own keep-awake and camera-on are matched to their echoes one for one, so they are not
   taken for the phone app, while the real app's beats still are. This assumes the cloud echoes the panel's own
-  commands back, which is not verified: until echoes have been seen (and after three credits in a row go unmatched) the
+  commands back, as it did on one robot (#48): until echoes have been seen (and after three credits in a row go unmatched) the
   panel's keep-awake and camera-on count as possibly the phone app's while the cameras are open, so automatic starts
   stay blocked (the safe direction); an event says when that happens. The stream's 64-character secret is longer than
   Agora's Web SDK can wrap, so the tile now writes it into the join message itself, for as long as the client lives (so a reconnect works too)
   (a stopgap, #46: it travels unwrapped inside TLS to Agora, whose servers decrypt the stream for your browser anyway).
   Allow `*.agora.io` and `*.sd-rtn.com` in ad blockers. The Yarbo app switches the cameras off when it goes to the
   background, which stops the panel's video until the tile is reopened.
+- **Cameras: known limitations in Help** (Live → Cameras). It has played the back camera during a run on one robot;
+  waking a docked, sleeping robot, the front, left and right cameras, a phone and more than one viewer are not yet
+  shown to work.
 - **Robot video setting** (Settings → Robot → Yarbo cloud, off by default): lets a signed-in person ask for a robot
   camera's join details (`POST /api/video/token`); the viewer's browser then connects to Agora. People only: API tokens
   and AI assistants are refused, and the stream key is never logged. Needs `YARBO_ROBOT_SERVICE_URL` (environment only); the Live tile

@@ -410,9 +410,30 @@ as `cmd_roller`) are never sent.
 
 ## 13. Robot cameras
 
-**Status: built, not yet proved on a robot** (the Live tile is `web/cameras.js`). Wire details, with what is confirmed
-and what is not, are in
+**Status: plays on one robot, with known limitations** (the Live tile is `web/cameras.js`). Wire details, with what is
+confirmed and what is not, are in
 [`protocol.md`](protocol.md#robot-video-agora).
+
+Seen on one robot (2026-11): the tile played the back camera (640×480, smooth, 45 s and more) during a run while the
+official app was also open, with the keep-awake and the secret swap below and no workarounds. The cloud echoed the
+panel's own `set_working_state` and `smart_vision_control`, so own-echo matching earned trust, and the app's beats were
+still counted as the app's (fork issue #48).
+
+Known limitations:
+1. **Waking a docked, sleeping robot is not shown.** With the app force-stopped and the robot docked, no video arrived
+   within about 35 s (the test was cut short when the tab was hidden). Camera-on plus keep-awake alone may not wake it;
+   opening the official app once, or a running plan, may be needed.
+2. **Front camera unverified.** It may depend on the head module (leaf blower, snow blower and mower each have their own
+   front camera). Left and right were not tried; back is verified.
+3. **The official app switches the cameras off when it goes to the background**, which stops the panel's video until
+   the tile is reopened.
+4. **Ad blockers** must allow `*.agora.io` and `*.sd-rtn.com`.
+5. **The secret swap is a stopgap.** Agora Web SDK 4.24.9 caps the encryption secret at 62 bytes (RSA wrap) and the
+   robot's is 64, so the tile sends the secret unwrapped inside TLS to Agora, whose servers decrypt for the viewer in
+   the normal path too (step 5 below; fork issue #46,
+   [AgoraIO/agora-rtc-web#15](https://github.com/AgoraIO/agora-rtc-web/issues/15)).
+6. **Phone width** not yet checked on a real phone.
+7. **One robot and one viewer at a time** is all that has been tried.
 
 What is known:
 - The robot's cameras sit on a network **internal to the robot**, not on the household LAN.
@@ -455,7 +476,8 @@ The panel does not get into the robot, and no video passes through the panel. It
    still arrive just after Close.
 
    **Echo assumption, and the safe fallback.** Matching our own beat to its echo assumes the cloud delivers the
-   panel's own publishes back. That is not verified. So the matching is trusted only after `OWN_TRUST_AFTER` (3) quick
+   panel's own publishes back. On one robot it does (2026-11, fork issue #48); the fallback below stays in case that
+   changes. The matching is trusted only after `OWN_TRUST_AFTER` (3) quick
    echoes in a row (within `OWN_TRUST_LATENCY_S`, 0.5 s), and trust is withdrawn when `OWN_UNMATCHED_MAX` (3) credits in
    a row expire unmatched. Until trusted (including right after a start) every `set_working_state` and
    `smart_vision_control` counts as possibly the phone app's, which blocks automatic starts while the cameras are open:
@@ -466,7 +488,9 @@ The panel does not get into the robot, and no video passes through the panel. It
    Only a match within `OWN_TRUST_LATENCY_S` is ever ours: a slower one is taken for the app's and the credit expires
    unmatched, so the app's beats can neither earn trust nor keep it alive. Known gap: with no echo at all, an app beat
    that lands as quickly as an echo for several beats in a row (the two beats drift into phase) cannot be told apart
-   and can briefly earn trust; the first slower beat or three expired credits withdraw it (issue #48).
+   and can briefly earn trust; a slower beat is taken for the app's and restarts the run of quick echoes, but only
+   three expired credits in a row withdraw trust. With a cloud that echoes,
+   as seen so far, this case does not arise (issue #48).
 4. **Switching on.** The Cameras panel sends `smart_vision_control {"state":1}` when it opens, through
    `control.CATALOGUE` and `control.check`, marked as the panel's own send so `app/ops.py` does not mistake its echo
    for the phone app (`PHONE_APP_COMMANDS`). It is its own PR for separate review. **Switching off is not decided:**
