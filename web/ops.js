@@ -279,6 +279,9 @@ function emergencyCard(s) {
 // The second tap must come at least this long after the first: a held or bouncing key is not a decision.
 const ARM_MIN_GAP_MS = 400;
 async function emergencyTap(cmd, label) {
+  // Never leave a two-tap button focused, on any tap (an ignored one too): Space or Enter on it would be the next tap.
+  const f = document.activeElement;
+  if (f && f.closest && f.closest(".ecard")) f.blur();
   const a = ops.arm;
   // A bounce or key repeat, not a second tap: ignore it, and the button stays armed.
   if (a && a.cmd === cmd && Date.now() - (a.until - 4000) < ARM_MIN_GAP_MS) return;

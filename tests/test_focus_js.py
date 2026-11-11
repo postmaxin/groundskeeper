@@ -80,10 +80,21 @@ def test_an_armed_emergency_button_never_gets_focus_back_so_a_stray_key_cannot_s
     assert r["emerg-armed-refresh"] == ["BODY", None]                  # and no later refresh while armed puts it back
 
 
-def test_the_emergency_card_marks_the_armed_button_and_ignores_a_too_quick_second_tap():
-    code = (ROOT / "web" / "ops.js").read_text(encoding="utf-8")
-    assert '"data-nofocus": armed ? "" : null' in code
-    assert "const ARM_MIN_GAP_MS = 400;" in code and "< ARM_MIN_GAP_MS) return;" in code
+def test_the_emergency_card_marks_the_armed_button():
+    assert '"data-nofocus": armed ? "" : null' in (ROOT / "web" / "ops.js").read_text(encoding="utf-8")
+
+
+@needs_node
+def test_emergency_tap_ignores_a_too_quick_second_tap_sends_once_after_the_gap_and_expires():
+    out = subprocess.run(["node", str(ROOT / "tests" / "emerg_flow.cjs")], capture_output=True, text=True, check=True)
+    r = json.loads(out.stdout)
+    assert r["armed"] is True                                          # the first tap arms and sends nothing
+    assert r["tooQuick"] == {"sent": 0, "stillArmed": True}            # 100 ms later: a bounce, ignored, still armed
+    assert r["afterGap"]["sent"] == [["/api/control/send", "resume", True]]   # 450 ms after arming: sent once
+    assert r["afterGap"]["armAfter"] is None
+    assert r["expired"]["arm"] is None                                 # an arm left for 4 s lapses
+    assert r["rearmNoSend"] is True                                    # so the next tap only arms again
+    assert r["blurs"] == 5                                             # every tap, the ignored one too, drops focus
 
 
 @needs_node
