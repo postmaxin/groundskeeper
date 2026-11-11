@@ -1,23 +1,220 @@
-"""The Content-Security-Policy the panel sends while Robot video is on (design §13).
+"""The Content-Security-Policy the panel sends on its HTML page (design §13).
 
 Only `connect-src`, nothing else: the panel uses inline styles and blob: workers, and a full policy is a much bigger
 change. The point is narrow: the Agora Web SDK's statistics and log hosts must be unreachable from the page even if the
 SDK's own switches (`ENABLE_EVENT_REPORT`, `setParameter`) stop working. A source list cannot say "all of *.agora.io
-except statscollector-*", so it names the gateway-choice hosts and the signalling subdomains and nothing broader.
+except statscollector-*", so it names every host the SDK knows by exact name and nothing broader.
 
 Every other request the panel's pages make goes to the panel itself: tiles, elevation, Frigate pictures and the rest
-are fetched by the server and relayed, so no other host is listed (and imagery hosts are deliberately not).
+are fetched by the server and relayed, so no other host is listed (and imagery hosts are deliberately not). That is
+also why the header is sent always, not only while Robot video is on: it cannot break a page that never uses video.
+
+The two lists below are every `*.agora.io` and `*.sd-rtn.com` host in the vendored SDK (web/vendor/AgoraRTC_N-production.js,
+4.24.9), split by what the host is for. tests/test_csp.py scans the bundle and fails on a host in neither list, so an SDK
+upgrade that adds one has to be classified by a person.
 """
 
-# Gateway choice (POST /api/v2/transpond/webrtc): the first two are the SDK's defaults for the "ap" area, the wildcard
-# is the sd-rtn.com family it falls back to (a capture on 2026-11-11 saw webrtc2-2.ap.sd-rtn.com). Statistics hosts
-# are statscollector-*.agora.io and *.statscollector.sd-rtn.com; none of them ends in .ap.sd-rtn.com.
-GATEWAY = ("https://webrtc2-ap-web-1.agora.io", "https://webrtc2-ap-web-3.agora.io", "https://*.ap.sd-rtn.com")
+# Gateway choice, signalling bootstrap, proxies: everything the SDK needs to join and play a channel.
+ALLOWED_HOSTS = (
+    "africa.webrtc-cloud-proxy.sd-rtn.com",
+    "ap-proxy-1.agora.io",
+    "ap-proxy-2.agora.io",
+    "ap-web-1-africa.agora.io",
+    "ap-web-1-asia.agora.io",
+    "ap-web-1-europe.agora.io",
+    "ap-web-1-hkmc.agora.io",
+    "ap-web-1-india.agora.io",
+    "ap-web-1-japan.agora.io",
+    "ap-web-1-korea.agora.io",
+    "ap-web-1-north-america.agora.io",
+    "ap-web-1-oceania.agora.io",
+    "ap-web-1-oversea.agora.io",
+    "ap-web-1-south-america.agora.io",
+    "ap-web-1-us.agora.io",
+    "ap-web-2-africa.agora.io",
+    "ap-web-2-asia.agora.io",
+    "ap-web-2-europe.agora.io",
+    "ap-web-2-hkmc.agora.io",
+    "ap-web-2-india.agora.io",
+    "ap-web-2-japan.agora.io",
+    "ap-web-2-korea.agora.io",
+    "ap-web-2-north-america.agora.io",
+    "ap-web-2-oceania.agora.io",
+    "ap-web-2-oversea.agora.io",
+    "ap-web-2-south-america.agora.io",
+    "ap-web-2-us.agora.io",
+    "ap.sd-rtn.com",
+    "cds-ap-web-1.agora.io",
+    "cds-ap-web-3.agora.io",
+    "cds-ap-web-africa.agora.io",
+    "cds-ap-web-africa2.agora.io",
+    "cds-ap-web-america.agora.io",
+    "cds-ap-web-america2.agora.io",
+    "cds-ap-web-asia.agora.io",
+    "cds-ap-web-asia2.agora.io",
+    "cds-ap-web-europe.agora.io",
+    "cds-ap-web-europe2.agora.io",
+    "cds-ap-web-hkmc.agora.io",
+    "cds-ap-web-hkmc2.agora.io",
+    "cds-ap-web-india.agora.io",
+    "cds-ap-web-india2.agora.io",
+    "cds-ap-web-japan.agora.io",
+    "cds-ap-web-japan2.agora.io",
+    "cds-ap-web-korea.agora.io",
+    "cds-ap-web-korea2.agora.io",
+    "cds-ap-web-oceania.agora.io",
+    "cds-ap-web-oceania2.agora.io",
+    "cds-ap-web-oversea.agora.io",
+    "cds-ap-web-south-america.agora.io",
+    "cds-ap-web-south-america2.agora.io",
+    "cds-ap-web-us.agora.io",
+    "cds-ap-web-us2.agora.io",
+    "cds-web-2.ap.sd-rtn.com",
+    "cds-web-4.ap.sd-rtn.com",
+    "east-cn.webrtc-cloud-proxy.sd-rtn.com",
+    "east-usa.webrtc-cloud-proxy.sd-rtn.com",
+    "europe.webrtc-cloud-proxy.sd-rtn.com",
+    "hkmc.webrtc-cloud-proxy.sd-rtn.com",
+    "india.webrtc-cloud-proxy.sd-rtn.com",
+    "japan.webrtc-cloud-proxy.sd-rtn.com",
+    "korea.webrtc-cloud-proxy.sd-rtn.com",
+    "oceania.webrtc-cloud-proxy.sd-rtn.com",
+    "proxy-ap-web-africa.agora.io",
+    "proxy-ap-web-america.agora.io",
+    "proxy-ap-web-asia.agora.io",
+    "proxy-ap-web-europe.agora.io",
+    "proxy-ap-web-hkmc.agora.io",
+    "proxy-ap-web-india.agora.io",
+    "proxy-ap-web-japan.agora.io",
+    "proxy-ap-web-korea.agora.io",
+    "proxy-ap-web-oceania.agora.io",
+    "proxy-ap-web-oversea.agora.io",
+    "proxy-ap-web-south-america.agora.io",
+    "proxy-ap-web-us.agora.io",
+    "proxy-web.ap.sd-rtn.com",
+    "south-america.webrtc-cloud-proxy.sd-rtn.com",
+    "southeast-asia.webrtc-cloud-proxy.sd-rtn.com",
+    "sua-ap-web-1.agora.io",
+    "sua-ap-web-3.agora.io",
+    "sua-ap-web-africa.agora.io",
+    "sua-ap-web-africa2.agora.io",
+    "sua-ap-web-america.agora.io",
+    "sua-ap-web-america2.agora.io",
+    "sua-ap-web-asia.agora.io",
+    "sua-ap-web-asia2.agora.io",
+    "sua-ap-web-europe.agora.io",
+    "sua-ap-web-hkmc.agora.io",
+    "sua-ap-web-hkmc2.agora.io",
+    "sua-ap-web-india.agora.io",
+    "sua-ap-web-india2.agora.io",
+    "sua-ap-web-japan.agora.io",
+    "sua-ap-web-japan2.agora.io",
+    "sua-ap-web-korea.agora.io",
+    "sua-ap-web-korea2.agora.io",
+    "sua-ap-web-oceania.agora.io",
+    "sua-ap-web-oceania2.agora.io",
+    "sua-ap-web-oversea.agora.io",
+    "sua-ap-web-south-america.agora.io",
+    "sua-ap-web-south-america2.agora.io",
+    "sua-ap-web-us.agora.io",
+    "sua-ap-web-us2.agora.io",
+    "sua-web-2.ap.sd-rtn.com",
+    "sua-web-4.ap.sd-rtn.com",
+    "uap-ap-web-1.agora.io",
+    "uap-ap-web-3.agora.io",
+    "uap-ap-web-africa.agora.io",
+    "uap-ap-web-africa2.agora.io",
+    "uap-ap-web-america.agora.io",
+    "uap-ap-web-america2.agora.io",
+    "uap-ap-web-asia.agora.io",
+    "uap-ap-web-asia2.agora.io",
+    "uap-ap-web-europe.agora.io",
+    "uap-ap-web-europe2.agora.io",
+    "uap-ap-web-hkmc.agora.io",
+    "uap-ap-web-hkmc2.agora.io",
+    "uap-ap-web-india.agora.io",
+    "uap-ap-web-india2.agora.io",
+    "uap-ap-web-japan.agora.io",
+    "uap-ap-web-japan2.agora.io",
+    "uap-ap-web-korea.agora.io",
+    "uap-ap-web-korea2.agora.io",
+    "uap-ap-web-oceania.agora.io",
+    "uap-ap-web-oceania2.agora.io",
+    "uap-ap-web-oversea.agora.io",
+    "uap-ap-web-south-america.agora.io",
+    "uap-ap-web-south-america2.agora.io",
+    "uap-ap-web-us.agora.io",
+    "uap-ap-web-us2.agora.io",
+    "uap-web-2.ap.sd-rtn.com",
+    "uap-web-4.ap.sd-rtn.com",
+    "us.webrtc-cloud-proxy.sd-rtn.com",
+    "webnginx-proxy.agora.io",
+    "webrtc-cloud-proxy.agora.io",
+    "webrtc-cloud-proxy.sd-rtn.com",
+    "webrtc2-2.ap.sd-rtn.com",
+    "webrtc2-4.ap.sd-rtn.com",
+    "webrtc2-ap-web-1.agora.io",
+    "webrtc2-ap-web-3.agora.io",
+)
+
+# Statistics, log upload, reporting, analytics and tracking hosts, and the docs link: never allowed.
+DENIED_HOSTS = (
+    "data-reporting.agora.io",
+    "docs.agora.io",
+    "logservice-asia.agora.io",
+    "logservice-china.agora.io",
+    "logservice-europe.agora.io",
+    "logservice-hkmc.agora.io",
+    "logservice-india.agora.io",
+    "logservice-japan.agora.io",
+    "logservice-korea.agora.io",
+    "logservice-north-america.agora.io",
+    "logservice-oceania.agora.io",
+    "logservice-oversea.agora.io",
+    "logservice-south-africa.agora.io",
+    "logservice-south-america.agora.io",
+    "logservice-us.agora.io",
+    "logservice.agora.io",
+    "statscollector-1-africa.agora.io",
+    "statscollector-1-asia.agora.io",
+    "statscollector-1-europe.agora.io",
+    "statscollector-1-hkmc.agora.io",
+    "statscollector-1-india.agora.io",
+    "statscollector-1-japan.agora.io",
+    "statscollector-1-korea.agora.io",
+    "statscollector-1-north-america.agora.io",
+    "statscollector-1-oceania.agora.io",
+    "statscollector-1-oversea.agora.io",
+    "statscollector-1-south-america.agora.io",
+    "statscollector-1-us.agora.io",
+    "statscollector-1.agora.io",
+    "statscollector-2-africa.agora.io",
+    "statscollector-2-asia.agora.io",
+    "statscollector-2-europe.agora.io",
+    "statscollector-2-hkmc.agora.io",
+    "statscollector-2-india.agora.io",
+    "statscollector-2-japan.agora.io",
+    "statscollector-2-korea.agora.io",
+    "statscollector-2-north-america.agora.io",
+    "statscollector-2-oceania.agora.io",
+    "statscollector-2-oversea.agora.io",
+    "statscollector-2-south-america.agora.io",
+    "statscollector-2-us.agora.io",
+    "statscollector-2.agora.io",
+    "web-2.statscollector.sd-rtn.com",
+    "web-3.statscollector.sd-rtn.com",
+    "web-4.statscollector.sd-rtn.com",
+)
+
+# Bare suffixes the SDK joins to a gateway IP (edge.agora.io, edge.sd-rtn.com): not hosts themselves, and covered by EDGE.
+SUFFIXES = ("edge.agora.io", "edge.sd-rtn.com")
+
 # Signalling: the host name carries the gateway's IP, so it changes per session; the port is the gateway's.
 EDGE = ("wss://*.edge.agora.io:*", "wss://*.edge.sd-rtn.com:*")
 
-CONNECT_SRC = ("'self'", "blob:", "data:") + GATEWAY + EDGE
+CONNECT_SRC = ("'self'", "blob:", "data:") + tuple(f"https://{h}" for h in ALLOWED_HOSTS) + EDGE
+POLICY = "connect-src " + " ".join(CONNECT_SRC)
 
 
-def video_policy() -> str:
-    return "connect-src " + " ".join(CONNECT_SRC)
+def policy() -> str:
+    return POLICY

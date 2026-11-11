@@ -7,10 +7,10 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 
 ### Added
 
-- **Robot video is fenced in by the browser** (#35). While Robot video is on, the panel's page carries a
-  `Content-Security-Policy` with only `connect-src`: the panel itself, Agora's gateway and signalling hosts, and not
-  Agora's statistics or log hosts, so the SDK cannot reach them even if its own switches stop working. With video off
-  nothing is sent. A page loaded before video was switched on reloads once when you open the Cameras tile.
+- **The browser is told not to reach Agora's statistics or log hosts** (#35). The panel's page carries a
+  `Content-Security-Policy` with only `connect-src`: the panel itself, the Agora hosts the video needs (by exact name)
+  and no statistics, log or reporting host, so the SDK cannot reach them even if its own switches stop working. It is
+  sent always; nothing the panel does goes anywhere else, so it changes nothing for anyone who does not use video.
 - **"Metrics only" API tokens** (Settings → Access, or `"scope": "metrics"` on `POST /api/auth/tokens`). Such a token
   can read `/api/metrics` and is refused (403) on every other locked path (`/api/`, `/tiles/`, `/imagery/`), so a
   scrape token that leaks gives away nothing about the yard. Existing tokens stay full, and the box is off by

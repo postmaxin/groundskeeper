@@ -1,4 +1,4 @@
-"""The connect-src policy the panel sends while Robot video is on (design §13, app/csp.py).
+"""The connect-src policy the panel sends on its page (design §13, app/csp.py).
 
 The matcher below follows CSP3's host-source rules closely enough to say whether the Agora statistics and log hosts
 are reachable: scheme, a `*.` wildcard standing for one or more leftmost labels, and a port (default for the scheme,
@@ -51,8 +51,9 @@ BLOCKED = [
     "https://statscollector-1.agora.io/events", "https://statscollector-2-us.agora.io/events",
     "https://web-2.statscollector.sd-rtn.com/events", "https://web-3.statscollector.sd-rtn.com/events",
     "https://logservice.agora.io/up", "https://logservice-north-america.agora.io/up",
-    "https://data-reporting.agora.io/", "wss://statscollector-1.agora.io:4705/",
+    "https://data-reporting.agora.io/", "https://docs.agora.io/", "wss://statscollector-1.agora.io:4705/",
     "https://www.agora.io/", "https://x.sd-rtn.com/", "https://evil.example/", "wss://evil.example/",
+    "https://statscollector-3.agora.io/", "https://web-5.statscollector.sd-rtn.com/", "https://x.ap.sd-rtn.com/",
     "wss://edge.agora.io:4705/", "wss://1-2-3-4.edge.agora.io.evil.example:4705/",
 ]
 ALLOWED = [
@@ -60,6 +61,8 @@ ALLOWED = [
     "https://webrtc2-2.ap.sd-rtn.com/api/v2/transpond/webrtc", "wss://203-0-113-9.edge.agora.io:4705/",
     "wss://203-0-113-9.edge.sd-rtn.com:4705/",
 ]
+BUNDLE = Path(__file__).resolve().parent.parent / "web" / "vendor" / "AgoraRTC_N-production.js"
+BAD_NAME = re.compile(r"stat|log|report|analytic|track|^docs\.")
 
 
 def test_matcher_knows_its_rules():
@@ -71,48 +74,49 @@ def test_matcher_knows_its_rules():
 
 
 def test_policy_admits_gateway_and_edge_but_no_statistics_or_log_host():
-    src = policy_sources(csp.video_policy())
+    header = csp.policy()
+    src = policy_sources(header)
     for url in ALLOWED:
         assert allows(src, url), url
     for url in BLOCKED:
         assert not allows(src, url), url
+    for h in csp.DENIED_HOSTS:
+        assert not allows(src, f"https://{h}/") and not allows(src, f"wss://{h}:4705/"), h
     assert {"'self'", "blob:", "data:"} <= set(src)
-    assert not any(s in ("https://*.agora.io", "https://*.sd-rtn.com", "*", "https:", "wss:") for s in src)
+    assert [x for x in src if "*" in x] == list(csp.EDGE)              # no other wildcard, in particular no *.agora.io
+    assert "wss://*.edge.agora.io:*" in src and "wss://*.edge.sd-rtn.com:*" in src
 
 
-def test_policy_blocks_every_stats_and_log_host_in_the_vendored_sdk():
-    bundle = Path(__file__).resolve().parent.parent / "web" / "vendor" / "AgoraRTC_N-production.js"
-    if not bundle.exists():
+def test_the_lists_do_not_overlap_and_every_denied_name_looks_denied():
+    assert not set(csp.ALLOWED_HOSTS) & set(csp.DENIED_HOSTS)
+    assert not [h for h in csp.ALLOWED_HOSTS if BAD_NAME.search(h)]      # nothing telemetry-shaped is allowed
+    assert len(csp.ALLOWED_HOSTS) > 100 and len(csp.DENIED_HOSTS) > 40
+
+
+def test_every_host_in_the_vendored_sdk_is_classified():
+    """An SDK upgrade that adds a host fails here until a person puts it in ALLOWED_HOSTS or DENIED_HOSTS."""
+    if not BUNDLE.exists():
         pytest.skip("the vendored SDK is not in this checkout")
-    hosts = set(re.findall(r"[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*\.(?:agora\.io|sd-rtn\.com)", bundle.read_text(errors="ignore")))
-    bad = {h for h in hosts if re.search(r"statscollector|logservice|data-reporting", h)}
-    assert len(bad) > 10                                               # the scan found them
-    src = policy_sources(csp.video_policy())
-    for h in sorted(bad):
-        assert not allows(src, f"https://{h}/"), h
-        assert not allows(src, f"wss://{h}:4705/"), h
+    found = set(re.findall(r"[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*\.(?:agora\.io|sd-rtn\.com)",
+                           BUNDLE.read_text(errors="ignore")))
+    assert len(found) > 100
+    known = set(csp.ALLOWED_HOSTS) | set(csp.DENIED_HOSTS) | set(csp.SUFFIXES)
+    assert not found - known, f"new hosts in the SDK, classify them in app/csp.py: {sorted(found - known)}"
+    src = policy_sources(csp.policy())
+    for h in found:
+        want = h in csp.ALLOWED_HOSTS
+        assert allows(src, f"https://{h}/") == want or h in csp.SUFFIXES, h
 
 
-def test_header_only_on_the_page_and_only_with_video_on(t):  # noqa: F811
-    t.store.set_setting("imagery_source", {"custom": {"url": "https://tiles.imagery-host.invalid/{z}/{x}/{y}.jpg"}})
-    off = t.c.get("/")
-    assert off.status_code == 200 and "content-security-policy" not in off.headers
-    assert 'name="gk-video-csp"' not in off.text
-    assert "content-security-policy" not in t.c.get("/index.html").headers
-
-    t.c.put("/api/settings/robot_video_enabled", json=True)
-    on = t.c.get("/")
-    header = on.headers["content-security-policy"]
-    assert header == csp.video_policy() and 'name="gk-video-csp"' in on.text
-    assert "https://webrtc2-ap-web-1.agora.io" in header and "wss://*.edge.agora.io:*" in header
-    assert "content-security-policy" in t.c.get("/index.html").headers
-    assert "imagery-host.invalid" not in header          # tiles are relayed by the panel, so the browser never asks it
+def test_header_is_on_the_page_whatever_the_video_setting(t):  # noqa: F811
+    for on in (False, True):
+        t.c.put("/api/settings/robot_video_enabled", json=on)
+        for path in ("/", "/index.html"):
+            r = t.c.get(path)
+            assert r.status_code == 200 and r.headers["content-security-policy"] == csp.policy(), (on, path)
+        assert "gk-video-csp" not in t.c.get("/").text
     for other in ("/login.html", "/app.js", "/vendor/maplibre-gl.js", "/manifest.json"):
         assert "content-security-policy" not in t.c.get(other).headers, other
-
     anon = TestClient(main.app, base_url="http://panel.test")          # signed out: redirected, and told nothing
     gone = anon.get("/", follow_redirects=False)
     assert gone.status_code == 303 and "content-security-policy" not in gone.headers
-
-    t.c.put("/api/settings/robot_video_enabled", json=False)
-    assert "content-security-policy" not in t.c.get("/").headers
