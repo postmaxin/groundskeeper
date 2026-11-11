@@ -76,7 +76,8 @@ function fill(el, ...children) {
  *  drop focus to the page. The element is found again by its data-key (as settings.js does), else by `to` (the data-key
  *  to land on when the focused control no longer exists, e.g. Open -> Close). A control with no key is found again only
  *  if it was the only one of its kind, text and link before the redraw and still is; otherwise focus is not moved (a wrong guess
- *  could press the wrong button next). A disabled target cannot take focus, so it counts as gone. Focus outside root is
+ *  could press the wrong button next). A disabled target cannot take focus, so it counts as gone, and neither can one
+ *  marked data-nofocus (an armed emergency button). Focus outside root is
  *  never touched, and a redraw inside another keepFocus (a fill within a redraw) leaves the restoring to the outer one. */
 const FOCUSABLE = "a[href], button, summary, input, select, textarea, [tabindex='0']";
 let keepingFocus = false;
@@ -85,7 +86,8 @@ function keepFocus(root, redraw, to) {
   if (!inside) { redraw(); return; }
   const sig = (e) => `${e.tagName}|${(e.textContent || "").trim()}|${e.getAttribute("href") || ""}`;
   const key = was.dataset.key || null, mine = sig(was);
-  const usable = (e) => e && !e.hasAttribute("disabled");
+  // data-nofocus: never hand focus back (an armed two-tap control: a stray Enter or Space would be the second tap).
+  const usable = (e) => e && !e.hasAttribute("disabled") && !e.hasAttribute("data-nofocus");
   const alike = () => (key ? [] : [...root.querySelectorAll(FOCUSABLE)].filter((e) => usable(e) && sig(e) === mine));
   // An unkeyed control is the same one only if it was the only one like it before the redraw too: when one of two
   // "Delete" buttons goes away, the one left belongs to another item, and focusing it would let the next Enter delete it.

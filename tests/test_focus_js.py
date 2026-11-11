@@ -73,6 +73,20 @@ def test_deleting_one_of_two_items_never_moves_focus_to_the_other_items_delete()
 
 
 @needs_node
+def test_an_armed_emergency_button_never_gets_focus_back_so_a_stray_key_cannot_send():
+    r = run_flow()
+    assert r["emerg-unarmed"] == ["BUTTON", "emerg-resume"]            # unarmed: kept, like any keyed control
+    assert r["emerg-armed"] == ["BODY", None]                          # the arming redraw drops focus, as before #51
+    assert r["emerg-armed-refresh"] == ["BODY", None]                  # and no later refresh while armed puts it back
+
+
+def test_the_emergency_card_marks_the_armed_button_and_ignores_a_too_quick_second_tap():
+    code = (ROOT / "web" / "ops.js").read_text(encoding="utf-8")
+    assert '"data-nofocus": armed ? "" : null' in code
+    assert "const ARM_MIN_GAP_MS = 400;" in code and "< ARM_MIN_GAP_MS) return;" in code
+
+
+@needs_node
 def test_a_focused_field_still_gets_its_typed_value_and_caret_back_from_the_caller():
     assert run_flow()["typing"] == ["INPUT", "robot_host", "typed", 2, 4]
 

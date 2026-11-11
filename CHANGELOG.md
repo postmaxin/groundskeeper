@@ -65,6 +65,10 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 
 ### Fixed
 
+- **An armed emergency button no longer keeps keyboard focus** (#57). Keeping focus across Live refreshes (#36) had
+  left Pause, Resume, Stop or Return to dock focused for its whole 4 s armed window. A click to arm it, followed by
+  Space to scroll, sent the command. Once armed, focus now leaves the button, as it did before, and a second tap
+  within 0.4 s is ignored as a bounce or a held key.
 - **Cloud-only: a serial saved in Settings → Robot reaches the cloud connection at once** (#15). With no robot address
   set, the card kept saying "waiting for the robot's serial" until the panel restarted.
 - **The Cameras tile says which step failed and why** (#38), for example "Joining failed: OperationError", instead of

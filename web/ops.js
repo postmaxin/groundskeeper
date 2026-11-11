@@ -257,6 +257,7 @@ function emergencyCard(s) {
   const button = (cmd, label, icon, cls) => {
     const armed = arm && arm.cmd === cmd, busy = ops.sending === cmd;
     return h("button", { type: "button", class: `btn ${cls}${armed ? " armed" : ""}`, "data-cmd": cmd, "data-key": `emerg-${cmd}`,
+      "data-nofocus": armed ? "" : null,   // armed: a redraw must not leave focus on it (Space or Enter would send)
       disabled: off || !can[cmd] || !!ops.sending || null, "aria-live": "polite",
       onclick: () => emergencyTap(cmd, label) },
       icon ? h("span", { class: "eicon", "aria-hidden": "true" }, icon) : null,
@@ -275,8 +276,12 @@ function emergencyCard(s) {
       : h("p", { class: "muted small", style: "margin:8px 0 0" }, why || "These need two taps: the first arms the button (it turns amber), the second sends."));
 }
 
+// The second tap must come at least this long after the first: a held or bouncing key is not a decision.
+const ARM_MIN_GAP_MS = 400;
 async function emergencyTap(cmd, label) {
   const a = ops.arm;
+  // A bounce or key repeat, not a second tap: ignore it, and the button stays armed.
+  if (a && a.cmd === cmd && Date.now() - (a.until - 4000) < ARM_MIN_GAP_MS) return;
   if (!a || a.cmd !== cmd || Date.now() > a.until) {
     ops.arm = { cmd, until: Date.now() + 4000 };
     refreshLive();

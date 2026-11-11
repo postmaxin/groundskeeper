@@ -123,6 +123,16 @@ const press = (panel, key) => { const el = byKey(panel, key); el.focus(); el.on.
   // Two items, each with its own unkeyed "Delete": deleting one must not put focus on the other's (Enter would delete it).
   const items = (names) => h("ul", null, names.map((n) => h("li", null, n, h("button", null, "Delete"))));
   fill(stage, items(["a", "b"])); stage.querySelectorAll("button")[0].focus(); fill(stage, items(["b"])); out.push(["deleted-item", ...here()]);
+  // The emergency card's two-tap interlock: once armed, a redraw must not leave focus on the button (a stray Space or
+  // Enter would be the second tap and send Resume). Unarmed, it keeps focus like any keyed control.
+  const ecard = (armed) => h("div", null,
+    h("button", { "data-key": "emerg-resume", "data-nofocus": armed ? "" : null }, armed ? "Tap again" : "Resume"),
+    h("button", { "data-key": "emerg-stop" }, "Stop"));
+  fill(stage, ecard(false)); byKey(stage, "emerg-resume").focus(); fill(stage, ecard(false));
+  out.push(["emerg-unarmed", ...here()]);
+  fill(stage, ecard(true)); out.push(["emerg-armed", ...here()]);
+  fill(stage, ecard(true)); stage.querySelectorAll("button")[0].focus(); fill(stage, ecard(true));
+  out.push(["emerg-armed-refresh", ...here()]);
   const field = (v) => h("input", { "data-key": "robot_host", value: v });
   fill(stage, field("old")); let box = byKey(stage, "robot_host"); box.focus(); box.value = "typed"; box.setSelectionRange(2, 4);
   const typed = { v: box.value, a: box.selectionStart, b: box.selectionEnd };      // what drawSettings keeps before its redraw
