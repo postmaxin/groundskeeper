@@ -18,13 +18,16 @@ Apache-2.0; we follow the package's own declaration. Agora also has a separate p
 package ships no LICENSE file; we have asked Agora to add one
 ([agora-rtc-web#14](https://github.com/AgoraIO/agora-rtc-web/issues/14)).
 
-The package states no copyright holder, so the line below uses the package's `author` field, "Agora WebRTC Team".
+The package states no copyright holder in `package.json` and has no LICENSE file, but the bundle's own header reads
+`AgoraWebSDK_N-v4.24.9-0-g2319458dd Copyright AgoraInc.`, so the line below uses that attribution (the package's
+`author` field is "Agora WebRTC Team"). The bundle also contains small third-party modules (for example core-js) that
+carry their own notices inside the file.
 This file is copied into the image beside the SDK, as `web/vendor/THIRD_PARTY_NOTICES.md`.
 
 ```
 MIT License
 
-Copyright (c) Agora WebRTC Team
+Copyright AgoraInc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
