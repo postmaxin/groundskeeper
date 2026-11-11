@@ -53,10 +53,35 @@ def test_focus_is_not_guessed_when_the_control_is_disabled_or_cannot_be_told_apa
 
 
 @needs_node
+def test_any_fill_keeps_focus_with_no_wrapper_at_the_call_site():
+    r = run_flow()
+    assert r["any-fill"] == ["BUTTON", "yardcam-b"]                    # the Camera layout's chips, redrawn by fill()
+    assert r["readiness-summary"] == ["SUMMARY", "ready-summary"]      # refreshReadiness -> drawReadiness -> fill()
+    assert r["readiness-again"] == ["BUTTON", None]                    # "check again" has no key: kind and text single it out
+
+
+@needs_node
+def test_a_link_is_told_from_another_arrow_by_its_href_and_never_guessed():
+    r = run_flow()
+    assert r["link-by-href"] == ["A", None, "#settings/b"]
+    assert r["link-same-href"] == ["BODY", None]
+
+
+@needs_node
+def test_a_focused_field_still_gets_its_typed_value_and_caret_back_from_the_caller():
+    assert run_flow()["typing"] == ["INPUT", "robot_host", "typed", 2, 4]
+
+
+@needs_node
 def test_focus_elsewhere_is_never_taken():
     r = run_flow()
     assert r["outside"] == ["BUTTON", "outside"]
     assert r["nothing-focused"] == ["BODY", None]
+
+
+def test_the_camera_layout_chips_have_stable_keys():
+    code = (ROOT / "web" / "ops.js").read_text(encoding="utf-8")
+    assert '"data-key": "yardcam-auto"' in code and '"data-key": `yardcam-${c}`' in code
 
 
 def test_live_control_buttons_and_readiness_summaries_have_stable_keys():

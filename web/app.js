@@ -65,26 +65,31 @@ function append(el, children) {
     el.append(c instanceof Node ? c : document.createTextNode(String(c)));
   }
 }
-/** replaceChildren that skips null/false, which the DOM would otherwise print as text. */
+/** replaceChildren that skips null/false, which the DOM would otherwise print as text. Keyboard focus inside `el`
+ *  survives (see keepFocus), so every redraw through fill() keeps it. */
 function fill(el, ...children) {
-  el.replaceChildren(...children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false));
+  const kids = children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false);
+  keepFocus(el, () => el.replaceChildren(...kids));
 }
+
 /** Runs a redraw of `root` and gives keyboard focus back afterwards: a redraw replaces the focused element, which would
  *  drop focus to the page. The element is found again by its data-key (as settings.js does), else by `to` (the data-key
  *  to land on when the focused control no longer exists, e.g. Open -> Close). A control with no key is found again only
- *  if exactly one enabled control of the same kind and text is left; otherwise focus is not moved (a wrong guess could
- *  press the wrong button next). A disabled target cannot take focus, so it counts as gone. Focus outside root is never
- *  touched. */
+ *  if exactly one enabled control of the same kind, text and link is left; otherwise focus is not moved (a wrong guess
+ *  could press the wrong button next). A disabled target cannot take focus, so it counts as gone. Focus outside root is
+ *  never touched, and a redraw inside another keepFocus (a fill within a redraw) leaves the restoring to the outer one. */
 const FOCUSABLE = "a[href], button, summary, input, select, textarea, [tabindex='0']";
+let keepingFocus = false;
 function keepFocus(root, redraw, to) {
-  const was = document.activeElement, inside = !!was && was !== document.body && root.contains(was);
-  const key = inside ? was.dataset.key || null : null;
-  const [tag, text] = inside ? [was.tagName, (was.textContent || "").trim()] : [];
-  redraw();
-  if (!inside) return;
+  const was = document.activeElement, inside = !keepingFocus && !!was && was !== document.body && root.contains(was);
+  if (!inside) { redraw(); return; }
+  const sig = (e) => `${e.tagName}|${(e.textContent || "").trim()}|${e.getAttribute("href") || ""}`;
+  const key = was.dataset.key || null, mine = sig(was);
+  keepingFocus = true;
+  try { redraw(); } finally { keepingFocus = false; }
   const usable = (e) => e && !e.hasAttribute("disabled");
   const byKey = (k) => k && [...root.querySelectorAll("[data-key]")].find((e) => e.dataset.key === k && usable(e));
-  const same = key ? [] : [...root.querySelectorAll(FOCUSABLE)].filter((e) => usable(e) && e.tagName === tag && (e.textContent || "").trim() === text);
+  const same = key ? [] : [...root.querySelectorAll(FOCUSABLE)].filter((e) => usable(e) && sig(e) === mine);
   const el = byKey(key) || byKey(to) || (same.length === 1 ? same[0] : null);
   if (el) el.focus({ preventScroll: true });
 }
@@ -1393,7 +1398,7 @@ async function renderLive(s) {
   if (panel.hidden) return;
   const [extras, cond] = await Promise.all([liveExtras(s), conditionsCard()]);
   if (panel.hidden) return;
-  keepFocus(panel, () => fill(panel, extras, state.layers.trouble ? problemsCard() : null, cond));
+  fill(panel, extras, state.layers.trouble ? problemsCard() : null, cond);
 }
 
 // Plans live on the robot; Live's Control card shows them with their areas (named from the map).

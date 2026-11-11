@@ -391,8 +391,8 @@ const yardLine = (yard) => h("span", { class: "small", style: `color:${yard.ok =
   yard.ok === false ? `Yard not clear: ${yard.detail}` : yard.ok ? "Yard clear" : yard.detail);
 
 const camChips = (d) => (d.cams.length > 1 ? h("div", { class: "camchips" },
-  h("button", { type: "button", class: `btn slim${ops.pinnedCam ? "" : " on"}`, onclick: () => { ops.pinnedCam = null; refreshLive(); } }, "Auto"),
-  d.cams.map((c) => h("button", { type: "button", class: `btn slim${ops.pinnedCam === c ? " on" : ""}`,
+  h("button", { type: "button", class: `btn slim${ops.pinnedCam ? "" : " on"}`, "data-key": "yardcam-auto", onclick: () => { ops.pinnedCam = null; refreshLive(); } }, "Auto"),
+  d.cams.map((c) => h("button", { type: "button", class: `btn slim${ops.pinnedCam === c ? " on" : ""}`, "data-key": `yardcam-${c}`,
                                  onclick: () => { ops.pinnedCam = c; refreshLive(); } }, c.replace(/_frigate$/, "")))) : null);
 
 function followCamCard(d) {

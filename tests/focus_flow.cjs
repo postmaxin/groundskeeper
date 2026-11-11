@@ -9,6 +9,8 @@ class El {
   constructor(tag) { this.tagName = tag.toUpperCase(); this.attrs = {}; this.children = []; this.parent = null; this.on = {}; this.style = {}; }
   get dataset() { return { key: this.attrs["data-key"] }; }
   setAttribute(k, v) { this.attrs[k] = v; }
+  getAttribute(k) { return this.attrs[k] ?? null; }
+  setSelectionRange(a, b) { this.selectionStart = a; this.selectionEnd = b; }
   hasAttribute(k) { return k in this.attrs; }
   get textContent() { return this.text ?? this.children.map((c) => c.textContent).join(""); }
   addEventListener(e, f) { this.on[e] = f; }
@@ -44,15 +46,15 @@ const h = (tag, attrs, ...kids) => {
   const el = new El(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
     if (v === null || v === undefined || v === false) continue;
+    if (k === "value") el.value = String(v);
     if (k.startsWith("on") && typeof v === "function") el.on[k.slice(2)] = v; else if (k !== "style") el.setAttribute(k, String(v));
   }
   el.append(...kids.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false && c !== ""));
   return el;
 };
-const fill = (el, ...kids) => el.replaceChildren(...kids.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false));
 
 const sandbox = {
-  window: { addEventListener() {} }, document: doc, h, fill, dot: () => new El("span"), localStorage: { getItem: () => null, setItem() {} },
+  window: { addEventListener() {} }, document: doc, h, dot: () => new El("span"), localStorage: { getItem: () => null, setItem() {} },
   state: { view: "live", status: {} }, AMBER: "a", GREEN: "g", CORAL: "c", MUTED: "m", Promise, Date, Object, Array, JSON, Math, String, Number,
   getJSON: async () => ({ robot_video_enabled: true, robot_video_configured: true }),
   // A start ends in the error phase: the token is refused, so no video library is involved.
@@ -61,11 +63,11 @@ const sandbox = {
 };
 vm.createContext(sandbox);
 const app = fs.readFileSync(process.argv[2], "utf8");
-const from = app.indexOf("const FOCUSABLE"), to = app.indexOf("\n}\n", app.indexOf("function keepFocus")) + 3;
-const helper = app.slice(from, to);                   // the helper only: app.js as a whole needs a browser
-vm.runInContext(helper + fs.readFileSync(process.argv[3], "utf8") + "\nthis.cams = cams; this.camerasCard = camerasCard; this.keepFocus = keepFocus;", sandbox);
+const from = app.indexOf("/** replaceChildren"), to = app.indexOf("\n}\n", app.indexOf("function keepFocus")) + 3;
+const helper = app.slice(from, to);                   // fill and keepFocus only: app.js as a whole needs a browser
+vm.runInContext(helper + fs.readFileSync(process.argv[3], "utf8") + "\nthis.cams = cams; this.camerasCard = camerasCard; this.keepFocus = keepFocus; this.fill = fill;", sandbox);
 
-const out = [];
+const out = [], fill = (...a) => sandbox.fill(...a);
 const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
 const here = () => { const a = doc.activeElement; return [a.tagName, a.attrs["data-key"] ?? a.attrs.id ?? null]; };
 const byKey = (panel, key) => panel.querySelectorAll("[data-key]").find((e) => e.attrs["data-key"] === key);
@@ -76,7 +78,7 @@ const press = (panel, key) => { const el = byKey(panel, key); el.focus(); el.on.
   // Live's refresh: every card is replaced, the tile's card (kept between refreshes) among them.
   const refresh = async () => {
     const card = await sandbox.camerasCard({ ops: { control_enabled: false } });
-    sandbox.keepFocus(panel, () => fill(panel, other, card));
+    sandbox.fill(panel, other, card);
   };
   await refresh();
   out.push(["rendered", panel.querySelectorAll("[data-key]").map((e) => e.attrs["data-key"])]);
@@ -92,7 +94,7 @@ const press = (panel, key) => { const el = byKey(panel, key); el.focus(); el.on.
   const control = (off) => h("div", null, h("details", null, h("summary", { "data-key": "ready-summary" }, "ready")),
     h("button", { "data-key": "ctl-pause" }, "Pause"), h("button", { "data-key": "ctl-stop", ...(off ? { disabled: "" } : {}) }, "Stop"),
     h("button", { id: "plain-a" }, "Same"), h("button", { id: "plain-b" }, off ? "Same" : "Other"));
-  const draw = (cards) => sandbox.keepFocus(panel, () => fill(panel, ...cards));
+  const draw = (cards) => fill(panel, ...cards);
   const focusIn = (key) => byKey(panel, key).focus();
   draw([control(false)]); focusIn("ctl-pause"); draw([pending, control(false)]); out.push(["keyed-shift", ...here()]);
   focusIn("ready-summary"); draw([control(false)]); out.push(["summary", ...here()]);
@@ -101,6 +103,26 @@ const press = (panel, key) => { const el = byKey(panel, key); el.focus(); el.on.
   panel.querySelectorAll("button").find((e) => e.attrs.id === "plain-b").focus(); draw([control(false)]); out.push(["unkeyed", ...here()]);
   draw([control(true)]);
   panel.querySelectorAll("button").find((e) => e.attrs.id === "plain-b").focus(); draw([control(true)]); out.push(["ambiguous", ...here()]);
+  // Redraws that never go through a wrapper: any fill() keeps focus (the Camera layout's chips, readiness redrawn
+  // by refreshReadiness), a link is told from another "→" by its href, and a typed value is the caller's to restore.
+  const stage = h("div"); doc.body.append(stage);
+  const chips = (names) => names.map((n) => h("button", { "data-key": `yardcam-${n}` }, n));
+  fill(stage, chips(["a", "b"])); byKey(stage, "yardcam-b").focus(); fill(stage, h("p"), chips(["a", "b"])); out.push(["any-fill", ...here()]);
+  const ready = h("div"); doc.body.append(ready);
+  const readiness = (error) => h("div", null, error ? h("p", null, "could not check") : null, h("details", null, h("summary", { "data-key": "ready-summary" }, "ready")),
+    h("button", { class: "linkbtn" }, "check again"));
+  fill(ready, readiness(false)); byKey(ready, "ready-summary").focus(); fill(ready, readiness(true)); out.push(["readiness-summary", ...here()]);
+  ready.querySelectorAll("button")[0].focus(); fill(ready, readiness(false)); out.push(["readiness-again", ...here()]);
+  const links = (hrefs) => h("ul", null, hrefs.map((x) => h("a", { href: x }, "→")));
+  fill(stage, links(["#settings/a", "#settings/b"])); stage.querySelectorAll("a")[1].focus(); fill(stage, links(["#settings/b"]));
+  out.push(["link-by-href", ...here(), doc.activeElement.attrs.href]);
+  fill(stage, links(["#settings/a", "#settings/a"])); stage.querySelectorAll("a")[1].focus(); fill(stage, links(["#settings/a", "#settings/a"]));
+  out.push(["link-same-href", ...here()]);
+  const field = (v) => h("input", { "data-key": "robot_host", value: v });
+  fill(stage, field("old")); let box = byKey(stage, "robot_host"); box.focus(); box.value = "typed"; box.setSelectionRange(2, 4);
+  const typed = { v: box.value, a: box.selectionStart, b: box.selectionEnd };      // what drawSettings keeps before its redraw
+  fill(stage, field("saved")); box = byKey(stage, "robot_host"); box.value = typed.v; box.setSelectionRange(typed.a, typed.b);
+  out.push(["typing", ...here(), box.value, box.selectionStart, box.selectionEnd]);
   outside.focus(); await refresh(); out.push(["outside", ...here()]);
   doc.activeElement = doc.body; await refresh(); out.push(["nothing-focused", ...here()]);
   console.log(JSON.stringify(out));
