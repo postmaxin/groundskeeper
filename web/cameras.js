@@ -94,28 +94,30 @@ function camerasDraw() {
   const colour = (CAM_PHASE_COLOR[cams.phase] || (() => MUTED))();
   const label = { connecting: "Connecting…", waiting: "Waiting for the robot", playing: "Live", error: "Error",
                   closed: "Closed" }[cams.phase] || "Closed";
-  fill(cams.card,
+  // Open, Close and Try again come and go, so each names where focus goes when it disappears (keepFocus, app.js).
+  const after = { "cam-open": "cam-close", "cam-retry": "cam-close", "cam-close": "cam-open" }[document.activeElement?.dataset?.key];
+  keepFocus(cams.card, () => fill(cams.card,
     h("div", { class: "row gap", style: "justify-content:space-between" },
       h("p", { class: "label", style: "margin:0" }, "Cameras ",
-        h("span", { class: "tip", tabindex: "0", title: "The robot's own cameras, not the yard cameras. They come through Yarbo's cloud and Agora's network, one at a time, and only while this is open." }, "ⓘ")),
+        h("span", { class: "tip", tabindex: "0", "data-key": "cam-tip", title: "The robot's own cameras, not the yard cameras. They come through Yarbo's cloud and Agora's network, one at a time, and only while this is open." }, "ⓘ")),
       cams.demo ? h("span", { class: "small muted" }, "Demo")
                 : h("span", { class: "small", style: `color:${colour}` }, dot(colour), " ", label)),
     cams.demo ? h("p", { class: "muted small", style: "margin:6px 0 0" }, "The demo robot has no cameras. A real robot shows its video here.")
     : cams.open ? [
       h("div", { class: "camchips", role: "group", "aria-label": "Robot camera" },
-        CAM_CHOICES.map(([k, name]) => h("button", { type: "button", class: `btn slim${cams.camera === k ? " on" : ""}`,
+        CAM_CHOICES.map(([k, name]) => h("button", { type: "button", class: `btn slim${cams.camera === k ? " on" : ""}`, "data-key": `cam-${k}`,
           "aria-pressed": String(cams.camera === k), title: `The robot's ${name.toLowerCase()} camera`,
           onclick: () => camerasPick(k) }, name)),
-        h("button", { type: "button", class: "btn slim", title: "Stop the video and leave the channel", onclick: () => camerasStop() }, "Close")),
+        h("button", { type: "button", class: "btn slim", "data-key": "cam-close", title: "Stop the video and leave the channel", onclick: () => camerasStop() }, "Close")),
       cams.stage,
       cams.message ? h("p", { class: "small", style: `margin:6px 0 0;color:${colour}`, role: "status" }, cams.message) : null,
       cams.hint ? h("p", { class: "muted small", style: "margin:4px 0 0" }, cams.hint) : null,
-      cams.phase === "error" ? h("button", { type: "button", class: "btn slim", style: "margin-top:6px", onclick: () => camerasStart({ on: true }) }, "Try again") : null]
+      cams.phase === "error" ? h("button", { type: "button", class: "btn slim", "data-key": "cam-retry", style: "margin-top:6px", onclick: () => camerasStart({ on: true }) }, "Try again") : null]
     : [
       h("div", { class: "row gap", style: "margin-top:6px" },
-        h("button", { type: "button", class: "btn slim", title: "Switch the robot's cameras on and show one here. Needs Control on.",
+        h("button", { type: "button", class: "btn slim", "data-key": "cam-open", title: "Switch the robot's cameras on and show one here. Needs Control on.",
           onclick: () => camerasOpen() }, "Open")),
-      cams.message ? h("p", { class: "muted small", style: "margin:6px 0 0", role: "status" }, cams.message) : null]);
+      cams.message ? h("p", { class: "muted small", style: "margin:6px 0 0", role: "status" }, cams.message) : null]), after);
 }
 
 function camerasSet(phase, message, hint) {

@@ -66,7 +66,7 @@ const sandbox = {
     setItem: (k, v) => { t[k] = String(v); },
     removeItem: (k) => { delete t[k]; },
   })[p] ?? t[p] }),
-  h: () => node(), fill: () => {}, dot: () => node(),
+  h: () => node(), fill: () => {}, dot: () => node(), keepFocus: (root, redraw) => redraw(),
   state: { view: "live", status: {} }, AMBER: "a", GREEN: "g", CORAL: "c", MUTED: "m",
   getJSON: async () => ({ robot_video_enabled: !knobs.videoOff, robot_video_configured: true }),
   setInterval: (fn, ms) => { const id = nextInterval++; intervals.set(id, fn); log("interval", ms); return id; },
