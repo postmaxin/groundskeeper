@@ -256,7 +256,7 @@ function emergencyCard(s) {
   // every status event, so the bar starts part-way through (a negative delay) rather than over again.
   const button = (cmd, label, icon, cls) => {
     const armed = arm && arm.cmd === cmd, busy = ops.sending === cmd;
-    return h("button", { type: "button", class: `btn ${cls}${armed ? " armed" : ""}`, "data-cmd": cmd,
+    return h("button", { type: "button", class: `btn ${cls}${armed ? " armed" : ""}`, "data-cmd": cmd, "data-key": `emerg-${cmd}`,
       disabled: off || !can[cmd] || !!ops.sending || null, "aria-live": "polite",
       onclick: () => emergencyTap(cmd, label) },
       icon ? h("span", { class: "eicon", "aria-hidden": "true" }, icon) : null,
@@ -352,10 +352,10 @@ function drawReadiness(el, c, full, planId) {
   const foot = h("p", { class: "muted tiny", style: "margin:2px 0 0" }, `Checked at ${clock(c.at / 1000)} · `, again, " · ",
     h("a", { href: "#settings/rules" }, "the rules"));
   const why = (r.why || []).length && !r.would_send ? whyList(r.why) : null;
-  const checks = h("details", { class: "allchecks" }, h("summary", { class: "muted small" }, "Every check"), checkList(r.checks));
+  const checks = h("details", { class: "allchecks" }, h("summary", { class: "muted small", "data-key": "ready-checks" }, "Every check"), checkList(r.checks));
   if (full) fill(el, h("p", { style: "margin:0" }, head), why, why ? checks : checkList(r.checks), foot);
   else fill(el, h("details", { open: ready.open || null, ontoggle: (e) => { ready.open = e.target.open; } },
-    h("summary", null, head), why, why ? checks : checkList(r.checks), foot));
+    h("summary", { "data-key": "ready-summary" }, head), why, why ? checks : checkList(r.checks), foot));
 }
 
 function pendingCard(p, controlOn) {
@@ -367,7 +367,7 @@ function pendingCard(p, controlOn) {
     checkList(p.checks),
     controlOn ? null : h("p", { class: "muted small" }, "Control is switched off, so confirming is logged but does not start the robot."),
     h("div", { class: "row gap" },
-      h("button", { type: "button", class: "btn pri", onclick: async (e) => {
+      h("button", { type: "button", class: "btn pri", "data-key": "pending-start", onclick: async (e) => {
         e.target.disabled = true;
         try {
           const r = await postJSON("/api/schedule/pending/confirm");
@@ -375,7 +375,7 @@ function pendingCard(p, controlOn) {
         } catch (err) { toast(err.message); }
         refreshLive();
       } }, "Start it"),
-      h("button", { type: "button", class: "btn", onclick: async () => { await postJSON("/api/schedule/pending/dismiss"); refreshLive(); } }, "Not now")));
+      h("button", { type: "button", class: "btn", "data-key": "pending-dismiss", onclick: async () => { await postJSON("/api/schedule/pending/dismiss"); refreshLive(); } }, "Not now")));
 }
 
 // Which camera the follow-cam shows (pinned, or the one whose coverage holds the robot), the yard cameras, the yard check.
@@ -512,21 +512,21 @@ function controlCard(s) {
     if (t) offWhy.set(t, [...(offWhy.get(t) || []), labels[cmd]]);
   }
   const whyLine = [...offWhy].map(([t, names]) => `${names.join(", ")}: ${t[0].toLowerCase()}${t.slice(1)}`).join(" ");
-  const btn = (cmd, label, args) => h("button", { type: "button", class: "btn", disabled: disabled || !!idle[cmd] || null,
+  const btn = (cmd, label, args) => h("button", { type: "button", class: "btn", "data-key": `ctl-${cmd}`, disabled: disabled || !!idle[cmd] || null,
     title: idle[cmd] || null, onclick: () => openConfirm(cmd, label, args) }, label);
   return h("div", { class: "card" },
     h("p", { class: "label" }, "Control"),
     why ? h("p", { class: "muted small" }, why) : null,
     plans.length ? [
       h("label", { for: "ctlplan", class: "muted small" }, "Plan"),
-      h("select", { id: "ctlplan", class: "field", onchange: (e) => { ops.planId = Number(e.target.value); closeConfirm(); refreshLive(); } },
+      h("select", { id: "ctlplan", class: "field", "data-key": "ctl-plan", onchange: (e) => { ops.planId = Number(e.target.value); closeConfirm(); refreshLive(); } },
         plans.map((p) => h("option", { value: p.id, selected: p.id === ops.planId || null }, p.name))),
       h("p", { class: "muted small", style: "margin:-4px 0 8px" }, `Mows ${planAreas(plan) || "no areas"}`),
       readinessView(plan.id)]
       : h("p", { class: "muted small" }, "No plans on the robot. Make them in the Yarbo app; they appear here (",
           h("a", { href: "#help/not-yet" }, "the panel cannot make plans yet"), ")."),
     h("div", { class: "ctlgrid" },
-      h("button", { type: "button", class: "btn pri wide", disabled: disabled || !plan || !!idle.start_plan || null, title: idle.start_plan || null,
+      h("button", { type: "button", class: "btn pri wide", "data-key": "ctl-start_plan", disabled: disabled || !plan || !!idle.start_plan || null, title: idle.start_plan || null,
         onclick: () => openConfirm("start_plan", startLabel, startArgs()) }, plan ? `Start ${plan.name}…` : "Start plan…"),
       btn("pause", "Pause"), btn("resume", "Resume"), btn("stop", "Stop"), btn("cmd_recharge", "Return to dock")),
     whyLine ? h("p", { class: "whyline muted tiny", style: "margin-top:6px" }, whyLine) : null);

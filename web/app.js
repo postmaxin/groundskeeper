@@ -71,17 +71,21 @@ function fill(el, ...children) {
 }
 /** Runs a redraw of `root` and gives keyboard focus back afterwards: a redraw replaces the focused element, which would
  *  drop focus to the page. The element is found again by its data-key (as settings.js does), else by `to` (the data-key
- *  to land on when the focused control no longer exists, e.g. Open -> Close), else by its place among root's controls.
- *  Focus outside root is never touched. */
-const FOCUSABLE = "a[href], button, input, select, textarea, [tabindex='0']";
+ *  to land on when the focused control no longer exists, e.g. Open -> Close). A control with no key is found again only
+ *  if exactly one enabled control of the same kind and text is left; otherwise focus is not moved (a wrong guess could
+ *  press the wrong button next). A disabled target cannot take focus, so it counts as gone. Focus outside root is never
+ *  touched. */
+const FOCUSABLE = "a[href], button, summary, input, select, textarea, [tabindex='0']";
 function keepFocus(root, redraw, to) {
   const was = document.activeElement, inside = !!was && was !== document.body && root.contains(was);
   const key = inside ? was.dataset.key || null : null;
-  const slot = inside && !key ? [...root.querySelectorAll(FOCUSABLE)].indexOf(was) : -1;
+  const [tag, text] = inside ? [was.tagName, (was.textContent || "").trim()] : [];
   redraw();
   if (!inside) return;
-  const byKey = (k) => k && [...root.querySelectorAll("[data-key]")].find((e) => e.dataset.key === k);
-  const el = byKey(key) || byKey(to) || (slot >= 0 ? root.querySelectorAll(FOCUSABLE)[slot] : null);
+  const usable = (e) => e && !e.hasAttribute("disabled");
+  const byKey = (k) => k && [...root.querySelectorAll("[data-key]")].find((e) => e.dataset.key === k && usable(e));
+  const same = key ? [] : [...root.querySelectorAll(FOCUSABLE)].filter((e) => usable(e) && e.tagName === tag && (e.textContent || "").trim() === text);
+  const el = byKey(key) || byKey(to) || (same.length === 1 ? same[0] : null);
   if (el) el.focus({ preventScroll: true });
 }
 

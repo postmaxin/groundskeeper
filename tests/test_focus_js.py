@@ -35,11 +35,34 @@ def test_a_camera_change_and_a_live_refresh_keep_focus_on_the_same_chip():
 
 
 @needs_node
-def test_other_cards_keep_focus_and_focus_elsewhere_is_never_taken():
+def test_a_keyed_control_keeps_focus_when_the_pending_card_shifts_the_ones_after_it():
+    assert run_flow()["keyed-shift"] == ["BUTTON", "ctl-pause"]
+
+
+@needs_node
+def test_a_focused_summary_keeps_focus():
+    assert run_flow()["summary"] == ["SUMMARY", "ready-summary"]
+
+
+@needs_node
+def test_focus_is_not_guessed_when_the_control_is_disabled_or_cannot_be_told_apart():
     r = run_flow()
-    assert r["plain"] == ["BUTTON", "plain-b"]                         # no data-key: found again by its place
+    assert r["disabled"] == ["BODY", None]                             # Stop became disabled: it cannot take focus
+    assert r["unkeyed"] == ["BUTTON", "plain-b"]                       # no key, but its kind and text single it out
+    assert r["ambiguous"] == ["BODY", None]                            # two buttons now read "Same": do not pick one
+
+
+@needs_node
+def test_focus_elsewhere_is_never_taken():
+    r = run_flow()
     assert r["outside"] == ["BUTTON", "outside"]
     assert r["nothing-focused"] == ["BODY", None]
+
+
+def test_live_control_buttons_and_readiness_summaries_have_stable_keys():
+    code = (ROOT / "web" / "ops.js").read_text(encoding="utf-8")
+    for k in ("ctl-${cmd}", "ctl-start_plan", "ctl-plan", "pending-start", "pending-dismiss", "ready-summary", "ready-checks", "emerg-${cmd}"):
+        assert f'"data-key": "{k}"' in code or f'"data-key": `{k}`' in code, k
 
 
 def test_every_tile_control_has_a_stable_key():

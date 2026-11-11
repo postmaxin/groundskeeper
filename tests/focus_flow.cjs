@@ -9,6 +9,8 @@ class El {
   constructor(tag) { this.tagName = tag.toUpperCase(); this.attrs = {}; this.children = []; this.parent = null; this.on = {}; this.style = {}; }
   get dataset() { return { key: this.attrs["data-key"] }; }
   setAttribute(k, v) { this.attrs[k] = v; }
+  hasAttribute(k) { return k in this.attrs; }
+  get textContent() { return this.text ?? this.children.map((c) => c.textContent).join(""); }
   addEventListener(e, f) { this.on[e] = f; }
   append(...kids) {
     for (const k of kids) {
@@ -83,8 +85,22 @@ const press = (panel, key) => { const el = byKey(panel, key); el.focus(); el.on.
   const chip = doc.activeElement; await refresh(); out.push(["refresh", ...here(), doc.activeElement !== chip]);
   press(panel, "cam-retry"); await settle(); out.push(["retry", ...here()]);                          // Try again goes: Close takes focus
   press(panel, "cam-close"); await settle(); out.push(["close", ...here(), sandbox.cams.phase]);      // Close is gone: Open takes focus
-  // Another card's plain control (no data-key) keeps its place; focus outside the panel is never moved.
-  panel.querySelectorAll("button").find((e) => e.attrs.id === "plain-b").focus(); await refresh(); out.push(["plain", ...here()]);
+  // Other cards. A keyed control keeps focus when controls before it come and go (the pending-run card); a summary is
+  // focusable too; a keyed control that is now disabled is not guessed at; an unkeyed one is found again only if its
+  // kind and text still single it out.
+  const pending = h("div", null, h("button", { "data-key": "pending-start" }, "Start it"), h("button", { "data-key": "pending-dismiss" }, "Not now"));
+  const control = (off) => h("div", null, h("details", null, h("summary", { "data-key": "ready-summary" }, "ready")),
+    h("button", { "data-key": "ctl-pause" }, "Pause"), h("button", { "data-key": "ctl-stop", ...(off ? { disabled: "" } : {}) }, "Stop"),
+    h("button", { id: "plain-a" }, "Same"), h("button", { id: "plain-b" }, off ? "Same" : "Other"));
+  const draw = (cards) => sandbox.keepFocus(panel, () => fill(panel, ...cards));
+  const focusIn = (key) => byKey(panel, key).focus();
+  draw([control(false)]); focusIn("ctl-pause"); draw([pending, control(false)]); out.push(["keyed-shift", ...here()]);
+  focusIn("ready-summary"); draw([control(false)]); out.push(["summary", ...here()]);
+  focusIn("ctl-stop"); draw([control(true)]); out.push(["disabled", ...here()]);
+  draw([control(false)]);
+  panel.querySelectorAll("button").find((e) => e.attrs.id === "plain-b").focus(); draw([control(false)]); out.push(["unkeyed", ...here()]);
+  draw([control(true)]);
+  panel.querySelectorAll("button").find((e) => e.attrs.id === "plain-b").focus(); draw([control(true)]); out.push(["ambiguous", ...here()]);
   outside.focus(); await refresh(); out.push(["outside", ...here()]);
   doc.activeElement = doc.body; await refresh(); out.push(["nothing-focused", ...here()]);
   console.log(JSON.stringify(out));
