@@ -30,8 +30,16 @@ const CAM_ROBOT_UID = 1;                           // the robot publishes as uid
 const CAM_SLOW_MS = 15000;                         // joined but no video yet: say why it may be
 const CAM_SETTINGS_MS = 20000;                     // how long a read of the video setting is trusted
 const CAM_SDK_TIMEOUT_MS = 20000;                  // a script load that hangs gives up, so the next try loads again
+const CAM_STATS_MS = 2000;                         // how often the stats line under the video is refreshed
 const CAM_BEAT_MS = 4000;                          // the official app keeps the robot awake about this often while open
 const CAM_JOIN_TIMEOUT_MS = 30000;                 // a join that never settles gives up, so the swap cannot linger
+// "Weak link" thresholds, on the SDK's own numbers (4.24.9): packetLossRate and freezeRate are ratios 0..1, and the network
+// quality is 0 (unknown) to 6 (down), where 4 is "poor". getRemoteNetworkQuality()[uid] describes that remote user's own
+// connection, so for the robot its uplink is the video's source link; its downlink is irrelevant to viewing.
+const CAM_WEAK_LOSS = 0.05;                        // 5% of the robot's packets lost
+const CAM_WEAK_FREEZE = 0.1;                       // frozen for 10% of the time
+const CAM_WEAK_QUALITY = 4;                        // the robot's uplink network quality "poor" or worse
+const CAM_SLOW_DRAW = 0.7;                         // drawn frames under 70% of received ones: the browser, not the link
 const CAM_CONTROL_OFF_HINT = "Control is off, so the panel cannot switch the cameras on or keep the robot awake. They play if the robot already has them on.";
 // STOPGAP (#46). The Web SDK wraps the stream's secret with a built-in 1024-bit RSA key, which holds at most 62 bytes;
 // the robot's secret is 64, so join() throws OperationError. This placeholder (NOT a secret) is what the SDK is given;
@@ -50,7 +58,7 @@ const CAM_SDK_OFF = [
 ];
 
 const cams = { open: false, camera: savedCamera(), phase: "closed", message: "", hint: "", client: null, ticket: 0,
-               slowTimer: null, beatTimer: null, controlOff: false, leaving: Promise.resolve(), settings: null, settingsAt: 0, card: null, stage: null, sdk: null,
+               slowTimer: null, beatTimer: null, statsTimer: null, stats: "", statsWeak: false, statsEl: null, controlOff: false, leaving: Promise.resolve(), settings: null, settingsAt: 0, card: null, stage: null, sdk: null,
                subscribed: 0 };
 
 function savedCamera() {
@@ -82,6 +90,8 @@ async function camerasCard(s) {
   if (!cams.card) {
     cams.stage = h("div", { class: "camsstage", role: "img", "aria-label": "Live view from the robot's camera" });
     cams.card = h("div", { class: "card camscard" });
+    cams.statsEl = h("p", { class: "small muted camstats", style: "margin:6px 0 0", title: "Measured in this browser from the video library's own counters. Nothing is sent anywhere." });
+    camerasStatsShow(cams.demo ? camerasStatsLine(CAM_DEMO_STATS.video, CAM_DEMO_STATS.rtc, CAM_DEMO_STATS.quality) : { text: "", weak: false });
   }
   camerasDraw();
   return cams.card;
@@ -102,7 +112,8 @@ function camerasDraw() {
         h("span", { class: "tip", tabindex: "0", "data-key": "cam-tip", title: "The robot's own cameras, not the yard cameras. They come through Yarbo's cloud and Agora's network, one at a time, and only while this is open." }, "ⓘ")),
       cams.demo ? h("span", { class: "small muted" }, "Demo")
                 : h("span", { class: "small", style: `color:${colour}` }, dot(colour), " ", label)),
-    cams.demo ? h("p", { class: "muted small", style: "margin:6px 0 0" }, "The demo robot has no cameras. A real robot shows its video here.")
+    cams.demo ? [h("p", { class: "muted small", style: "margin:6px 0 0" }, "The demo robot has no cameras. A real robot shows its video here."),
+                 cams.statsEl]
     : cams.open ? [
       h("div", { class: "camchips", role: "group", "aria-label": "Robot camera" },
         CAM_CHOICES.map(([k, name]) => h("button", { type: "button", class: `btn slim${cams.camera === k ? " on" : ""}`, "data-key": `cam-${k}`,
@@ -110,6 +121,7 @@ function camerasDraw() {
           onclick: () => camerasPick(k) }, name)),
         h("button", { type: "button", class: "btn slim", "data-key": "cam-close", title: "Stop the video and leave the channel", onclick: () => camerasStop() }, "Close")),
       cams.stage,
+      cams.statsEl,
       cams.message ? h("p", { class: "small", style: `margin:6px 0 0;color:${colour}`, role: "status" }, cams.message) : null,
       cams.hint ? h("p", { class: "muted small", style: "margin:4px 0 0" }, cams.hint) : null,
       cams.phase === "error" ? h("button", { type: "button", class: "btn slim", "data-key": "cam-retry", style: "margin-top:6px", onclick: () => camerasStart({ on: true }) }, "Try again") : null]
@@ -118,6 +130,63 @@ function camerasDraw() {
         h("button", { type: "button", class: "btn slim", "data-key": "cam-open", title: "Switch the robot's cameras on and show one here. Needs Control on.",
           onclick: () => camerasOpen() }, "Open")),
       cams.message ? h("p", { class: "muted small", style: "margin:6px 0 0", role: "status" }, cams.message) : null]), after);
+}
+
+// Made-up numbers for the demo, which never loads the SDK: it shows what the line looks like on a real robot.
+const CAM_DEMO_STATS = { video: { receiveResolutionWidth: 640, receiveResolutionHeight: 480, renderFrameRate: 15, receiveFrameRate: 15,
+                                  receiveBitrate: 1234000, packetLossRate: 0.02, freezeRate: 0, totalFreezeTime: 0, end2EndDelay: 0 },
+                         rtc: { RTT: 180 }, quality: { uplinkNetworkQuality: 2 } };
+
+// The line under the video, from the SDK's local counters (read by camerasStatsStart). Returns { text, weak }; text is ""
+// when there are no numbers yet. Only numbers are used: no ids, names, tokens or addresses can get in.
+function camerasStatsLine(video, rtc, quality) {
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const v = video || {};
+  const w = num(v.receiveResolutionWidth), ht = num(v.receiveResolutionHeight);
+  const bps = num(v.receiveBitrate), loss = num(v.packetLossRate), freezeRate = num(v.freezeRate), froze = num(v.totalFreezeTime);
+  const received = num(v.receiveFrameRate), drawn = typeof v.renderFrameRate === "number" && Number.isFinite(v.renderFrameRate) ? v.renderFrameRate : received;   // a real 0 stays 0
+  const rtt = num(rtc && rtc.RTT), delay = num(v.end2EndDelay);
+  if (!w && !bps && !drawn) return { text: "", weak: false };      // nothing received yet
+  const weak = loss >= CAM_WEAK_LOSS || freezeRate >= CAM_WEAK_FREEZE || num(quality && quality.uplinkNetworkQuality) >= CAM_WEAK_QUALITY;
+  const slow = !weak && received >= 5 && drawn < received * CAM_SLOW_DRAW;
+  const pct = loss * 100;
+  const parts = [
+    w && ht ? `${Math.round(w)}×${Math.round(ht)}` : "",
+    `${Math.round(drawn)} fps`,
+    bps >= 1e6 ? `${(bps / 1e6).toFixed(1)} Mbps` : `${Math.round(bps / 1e3)} kbps`,
+    pct > 0 && pct < 1 ? "<1% loss" : `${Math.round(pct)}% loss`,
+    rtt > 0 ? `RTT ${Math.round(rtt)} ms` : "",
+    delay > 0 ? `delay ${Math.round(delay)} ms` : "",
+    froze >= 1 ? `froze ${Math.round(froze)} s` : "",
+    weak ? "weak link" : slow ? "slow to draw" : ""];               // weak link: the robot's side or the network; slow to draw: this browser
+  return { text: parts.filter(Boolean).join(" · "), weak };
+}
+
+// Puts the line on the tile. It updates the one paragraph in place (no redraw), so the playing video is not touched.
+function camerasStatsShow({ text, weak }) {
+  cams.stats = text;
+  cams.statsWeak = weak;
+  if (!cams.statsEl) return;
+  cams.statsEl.textContent = text;
+  cams.statsEl.hidden = !text;
+  cams.statsEl.className = `small muted camstats${weak ? " weak" : ""}`;
+}
+
+const camerasStatsClear = () => camerasStatsShow({ text: "", weak: false });
+
+// Reads the SDK's local counters for the robot, every CAM_STATS_MS while its video plays. Nothing is sent anywhere. A
+// read that throws shows nothing and logs nothing.
+function camerasStatsStart(client, ticket) {
+  clearInterval(cams.statsTimer);
+  const read = () => {
+    if (ticket !== cams.ticket || !cams.open || cams.client !== client) return;
+    try {
+      const video = (client.getRemoteVideoStats() || {})[CAM_ROBOT_UID];
+      const quality = (client.getRemoteNetworkQuality() || {})[CAM_ROBOT_UID];
+      camerasStatsShow(camerasStatsLine(video, client.getRTCStats(), quality));
+    } catch { camerasStatsClear(); }
+  };
+  cams.statsTimer = setInterval(read, CAM_STATS_MS);
 }
 
 function camerasSet(phase, message, hint) {
@@ -151,6 +220,9 @@ function camerasLeave() {
   clearTimeout(cams.slowTimer);
   clearInterval(cams.beatTimer);                    // no more keep-awake beats, on every way of stopping
   cams.beatTimer = null;
+  clearInterval(cams.statsTimer);                   // and no more stats reads
+  cams.statsTimer = null;
+  camerasStatsClear();
   cams.controlOff = false;
   if (camSwapRemove) camSwapRemove();               // the secret swap lives as long as the client
   const client = cams.client;
@@ -409,6 +481,9 @@ function camerasListen(client, ticket) {
   client.on("user-unpublished", (user, mediaType) => {
     if (live() && Number(user.uid) === CAM_ROBOT_UID && mediaType === "video") {   // not the robot's audio stopping
       cams.subscribed = 0;                        // a later user-published subscribes again
+      clearInterval(cams.statsTimer);
+      cams.statsTimer = null;
+      camerasStatsClear();
       if (cams.stage) cams.stage.replaceChildren();
       camerasSet("waiting", "The robot stopped sending video.", "Its cameras may have switched off, or it went to sleep.");
     }
@@ -434,6 +509,7 @@ async function camerasPlay(client, user, mediaType, ticket) {
   if (ticket !== cams.ticket || !cams.open || !user.videoTrack) return;
   clearTimeout(cams.slowTimer);
   user.videoTrack.play(cams.stage, { fit: "contain" });
+  camerasStatsStart(client, ticket);
   camerasSet("playing", "");
 }
 
