@@ -52,9 +52,14 @@ def check_read_only(cmd: str) -> None:
         raise ReadOnlyViolation(f"refusing to publish {cmd!r}: only read requests are allowed")
 
 
-def check_command(cmd: str) -> None:
-    """A command the panel may send: a run command or a captured write. cmd_vel never."""
+def check_command(cmd: str, payload: dict | None = None) -> None:
+    """A command the panel may send: a run command or a captured write. cmd_vel never. The keep-awake is allowed only
+    with exactly {"state": 1} (pass the payload to check it)."""
     from . import control, mapwrite          # imported here: both modules sit above this one
+    if cmd == control.KEEP_AWAKE:
+        if not (payload == control.KEEP_AWAKE_PAYLOAD and type(payload["state"]) is int):
+            raise ReadOnlyViolation(f"refusing to publish {cmd!r}: only {control.KEEP_AWAKE_PAYLOAD}")
+        return
     if cmd in control.HARD_BLOCKED or cmd not in (set(control.CATALOGUE) | set(mapwrite.WRITE_COMMANDS)):
         raise ReadOnlyViolation(f"refusing to publish {cmd!r}: not a run command or a captured write")
 
@@ -156,7 +161,7 @@ class LocalTransport:
 
     def command(self, cmd: str, payload: dict) -> None:
         """Only app.link.RobotLink calls this (the checks are Controller's and MapWriter's)."""
-        check_command(cmd)
+        check_command(cmd, payload)
         if not self.connected:
             raise ConnectionError("local broker is not connected")
         self._client.publish(f"snowbot/{self.sn}/app/{cmd}", encode(payload))

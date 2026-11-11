@@ -56,7 +56,7 @@ class Ops:
         self.cfg, self.rec, self.store = cfg, rec, rec.store
         self.cloud = CloudTransport(cfg.data_dir, rec.sn, self._from_cloud)
         # Local first, the cloud as a fallback, for reads and commands alike (app/link.py).
-        self.link = RobotLink(rec, self.cloud, self.store, mark_sent=lambda cmd: rec._sent.__setitem__(cmd, time.time()))
+        self.link = RobotLink(rec, self.cloud, self.store, mark_sent=rec.mark_sent)
         self.link.on_change = self._route_changed
         rec.link = self.link
         self.frigate = Frigate(cfg.frigate_url)
@@ -104,10 +104,12 @@ class Ops:
         """Cloud messages join the recorder's queue (so DeviceMSG and replies are handled once, in one place)
         and also feed phone-app detection."""
         parts = topic.split("/", 3)
+        ours = None
         if len(parts) == 4 and parts[2] == "app" and parts[3] in PHONE_APP_COMMANDS:
-            if time.time() - self.rec._sent.get(parts[3], 0) > 5:
+            ours = self.rec.own_echo(parts[3], ts, data)      # decided once here; the recorder is handed the verdict
+            if not ours:
                 self.phone_app_at = ts
-        self.rec._from_thread(topic, data, ts)
+        self.rec._from_thread(topic, data, ts, ours)
 
     def _route_changed(self, what: str, before: str, after: str) -> None:
         """A route to the robot changed (local <-> cloud): say so once, so a firmware lockout or a 4G spell shows."""
@@ -654,6 +656,10 @@ class Ops:
     async def _guard_loop(self) -> None:
         while True:
             await asyncio.sleep(5)
+            try:
+                self.controller.keep_awake_tick()           # §13: say when the Cameras tile's keep-awake has stopped
+            except Exception:
+                log.exception("keep-awake check failed")
             try:
                 await self._guard_tick()
             except Exception:

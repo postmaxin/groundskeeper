@@ -29,6 +29,8 @@ LOCAL_WRITES_PROVED = False
 # The only observed path for smart_vision_control is the cloud broker (docs/dev/protocol.md, Robot video). Until a send on
 # the local broker is observed, it goes only through the cloud.
 LOCAL_VISION_PROVED = False
+# The keep-awake (set_working_state) is the same: only the cloud broker is observed, so it goes only through the cloud.
+LOCAL_KEEPAWAKE_PROVED = False
 LOCAL_MISSES = 2              # unanswered local reads (or unseen local commands) in a row before switching
 BACKOFF_S = 300               # how long reads or commands stay on the cloud before local is tried again
 CHEAP_READS = ("get_device_msg", "read_gps_ref", "get_plan_feedback")   # quick replies: a miss means something
@@ -42,7 +44,7 @@ class NoRoute(ConnectionError):
 class RobotLink:
     def __init__(self, rec, cloud, store, mark_sent=None):
         self.rec, self.cloud, self.store = rec, cloud, store
-        self.mark_sent = mark_sent or (lambda cmd: None)   # (cmd) -> None: the recorder's own-send record
+        self.mark_sent = mark_sent or (lambda cmd: None)   # (cmd) -> undo() or None: the recorder's own-send record
         self._misses = {"reads": 0, "commands": 0}
         self._off_until = {"reads": 0.0, "commands": 0.0}
         self.reads_route: str | None = None
@@ -165,6 +167,21 @@ class RobotLink:
                     raise NoRoute(f"the Yarbo cloud is {getattr(self.cloud, 'state', 'not set up')}")
         return self._send(cmd, payload, route or self.command_route(), None if route else "commands")
 
+    def keep_awake_beat(self, payload: dict) -> str:
+        """The one keep-awake beat (Controller.keep_awake only; it is not a run command). Returns the route it went."""
+        from . import control
+        if payload != control.KEEP_AWAKE_PAYLOAD or type(payload.get("state")) is not int:
+            raise NoRoute("the keep-awake is only {\"state\": 1}")      # fixed, as cmd_vel is blocked at every layer
+        route = None
+        if not LOCAL_KEEPAWAKE_PROVED:
+            if self.mode() == "local":
+                raise NoRoute("the keep-awake goes through the Yarbo cloud only for now")
+            route = "cloud" if self.cloud_up() else None
+            if route is None:
+                raise NoRoute(f"the Yarbo cloud is {getattr(self.cloud, 'state', 'not set up')}")
+        return self._send(control.KEEP_AWAKE, payload, route or self.command_route(), None if route else "commands",
+                          record=False)
+
     def write_command(self, cmd: str, payload: dict, route: str | None = None) -> str:
         """A captured write (MapWriter only). Returns the route it went."""
         check_command(cmd)
@@ -176,7 +193,7 @@ class RobotLink:
             raise NoRoute("writes on your network aren't proved yet; they go through the Yarbo cloud")
         return self._send(cmd, payload, route, None)
 
-    def _send(self, cmd: str, payload: dict, route: str | None, what: str | None) -> str:
+    def _send(self, cmd: str, payload: dict, route: str | None, what: str | None, record: bool = True) -> str:
         if route is None:
             raise NoRoute(self._why_none() if what is not None or cmd not in self._writes() else self._why_no_writes())
         if not self._allowed(route):
@@ -184,13 +201,22 @@ class RobotLink:
         if route == "local":
             if not self.local_commands_up():
                 raise NoRoute("the robot's local broker is not connected")
-            self.rec.transport.command(cmd, payload)
-        else:
-            if not self.cloud_up():
-                raise NoRoute(f"the Yarbo cloud is {getattr(self.cloud, 'state', 'not set up')}")
-            self.cloud.publish(cmd, payload)
-        self.mark_sent(cmd)              # after it went: the robot's echo arrives later, on the event loop
-        self.last_command = {"cmd": cmd, "route": route, "at": time.time()}
+        elif not self.cloud_up():
+            raise NoRoute(f"the Yarbo cloud is {getattr(self.cloud, 'state', 'not set up')}")
+        # Marked before it goes: the echo can be handled on the broker's thread before publish() returns, and an echo
+        # that finds no mark is taken for another client's. A send that fails takes its mark back.
+        undo = self.mark_sent(cmd)
+        try:
+            if route == "local":
+                self.rec.transport.command(cmd, payload)
+            else:
+                self.cloud.publish(cmd, payload)
+        except Exception:
+            if callable(undo):
+                undo()
+            raise
+        if record:                       # a keep-awake beat every 4 s is not "the last command" (status shows that)
+            self.last_command = {"cmd": cmd, "route": route, "at": time.time()}
         if what:
             self._note(what, route)
         return route

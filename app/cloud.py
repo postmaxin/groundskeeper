@@ -255,7 +255,10 @@ class CloudTransport:
             client = self._mqtt
         if not (client and self.connected):
             raise ConnectionError(f"cloud is {self.state}")
-        client.publish(f"snowbot/{self.sn}/app/{cmd}", encode(payload))
+        info = client.publish(f"snowbot/{self.sn}/app/{cmd}", encode(payload))
+        rc = getattr(info, "rc", 0)                  # paho: was the message taken (not: did it arrive)
+        if rc != 0:                                  # MQTT_ERR_SUCCESS
+            raise ConnectionError(f"the cloud did not take the message (MQTT error {rc})")
         self.published += 1
 
     def status(self) -> dict:

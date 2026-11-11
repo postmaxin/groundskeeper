@@ -24,3 +24,7 @@ class FakeLink:
 
     def note_command(self, route, seen):
         self.outcomes.append((route, seen))
+
+    def keep_awake_beat(self, payload):
+        self.t.publish("set_working_state", payload)
+        return self.route

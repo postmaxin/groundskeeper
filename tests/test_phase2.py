@@ -97,7 +97,9 @@ def test_only_a_person_switches_the_cameras_on(tmp_path, actor):
 
 def test_every_catalogue_command_is_confirmed_by_state_or_run_neutral():
     from app import recorder
-    assert set(control.CATALOGUE) == set(control.CONFIRM) | control.RUN_NEUTRAL
+    # The keep-awake is run-neutral too but deliberately not in the catalogue (tests/test_video_keepalive.py).
+    assert set(control.CATALOGUE) == (set(control.CONFIRM) | control.RUN_NEUTRAL) - {control.KEEP_AWAKE}
+    assert control.KEEP_AWAKE in control.RUN_NEUTRAL and control.KEEP_AWAKE not in control.CATALOGUE
     assert not set(control.CONFIRM) & control.RUN_NEUTRAL
     assert not control.RUN_NEUTRAL & set(control.SAFE_TO_REPEAT)
     assert not control.RUN_NEUTRAL & recorder.PEOPLE_COMMANDS

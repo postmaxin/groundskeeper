@@ -1665,6 +1665,24 @@ async def video_token(request: Request, body: dict = Body(...)):
                          "key": tok.key, "salt": tok.salt}, headers={"Cache-Control": "no-store"})
 
 
+@app.post("/api/video/keepalive")
+async def video_keepalive(request: Request):
+    """One keep-awake beat for the Cameras tile (§13). The robot streams its cameras only while someone sends the
+    keep-awake the official app sends (`set_working_state {"state":1}`, docs/dev/protocol.md), and a tile that is open
+    asks for one every 4 s: this sends exactly one per accepted request and never schedules or repeats, so closing the
+    tile stops them. People only (a person's session; not in TOKEN_WRITES, not in the MCP `ROUTES`), only while
+    Robot video and Control are on, at most one every few seconds whoever asks (a quiet `sent: false, limited:
+    true`), and the payload is fixed: nothing in the request reaches the robot. It is not in the control catalogue, so
+    /api/control/send cannot send it. The start and the stop of the beats are each one event, never one per beat."""
+    _person(request)
+    r = rec(request)
+    if not r.store.setting("robot_video_enabled", SETTINGS_DEFAULTS["robot_video_enabled"]):
+        raise HTTPException(403, "robot video is off (Settings → Robot)")
+    out = await ops(request).controller.keep_awake(actor=_actor(request))
+    return JSONResponse({k: out[k] for k in ("sent", "limited", "control_off", "refused", "error") if k in out},
+                        headers={"Cache-Control": "no-store"})
+
+
 # -- phase 2: cloud session -----------------------------------------------------------------------------------------
 @app.post("/api/cloud/login")
 async def cloud_login(request: Request, body: dict = Body(...)):
@@ -1700,7 +1718,9 @@ async def control_catalogue(request: Request):
 def _actor(request: Request) -> str:
     """Who a command is from, for the interlocks and the audit log: a program with an API token, or a person."""
     who = getattr(request.state, "who", None)
-    return "token" if who in ("token", "metrics") else "user"     # metrics never gets here; the strict actor if it did
+    # A person is a signed-in session, or anyone at all when sign-in is switched off (the gate says "open"). Every other
+    # answer (an API token, a metrics token, the MCP's internal call, a signed link, nothing) gets the strict actor.
+    return "user" if who in ("session", "open") else "token"
 
 
 @app.post("/api/control/preview")
