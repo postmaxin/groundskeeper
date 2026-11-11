@@ -263,7 +263,7 @@ class Recorder:
                         pass                      # already used by an echo, or aged out
         return undo
 
-    def own_echo(self, name: str, ts: float, data=None) -> bool:
+    def own_echo(self, name: str, ts: float, data) -> bool:
         """Is the message `name` that arrived at `ts` the echo of something this panel sent? One answer per message, so
         the phone-app detection (ops) and the recorder, which both look at it, agree. Most commands: sent within
         the last OWN_ECHO_S. The keep-awake and camera-on (COUNTED_OWN): each of our sends accounts for ONE echo
@@ -272,7 +272,9 @@ class Recorder:
         off) is never ours and leaves our pending send for its real echo."""
         if name not in COUNTED_OWN:
             return ts - self._sent.get(name, 0) < OWN_ECHO_S
-        if isinstance(data, dict) and not (type(data.get("state")) is int and data["state"] == 1):
+        if not isinstance(data, dict):
+            return False                          # undecodable or not an object: never ours, and it takes no send
+        if not (type(data.get("state")) is int and data["state"] == 1):
             return False
         lock = self.__dict__.setdefault("_own_lock", threading.Lock())
         with lock:

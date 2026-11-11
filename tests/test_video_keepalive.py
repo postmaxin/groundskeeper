@@ -329,12 +329,12 @@ def test_one_send_accounts_for_one_echo_only(tmp_path):
     r = _recorder(tmp_path)
     r.mark_sent("set_working_state")
     t = r._sent["set_working_state"]
-    assert r.own_echo("set_working_state", t + 0.1) is True
-    assert r.own_echo("set_working_state", t + 0.1) is True                    # asked again: the same answer
-    assert r.own_echo("set_working_state", t + 0.9) is False                   # a second message is somebody else's
+    assert r.own_echo("set_working_state", t + 0.1, {"state": 1}) is True
+    assert r.own_echo("set_working_state", t + 0.1, {"state": 1}) is True  # asked again: the same answer
+    assert r.own_echo("set_working_state", t + 0.9, {"state": 1}) is False  # a second message is somebody else's
     r.mark_sent("set_working_state")
     t2 = r._sent["set_working_state"]
-    assert r.own_echo("set_working_state", t2 + 7) is False                    # an echo that never came ages out
+    assert r.own_echo("set_working_state", t2 + 7, {"state": 1}) is False  # an echo that never came ages out
 
 
 def test_the_phone_app_interlock_reads_the_real_apps_beat_not_the_panels(tmp_path):
@@ -354,8 +354,8 @@ def test_other_commands_keep_the_old_five_second_window(tmp_path):
     r = _recorder(tmp_path)
     r.mark_sent("pause")
     t = r._sent["pause"]
-    assert r.own_echo("pause", t + 1) is True and r.own_echo("pause", t + 1.5) is True
-    assert r.own_echo("pause", t + 6) is False
+    assert r.own_echo("pause", t + 1, {"state": 1}) is True and r.own_echo("pause", t + 1.5, {"state": 1}) is True
+    assert r.own_echo("pause", t + 6, {"state": 1}) is False
     assert recorder.COUNTED_OWN == {"set_working_state", "smart_vision_control"}
 
 
@@ -409,13 +409,13 @@ def test_the_mark_is_made_before_the_send_so_an_echo_during_publish_is_ours(tmp_
 
     class EchoingCloud(LinkCloud):
         def publish(self, cmd, payload):                 # the broker's thread sees the echo before publish() returns
-            answers.append(r.own_echo(cmd, __import__("time").time()))
+            answers.append(r.own_echo(cmd, __import__("time").time(), payload))
             super().publish(cmd, payload)
 
     lk = RobotLink(rec, EchoingCloud(), store, mark_sent=r.mark_sent)
     lk.keep_awake_beat({"state": 1})
     assert answers == [True]
-    assert r.own_echo("set_working_state", __import__("time").time() + 0.5) is False  # used once
+    assert r.own_echo("set_working_state", __import__("time").time() + 0.5, {"state": 1}) is False  # used once
 
 
 def test_a_send_that_fails_takes_its_mark_back(tmp_path):
@@ -430,15 +430,15 @@ def test_a_send_that_fails_takes_its_mark_back(tmp_path):
     with pytest.raises(ConnectionError):
         lk.keep_awake_beat({"state": 1})
     assert r._sent["set_working_state"] == 1.0 and not r._own_beats["set_working_state"]
-    assert r.own_echo("set_working_state", __import__("time").time()) is False
+    assert r.own_echo("set_working_state", __import__("time").time(), {"state": 1}) is False
 
 
 def test_a_send_recorded_after_a_message_arrived_is_not_what_it_echoes(tmp_path, monkeypatch):
     r = _recorder(tmp_path)
     monkeypatch.setattr(recorder.time, "time", lambda: 1000.5)
     r.mark_sent("set_working_state")
-    assert r.own_echo("set_working_state", 1000.0) is False       # that message was somebody else's, from before
-    assert r.own_echo("set_working_state", 1000.7) is True        # the real echo still finds its send
+    assert r.own_echo("set_working_state", 1000.0, {"state": 1}) is False  # somebody else's, from before
+    assert r.own_echo("set_working_state", 1000.7, {"state": 1}) is True        # the real echo still finds its send
 
 
 # -- review round 2: only what we send can be our echo ------------------------------------------------------------
@@ -455,3 +455,12 @@ def test_the_apps_camera_off_before_our_camera_on_echo_is_not_ours_and_leaves_ou
     for odd in ({"state": 2}, {"state": True}, {"state": "1"}, {}):
         r.mark_sent(name)
         assert r.own_echo(name, 1000.6 + len(str(odd)), odd) is False
+
+
+def test_a_malformed_payload_takes_no_pending_send(tmp_path, monkeypatch):
+    r = _recorder(tmp_path)
+    monkeypatch.setattr(recorder.time, "time", lambda: 1000.0)
+    r.mark_sent("set_working_state")
+    for junk in (None, "oops", [1], b"junk", 7):
+        assert r.own_echo("set_working_state", 1000.1, junk) is False
+    assert r.own_echo("set_working_state", 1000.3, {"state": 1}) is True       # the real echo still finds its send
