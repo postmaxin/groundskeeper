@@ -385,6 +385,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sample("downlink-ignored", GOOD, { RTT: 180 }, { uplinkNetworkQuality: 2, downlinkNetworkQuality: 5 });   // the robot's download is not the video's link
   await sample("quality-unknown", GOOD, { RTT: 180 }, { uplinkNetworkQuality: 0, downlinkNetworkQuality: 0 });
   await sample("slow-browser", { ...GOOD, receiveFrameRate: 15, renderFrameRate: 6 });
+  await sample("render-stalled", { ...GOOD, receiveFrameRate: 15, renderFrameRate: 0 });      // a real 0 is kept, not replaced by the receive rate
+  await sample("render-missing", { ...GOOD, renderFrameRate: undefined, receiveFrameRate: 12 });   // only a missing one falls back
   await sample("no-rtt", GOOD, { RTT: 0 });
   await sample("nothing-yet", {});                                    // a user with no numbers yet: no line, not "NaN"
   await sample("no-user", null);                                      // the SDK has nothing for the robot

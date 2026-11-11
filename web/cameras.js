@@ -144,7 +144,7 @@ function camerasStatsLine(video, rtc, quality) {
   const v = video || {};
   const w = num(v.receiveResolutionWidth), ht = num(v.receiveResolutionHeight);
   const bps = num(v.receiveBitrate), loss = num(v.packetLossRate), freezeRate = num(v.freezeRate), froze = num(v.totalFreezeTime);
-  const drawn = num(v.renderFrameRate) || num(v.receiveFrameRate), received = num(v.receiveFrameRate);
+  const received = num(v.receiveFrameRate), drawn = typeof v.renderFrameRate === "number" && Number.isFinite(v.renderFrameRate) ? v.renderFrameRate : received;   // a real 0 stays 0
   const rtt = num(rtc && rtc.RTT), delay = num(v.end2EndDelay);
   if (!w && !bps && !drawn) return { text: "", weak: false };      // nothing received yet
   const weak = loss >= CAM_WEAK_LOSS || freezeRate >= CAM_WEAK_FREEZE || num(quality && quality.uplinkNetworkQuality) >= CAM_WEAK_QUALITY;

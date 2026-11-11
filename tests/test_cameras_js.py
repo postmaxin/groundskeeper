@@ -477,6 +477,9 @@ def test_a_weak_link_is_said_when_loss_freezes_or_the_quality_is_poor():
 def test_a_slow_browser_is_told_apart_from_a_weak_link():
     text, weak = stats_lines(run_flow())["slow-browser"]
     assert text.endswith("slow to draw") and "weak link" not in text and weak is False
+    stalled = stats_lines(run_flow())["render-stalled"]
+    assert stalled == ("640×480 · 0 fps · 1.2 Mbps · 2% loss · RTT 180 ms · slow to draw", False)   # a stalled renderer is not masked
+    assert stats_lines(run_flow())["render-missing"][0].startswith("640×480 · 12 fps")                  # no render counter: use the receive rate
 
 
 @needs_node
