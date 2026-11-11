@@ -73,6 +73,31 @@ def test_deleting_one_of_two_items_never_moves_focus_to_the_other_items_delete()
 
 
 @needs_node
+def test_an_armed_emergency_button_never_gets_focus_back_so_a_stray_key_cannot_send():
+    r = run_flow()
+    assert r["emerg-unarmed"] == ["BUTTON", "emerg-resume"]            # unarmed: kept, like any keyed control
+    assert r["emerg-armed"] == ["BODY", None]                          # the arming redraw drops focus, as before #51
+    assert r["emerg-armed-refresh"] == ["BODY", None]                  # and no later refresh while armed puts it back
+
+
+def test_the_emergency_card_marks_the_armed_button():
+    assert '"data-nofocus": armed ? "" : null' in (ROOT / "web" / "ops.js").read_text(encoding="utf-8")
+
+
+@needs_node
+def test_emergency_tap_ignores_a_too_quick_second_tap_sends_once_after_the_gap_and_expires():
+    out = subprocess.run(["node", str(ROOT / "tests" / "emerg_flow.cjs")], capture_output=True, text=True, check=True)
+    r = json.loads(out.stdout)
+    assert r["armed"] is True                                          # the first tap arms and sends nothing
+    assert r["tooQuick"] == {"sent": 0, "stillArmed": True}            # 500 ms on: a double-click, ignored
+    assert r["afterGap"]["sent"] == [["/api/control/send", "resume", True]]   # 1.05 s after arming: sent once
+    assert r["afterGap"]["armAfter"] is None
+    assert r["expired"]["arm"] is None                                 # an arm left for 4 s lapses
+    assert r["rearmNoSend"] is True                                    # so the next tap only arms again
+    assert r["blurs"] == 5                                             # every tap, the ignored one too, drops focus
+
+
+@needs_node
 def test_a_focused_field_still_gets_its_typed_value_and_caret_back_from_the_caller():
     assert run_flow()["typing"] == ["INPUT", "robot_host", "typed", 2, 4]
 
