@@ -8,8 +8,8 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 # MapLibre GL, three.js and the Agora Web SDK, vendored at build time (checked against their hashes) so the UI needs no CDN at runtime.
-# three.js is only loaded by the 3D map (web/robot3d.js). The Agora SDK is Apache-2.0: its licence text ships beside it
-# (LICENSE-agora-rtc-sdk-ng.txt, section 4(a)); the package has no NOTICE file, and the SDK file is served unmodified.
+# three.js is only loaded by the 3D map (web/robot3d.js). The Agora SDK is MIT per its npm package: its licence text
+# (in THIRD_PARTY_NOTICES.md) ships beside it, and the SDK file is served unmodified.
 # (The folder is made first: ADD --chmod would give the folders it creates mode 644, unreadable to a non-root user.)
 RUN mkdir -p /app/web/vendor
 ADD --chmod=644 --checksum=sha256:be9633c4d870e26fb37f1cfe5c5a77181667114003ea16207ac7850d8da8add1 \

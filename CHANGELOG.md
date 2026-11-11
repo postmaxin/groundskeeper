@@ -39,6 +39,8 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
   set, the card kept saying "waiting for the robot's serial" until the panel restarted.
 - **The Cameras tile says which step failed and why** (#38), for example "Joining failed: OperationError", instead of
   "Something went wrong.". It never shows the token, key, channel or App ID.
+- **The Agora Web SDK's licence is stated as MIT** (#40), as its npm package declares, not Apache-2.0. The MIT text
+  now ships beside the SDK in the image (`web/vendor/THIRD_PARTY_NOTICES.md`).
 
 ## 0.19.6 — 2026-11-09
 
