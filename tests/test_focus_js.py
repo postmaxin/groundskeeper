@@ -68,6 +68,11 @@ def test_a_link_is_told_from_another_arrow_by_its_href_and_never_guessed():
 
 
 @needs_node
+def test_deleting_one_of_two_items_never_moves_focus_to_the_other_items_delete():
+    assert run_flow()["deleted-item"] == ["BODY", None]
+
+
+@needs_node
 def test_a_focused_field_still_gets_its_typed_value_and_caret_back_from_the_caller():
     assert run_flow()["typing"] == ["INPUT", "robot_host", "typed", 2, 4]
 

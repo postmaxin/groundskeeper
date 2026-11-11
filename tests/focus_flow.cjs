@@ -120,6 +120,9 @@ const press = (panel, key) => { const el = byKey(panel, key); el.focus(); el.on.
   out.push(["link-by-href", ...here(), doc.activeElement.attrs.href]);
   fill(stage, links(["#settings/a", "#settings/a"])); stage.querySelectorAll("a")[1].focus(); fill(stage, links(["#settings/a", "#settings/a"]));
   out.push(["link-same-href", ...here()]);
+  // Two items, each with its own unkeyed "Delete": deleting one must not put focus on the other's (Enter would delete it).
+  const items = (names) => h("ul", null, names.map((n) => h("li", null, n, h("button", null, "Delete"))));
+  fill(stage, items(["a", "b"])); stage.querySelectorAll("button")[0].focus(); fill(stage, items(["b"])); out.push(["deleted-item", ...here()]);
   const field = (v) => h("input", { "data-key": "robot_host", value: v });
   fill(stage, field("old")); let box = byKey(stage, "robot_host"); box.focus(); box.value = "typed"; box.setSelectionRange(2, 4);
   const typed = { v: box.value, a: box.selectionStart, b: box.selectionEnd };      // what drawSettings keeps before its redraw
