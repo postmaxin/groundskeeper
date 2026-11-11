@@ -69,6 +69,21 @@ function append(el, children) {
 function fill(el, ...children) {
   el.replaceChildren(...children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false));
 }
+/** Runs a redraw of `root` and gives keyboard focus back afterwards: a redraw replaces the focused element, which would
+ *  drop focus to the page. The element is found again by its data-key (as settings.js does), else by `to` (the data-key
+ *  to land on when the focused control no longer exists, e.g. Open -> Close), else by its place among root's controls.
+ *  Focus outside root is never touched. */
+const FOCUSABLE = "a[href], button, input, select, textarea, [tabindex='0']";
+function keepFocus(root, redraw, to) {
+  const was = document.activeElement, inside = !!was && was !== document.body && root.contains(was);
+  const key = inside ? was.dataset.key || null : null;
+  const slot = inside && !key ? [...root.querySelectorAll(FOCUSABLE)].indexOf(was) : -1;
+  redraw();
+  if (!inside) return;
+  const byKey = (k) => k && [...root.querySelectorAll("[data-key]")].find((e) => e.dataset.key === k);
+  const el = byKey(key) || byKey(to) || (slot >= 0 ? root.querySelectorAll(FOCUSABLE)[slot] : null);
+  if (el) el.focus({ preventScroll: true });
+}
 
 const num = (v, digits = 0) => (v === null || v === undefined || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(digits));
 const when = (ts) => (ts ? new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
@@ -1374,7 +1389,7 @@ async function renderLive(s) {
   if (panel.hidden) return;
   const [extras, cond] = await Promise.all([liveExtras(s), conditionsCard()]);
   if (panel.hidden) return;
-  fill(panel, extras, state.layers.trouble ? problemsCard() : null, cond);
+  keepFocus(panel, () => fill(panel, extras, state.layers.trouble ? problemsCard() : null, cond));
 }
 
 // Plans live on the robot; Live's Control card shows them with their areas (named from the map).
