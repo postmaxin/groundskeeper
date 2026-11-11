@@ -1181,9 +1181,13 @@ function secAccess(d) {
     location.href = "/login.html?signed_out=1";
   };
   const name = h("input", { class: "field slim", placeholder: "What will use it, e.g. Home Assistant", "data-key": "token-name" });
-  const metricsOnly = h("input", { type: "checkbox", "data-key": "token-metrics" });
+  // The choice lives in setUI, not only in the checkbox: a redraw (a background fetch) rebuilds the checkbox, and
+  // a lost tick would mint a full token where a metrics-only one was asked for.
+  const metricsOnly = h("input", { type: "checkbox", "data-key": "token-metrics", checked: setUI.tokenMetrics || null,
+    onchange: (e) => { setUI.tokenMetrics = e.target.checked; } });
   const create = async () => {
-    try { apiTokenShown = await authPost("/api/auth/tokens", { name: name.value, scope: metricsOnly.checked ? "metrics" : "full" }); } catch (e) { toast(e.message); return; }
+    try { apiTokenShown = await authPost("/api/auth/tokens", { name: name.value, scope: setUI.tokenMetrics ? "metrics" : "full" }); } catch (e) { toast(e.message); return; }
+    setUI.tokenMetrics = false;
     await renderSettings();
   };
   const revoke = async (t) => {
