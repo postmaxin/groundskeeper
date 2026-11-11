@@ -59,7 +59,8 @@ const AgoraRTC = {
 };
 const sandbox = {
   window: { get AgoraRTC() { log("sdkRead"); return knobs.sdkPresent ? AgoraRTC : undefined; }, addEventListener: (e, f) => { listeners[e] = f; } },
-  document: { hidden: false, addEventListener: (e, f) => { listeners[e] = f; }, head: { append: (el) => knobs.scripts.push(el) } },
+  document: { hidden: false, querySelector: () => ({}),   // the policy marker (design §13) is on the page
+    addEventListener: (e, f) => { listeners[e] = f; }, head: { append: (el) => knobs.scripts.push(el) } },
   // Like a real Storage: its own keys are the stored items, and the methods are not among them.
   localStorage: new Proxy(storage, { get: (t, p) => ({
     getItem: (k) => (k in t ? t[k] : null),

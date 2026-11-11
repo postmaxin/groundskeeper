@@ -517,8 +517,22 @@ The panel does not get into the robot, and no video passes through the panel. It
    run one at a time. A join frame with no secret field fails visibly ("video library changed"). The secret goes unwrapped inside TLS to
    Agora, whose servers decrypt the stream for the viewer anyway. The vendored SDK is not modified. Retired by #46. It leaves the channel
    on close, camera change, leaving Live, a hidden tab and page close. A token's expiry event rejoins with a fresh token
-   (the route picks the viewer uid, so a token cannot be renewed in place). No CSP is set: `connect-src` cannot admit
-   `*.agora.io` and block `statscollector*.agora.io`, so an allowlist of exact gateway hosts needs a network capture.
+   (the route picks the viewer uid, so a token cannot be renewed in place). While Robot video is on, the panel's HTML
+   (`/` and `/index.html`) carries a `Content-Security-Policy` with a `connect-src` directive only (`app/csp.py`):
+   `'self' blob: data:`, the gateway-choice hosts `https://webrtc2-ap-web-1.agora.io https://webrtc2-ap-web-3.agora.io
+   https://*.ap.sd-rtn.com` and the signalling hosts `wss://*.edge.agora.io:* wss://*.edge.sd-rtn.com:*` (the host name
+   carries the gateway's IP, so it changes per session). So the SDK cannot reach `statscollector-*.agora.io`,
+   `*.statscollector.sd-rtn.com`, `logservice*.agora.io` or `data-reporting.agora.io` even if `ENABLE_EVENT_REPORT`
+   stopped working; the policy never admits `*.agora.io` or `*.sd-rtn.com`. The hosts come from a capture of the
+   tile in use (2026-11-11, #35) and the SDK's built-in host list. Nothing else is listed: every other request the
+   pages make (tiles, elevation, Frigate, settings) goes to the panel, which relays imagery and Frigate itself, so
+   imagery hosts are not in the policy; links, OIDC sign-in and `<img>` are navigation or not `connect-src`. Other
+   directives are not set because the panel uses inline styles and blob: workers. With video off there is no header
+   and nothing changes. The header applies to a page load, so a page loaded before video was switched on has none:
+   the page then carries no `gk-video-csp` marker (the server adds it with the header) and the Cameras tile reloads
+   once instead of playing outside the policy. UDP media and Agora's own IP-derived gateway ports are not governed
+   by CSP. If a later SDK version needs a host not listed, the tile fails to connect and the console reports the
+   violation: add the exact host in `app/csp.py`.
    Live's existing "Camera" layout is the Frigate yard cameras (§11), so the tile's title carries a tooltip saying it is
    the robot's own; a rename of that layout is raised with the maintainers first. A `no-referrer` policy was
    considered to hide the panel's address from Agora and rejected: a browser then sends `Origin: null` on the panel's

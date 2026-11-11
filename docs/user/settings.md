@@ -140,6 +140,9 @@ the browser anyway), because it is longer than
 Agora's Web SDK can wrap; a stopgap pending an Agora fix (issue #46). Allow `*.agora.io` and `*.sd-rtn.com` in ad
 blockers, or the tile cannot connect.
 The panel asks the SDK not to send Agora usage statistics or upload logs, and switches off its remote configuration;
-a network capture to confirm this is pending (issue #35). Agora still sees your browser's address, the panel's address
+a capture of the tile in use showed no statistics or log traffic. While Robot video is on, the panel also tells your
+browser (a `connect-src` Content-Security-Policy on the page) to connect only to Agora's gateway and signalling hosts
+and the panel itself, never to its statistics or log hosts, so this holds even if the SDK misbehaves. After you switch
+Robot video on, the page reloads itself once the first time you open the tile. Agora still sees your browser's address, the panel's address
 (the `Origin` and `Referer` of the SDK's requests) and the camera's channel name, which carries the robot's serial
 number.

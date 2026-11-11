@@ -69,7 +69,17 @@ async function camerasAvailable(s) {
     try { cams.settings = await getJSON("/api/settings"); cams.settingsAt = Date.now(); } catch { /* keep the last answer */ }
   }
   const d = cams.settings;
-  return !!(d && d.robot_video_enabled && d.robot_video_configured);
+  const on = !!(d && d.robot_video_enabled && d.robot_video_configured);
+  // The panel sends the connect-src policy (design §13) only on a page loaded while Robot video was on. A page loaded
+  // before it was switched on has none, so reload once rather than play video outside the policy.
+  if (document.querySelector('meta[name="gk-video-csp"]')) { try { sessionStorage.removeItem("gk-csp-reload"); } catch { /* no storage */ } }
+  else if (on && !s.demo) {
+    let tried = false;
+    try { tried = sessionStorage.getItem("gk-csp-reload") === "1"; sessionStorage.setItem("gk-csp-reload", "1"); } catch { tried = true; }
+    if (!tried) { location.reload(); return false; }
+    return false;                                   // reloaded and still no policy: show no video rather than unguarded video
+  }
+  return on;
 }
 
 async function camerasCard(s) {

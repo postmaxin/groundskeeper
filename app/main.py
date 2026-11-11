@@ -29,6 +29,7 @@ from . import auth as auth_mod
 from . import oidc as oidc_mod
 from . import backups as backups_mod
 from . import corrections
+from . import csp as csp_mod
 from . import robotscan
 from . import config, control, coverage, geo, insights, mapstudio, mapwrite, telemetry
 from . import ha as ha_mod
@@ -158,6 +159,21 @@ async def revalidate_ui_files(request: Request, call_next):
     if not path.startswith(("/api/", "/tiles/", "/imagery/", "/vendor/")):
         response.headers["Cache-Control"] = "no-cache"
     return response
+
+
+@app.middleware("http")
+async def video_csp(request: Request, call_next):
+    """§13: while Robot video is on, the page that can load the Agora SDK may only connect to the hosts it needs, so the
+    SDK cannot reach Agora's statistics or log hosts whatever its own switches say. Off: no header, nothing changes."""
+    response = await call_next(request)
+    if request.url.path in ("/", "/index.html") and response.status_code in (200, 304) and _video_on(request):
+        response.headers["Content-Security-Policy"] = csp_mod.video_policy()
+    return response
+
+
+def _video_on(request: Request) -> bool:
+    r = getattr(request.app.state, "rec", None)
+    return bool(r and r.store.setting("robot_video_enabled", SETTINGS_DEFAULTS["robot_video_enabled"]))
 
 
 def rec(request: Request) -> Recorder:
@@ -2982,9 +2998,12 @@ async def unhandled(request: Request, exc: Exception):
 
 
 @app.get("/", include_in_schema=False)
-async def index():
+async def index(request: Request):
     """index.html with every script and stylesheet stamped with the UI's version, so a redeploy beats any cache."""
-    return HTMLResponse(stamp((WEB / "index.html").read_text(encoding="utf-8")), headers={"Cache-Control": "no-cache"})
+    html = stamp((WEB / "index.html").read_text(encoding="utf-8"))
+    if _video_on(request):                        # tells the Cameras tile this page was loaded under the policy
+        html = html.replace("<head>", '<head>\n<meta name="gk-video-csp" content="1">', 1)
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
 
 app.mount("/", StaticFiles(directory=WEB, html=True), name="web")

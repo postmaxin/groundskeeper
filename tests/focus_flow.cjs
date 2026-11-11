@@ -39,7 +39,7 @@ class El {
   }
   querySelectorAll(sel) { return this.all().filter((e) => e.matches(sel)); }
 }
-const doc = { body: new El("body"), activeElement: null, hidden: false, addEventListener() {}, head: { append() {} }, createElement: (t) => new El(t) };
+const doc = { body: new El("body"), activeElement: null, hidden: false, querySelector: () => ({}), addEventListener() {}, head: { append() {} }, createElement: (t) => new El(t) };
 doc.activeElement = doc.body;
 
 const h = (tag, attrs, ...kids) => {
