@@ -34,10 +34,11 @@ const CAM_STATS_MS = 2000;                         // how often the stats line u
 const CAM_BEAT_MS = 4000;                          // the official app keeps the robot awake about this often while open
 const CAM_JOIN_TIMEOUT_MS = 30000;                 // a join that never settles gives up, so the swap cannot linger
 // "Weak link" thresholds, on the SDK's own numbers (4.24.9): packetLossRate and freezeRate are ratios 0..1, and the network
-// quality is 0 (unknown) to 6 (down), where 4 is "poor".
+// quality is 0 (unknown) to 6 (down), where 4 is "poor". getRemoteNetworkQuality()[uid] describes that remote user's own
+// connection, so for the robot its uplink is the video's source link; its downlink is irrelevant to viewing.
 const CAM_WEAK_LOSS = 0.05;                        // 5% of the robot's packets lost
 const CAM_WEAK_FREEZE = 0.1;                       // frozen for 10% of the time
-const CAM_WEAK_QUALITY = 4;                        // downlink network quality "poor" or worse
+const CAM_WEAK_QUALITY = 4;                        // the robot's uplink network quality "poor" or worse
 const CAM_SLOW_DRAW = 0.7;                         // drawn frames under 70% of received ones: the browser, not the link
 const CAM_CONTROL_OFF_HINT = "Control is off, so the panel cannot switch the cameras on or keep the robot awake. They play if the robot already has them on.";
 // STOPGAP (#46). The Web SDK wraps the stream's secret with a built-in 1024-bit RSA key, which holds at most 62 bytes;
@@ -134,7 +135,7 @@ function camerasDraw() {
 // Made-up numbers for the demo, which never loads the SDK: it shows what the line looks like on a real robot.
 const CAM_DEMO_STATS = { video: { receiveResolutionWidth: 640, receiveResolutionHeight: 480, renderFrameRate: 15, receiveFrameRate: 15,
                                   receiveBitrate: 1234000, packetLossRate: 0.02, freezeRate: 0, totalFreezeTime: 0, end2EndDelay: 0 },
-                         rtc: { RTT: 180 }, quality: { downlinkNetworkQuality: 2 } };
+                         rtc: { RTT: 180 }, quality: { uplinkNetworkQuality: 2 } };
 
 // The line under the video, from the SDK's local counters (read by camerasStatsStart). Returns { text, weak }; text is ""
 // when there are no numbers yet. Only numbers are used: no ids, names, tokens or addresses can get in.
@@ -146,7 +147,7 @@ function camerasStatsLine(video, rtc, quality) {
   const drawn = num(v.renderFrameRate) || num(v.receiveFrameRate), received = num(v.receiveFrameRate);
   const rtt = num(rtc && rtc.RTT), delay = num(v.end2EndDelay);
   if (!w && !bps && !drawn) return { text: "", weak: false };      // nothing received yet
-  const weak = loss >= CAM_WEAK_LOSS || freezeRate >= CAM_WEAK_FREEZE || num(quality && quality.downlinkNetworkQuality) >= CAM_WEAK_QUALITY;
+  const weak = loss >= CAM_WEAK_LOSS || freezeRate >= CAM_WEAK_FREEZE || num(quality && quality.uplinkNetworkQuality) >= CAM_WEAK_QUALITY;
   const slow = !weak && received >= 5 && drawn < received * CAM_SLOW_DRAW;
   const pct = loss * 100;
   const parts = [

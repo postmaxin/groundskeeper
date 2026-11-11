@@ -10,7 +10,7 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 - **A stats line under the Cameras tile's video** (#53), refreshed every 2 seconds while it plays, for example
   `640×480 · 15 fps · 1.2 Mbps · 2% loss · RTT 180 ms`. It comes from the video library's own counters in your browser
   and nothing is sent anywhere. It says **weak link** when loss is 5% or more, the picture froze for 10% of the time
-  or the library rates the link poor, and **slow to draw** when this browser shows far fewer frames than arrive. The
+  or the library rates the robot's upload poor, and **slow to draw** when this browser shows far fewer frames than arrive. The
   demo shows a made-up line. Sending samples to the panel to map weak spots is not part of this.
 - **"Metrics only" API tokens** (Settings → Access, or `"scope": "metrics"` on `POST /api/auth/tokens`). Such a token
   can read `/api/metrics` and is refused (403) on every other locked path (`/api/`, `/tiles/`, `/imagery/`), so a

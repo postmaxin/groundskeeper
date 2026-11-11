@@ -381,7 +381,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sample("kbps", { ...GOOD, receiveBitrate: 640000, packetLossRate: 0.004 });
   await sample("loss", { ...GOOD, packetLossRate: 0.08 });
   await sample("freeze", { ...GOOD, freezeRate: 0.2, totalFreezeTime: 6 });
-  await sample("quality", GOOD, { RTT: 180 }, { uplinkNetworkQuality: 1, downlinkNetworkQuality: 5 });
+  await sample("quality", GOOD, { RTT: 180 }, { uplinkNetworkQuality: 5, downlinkNetworkQuality: 1 });
+  await sample("downlink-ignored", GOOD, { RTT: 180 }, { uplinkNetworkQuality: 2, downlinkNetworkQuality: 5 });   // the robot's download is not the video's link
   await sample("quality-unknown", GOOD, { RTT: 180 }, { uplinkNetworkQuality: 0, downlinkNetworkQuality: 0 });
   await sample("slow-browser", { ...GOOD, receiveFrameRate: 15, renderFrameRate: 6 });
   await sample("no-rtt", GOOD, { RTT: 0 });

@@ -78,7 +78,7 @@ are pink, edge passes violet.
   video, one line shows what this browser is receiving, refreshed every 2 seconds, for example
   `640×480 · 15 fps · 1.2 Mbps · 2% loss · RTT 180 ms`. It is read from the video library's own counters in your
   browser and sent nowhere. **weak link** means 5% or more of the packets were lost, the picture froze for 10% of the
-  time, or the library rates the connection poor: look at the robot's signal (HaLow, 4G) first. **slow to draw**
+  time, or the library rates the robot's upload poor: look at the robot's signal (HaLow, 4G) first. **slow to draw**
   means frames arrive but this browser shows far fewer: try another tab or device. The demo shows
   a placeholder card ("The demo robot has no cameras"; it loads nothing from Agora) with a made-up example line. It has played the back camera during a run while the Yarbo app was also open. **Known limitations**,
   from one robot so far:

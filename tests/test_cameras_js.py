@@ -469,6 +469,7 @@ def test_a_weak_link_is_said_when_loss_freezes_or_the_quality_is_poor():
     assert lines["loss"] == ("640×480 · 15 fps · 1.2 Mbps · 8% loss · RTT 180 ms · weak link", True)
     assert lines["freeze"] == ("640×480 · 15 fps · 1.2 Mbps · 2% loss · RTT 180 ms · froze 6 s · weak link", True)
     assert lines["quality"] == ("640×480 · 15 fps · 1.2 Mbps · 2% loss · RTT 180 ms · weak link", True)
+    assert lines["downlink-ignored"] == ("640×480 · 15 fps · 1.2 Mbps · 2% loss · RTT 180 ms", False)    # only the robot's uplink counts
     assert lines["quality-unknown"][1] is False and "weak" not in lines["quality-unknown"][0]    # 0 means unknown, not poor
 
 
