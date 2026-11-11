@@ -376,16 +376,26 @@ function r3dGate(s, now) {
   return false;
 }
 
-// A replay step: glide from where the model is to the replay row over the next timer tick.
-function robot3dReplay(row) {
+// A replay step: glide from where the model is to the replay point (row, or `frac` of the way on to `next`) over the
+// next timer tick.
+function robot3dReplay(row, next = null, frac = 0) {
   if (!row || !state.run || R3D.mode !== "replay" || !state.map || !state.map.getLayer("robot3d")) return;
   const f = Object.fromEntries(state.run.fields.map((k, i) => [k, i]));
-  const to = { lon: row[f.lon], lat: row[f.lat], heading: row[f.heading] ?? (R3D.pose ? R3D.pose.heading : 0),
-               pitch: row[f.pitch] || 0, roll: row[f.roll] || 0 };
+  const pose = (r) => ({ lon: r[f.lon], lat: r[f.lat], heading: r[f.heading] ?? (R3D.pose ? R3D.pose.heading : 0),
+                         pitch: r[f.pitch] || 0, roll: r[f.roll] || 0 });
+  const to = pose(row);
+  if (next && frac > 0) {
+    const b = pose(next);
+    to.lon += (b.lon - to.lon) * frac;
+    to.lat += (b.lat - to.lat) * frac;
+    to.heading = (to.heading + r3dAngle(b.heading - to.heading) * frac + 360) % 360;
+    to.pitch += (b.pitch - to.pitch) * frac;
+    to.roll += (b.roll - to.roll) * frac;
+  }
   if (!R3D.pose) { R3D.pose = to; r3dKick(); return; }
   const [kx, ky] = r3dMetres(to.lat);
   const far = Math.hypot((to.lon - R3D.pose.lon) * kx, (to.lat - R3D.pose.lat) * ky) > R3D_JUMP_M * 4;
-  R3D.glide = far ? null : { from: { ...R3D.pose }, to, t0: performance.now(), ms: state.replayTimer ? 60 : 120 };
+  R3D.glide = far ? null : { from: { ...R3D.pose }, to, t0: performance.now(), ms: state.replayTimer ? 55 : 120 };
   if (far) R3D.pose = to;
   r3dKick();
 }

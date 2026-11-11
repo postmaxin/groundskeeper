@@ -59,6 +59,8 @@ a { color: var(--link); }
 .dim, .muted { color: var(--muted); }
 .small { font-size: 12.5px; }
 .mono { font-family: var(--mono); }
+/* a token wraps on a phone; one tap selects it */
+.secret { min-width: 0; overflow-wrap: anywhere; user-select: all; }
 .pad { padding: 14px 16px; }
 .row { display: flex; align-items: center; }
 .gap { gap: 8px; }
@@ -251,8 +253,10 @@ a { color: var(--link); }
 .legendrow span { display: inline-flex; align-items: center; gap: 6px; }
 .legendrow i { display: inline-block; width: 14px; height: 5px; border-radius: 2px; }
 .legendrow i.ramp { width: 90px; height: 7px; }
-.replay { display: flex; align-items: center; gap: 10px; }
-.replay input { flex: 1; accent-color: var(--ok); }
+.replay { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.replay input { flex: 1 1 80px; min-width: 0; accent-color: var(--ok); }
+.replayspeed { flex: none; display: inline-flex; align-items: center; gap: 6px; color: var(--text2); font-size: 13px; }
+.replayspeed select { width: auto; }
 .gaplist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .gaplist li { display: flex; align-items: center; gap: 10px; }
 .runlist .label { margin: 8px 4px; }
@@ -490,7 +494,7 @@ textarea.field { min-height: 80px; padding: 8px 10px; font: 12px/1.4 var(--mono)
   .h1 { flex: none; margin: 0; font-size: 17px; }
   .chips { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .chips::-webkit-scrollbar, .side::-webkit-scrollbar { display: none; }
-  .battslot .chipgroup > .chip:first-child { max-width: 120px; }
+  .battslot .chipgroup > .chip:first-child { max-width: 45vw; }   /* "docked, charging" fits with large text */
   .robotcard { display: none; }
   .nav { flex: 0 0 auto; }
   .layout { grid-template-columns: 1fr; }
@@ -757,7 +761,7 @@ button.subtab { border: 0; background: none; font: inherit; font-size: 13px; cur
   .side .nav .ico { width: 22px; height: 22px; }
   .side .nav[aria-current="page"] { background: var(--current); color: var(--text); }
   /* the bar at the top stays put while the page scrolls */
-  .top { position: sticky; top: 0; z-index: 15; padding-top: calc(8px + env(safe-area-inset-top)); }
+  .top { position: sticky; top: 0; z-index: 15; }
   /* switches: the toggle says on or off */
   .switchchip .swstate { display: none; }
   /* settings: the sections fold under one row (open, every section in sight, wrapped), and each row's control
@@ -780,6 +784,12 @@ button.subtab { border: 0; background: none; font: inherit; font-size: 13px; cur
   input[type=checkbox] { width: 22px; height: 22px; }
   .btn.slim { min-height: 36px; }
   .toast { bottom: calc(72px + env(safe-area-inset-bottom)); max-width: calc(100% - 32px); }
+}
+
+/* Only an installed app draws under the status bar. In a browser tab the browser keeps the page below it, but some
+   Android browsers still report the bar's height as the inset, which left an empty band above the title. */
+@media (max-width: 700px) and (display-mode: standalone), (max-width: 700px) and (display-mode: fullscreen) {
+  .top { padding-top: calc(8px + env(safe-area-inset-top)); }
 }
 
 /* imagery: the catalog as its own section */
@@ -845,7 +855,7 @@ button.subtab { border: 0; background: none; font: inherit; font-size: 13px; cur
   .top:has(#subtabs:not([hidden]))::after { display: none; }     /* the Robot tabs already fill the second row */
   .liveview { order: 0; flex: none; }
   .themebtn { margin-left: auto; }
-  .chips { order: 5; flex: 1 1 40%; }
+  .chips { order: 5; flex: 1 1 0; min-width: 30%; }   /* the robot pill takes what it needs; the chips scroll */
   .battslot { order: 6; margin-left: 0; }
   .connslot { order: 7; flex: 1 0 100%; display: flex; min-width: 0; overflow-x: auto; scrollbar-width: none; }
   .connslot::-webkit-scrollbar { display: none; }

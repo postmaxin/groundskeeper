@@ -55,22 +55,36 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 - **Installable with pip or uv** (`pyproject.toml`): another Python tool can depend on Groundskeeper's `app` package,
   and `uv sync` sets up a checkout. The Docker image and `requirements*.txt` are unchanged, and a test keeps the two
   dependency lists the same. Running the panel itself still needs a checkout or the container.
-- **A Helm chart** (`deploy/helm/groundskeeper/`): deploy the panel on Kubernetes — a single-pod StatefulSet, a Service and a
-  PersistentVolumeClaim for `/data`, with a documented `values.yaml`. Everything site-specific stays in the panel's
+- **A Helm chart** (`deploy/helm/groundskeeper/`, community-maintained): deploy the panel on Kubernetes as a
+  single-pod StatefulSet with a Service and a PersistentVolumeClaim for `/data`, and a documented `values.yaml`. A
+  StatefulSet, so a replacement pod never runs beside the old one. Everything site-specific stays in the panel's
   Settings, and control is off on a new install as always.
 - **Single sign-on with OpenID Connect** (Authentik, Keycloak, Authelia, Google, ...): "Sign in with …" on the sign-in
   page, set with `OIDC_*` in the environment and modelled on Grafana's generic OAuth sign-in. Only the allowed groups
   or email domains get in, and the panel refuses to start with single sign-on on and neither set. `PANEL_PASSWORD=off`
   turns the password off once it works. See Help → Settings → Signing in.
+- **Replay speed.** Next to the replay slider in Runs: 1×, 10×, 60× or 300× real time, or Whole run (about 30 s, as
+  before). Where the robot stands still (parked, charging) or the samples stop, the replay hurries through, and between
+  samples the robot moves smoothly, so a replay, and Follow in 3D, can be watched at a real pace. The 3D map's 1×–3×
+  menu is now labelled Height: it draws the ground taller, it is not a speed.
 
 ### Fixed
 
+- **A stray shape far from the yard no longer moves the yard.** The panel worked out where the yard is from the outline
+  of every shape on the robot's map, so one far away (for example a charging point with an empty location) made the map
+  open zoomed out to half the world and imagery sources say they do not cover the yard. Shapes more than 2 km from the
+  robot's map origin are now left out of the view, the imagery and the terrain, and named in Settings → Map imagery, on
+  Live and in Map Studio. See Help → Map imagery.
+- **Copy buttons on a panel opened at `http://`** (Settings → Access, AI assistant): they did nothing, because the
+  browser has no clipboard API there. They now fall back to the older copy command, and a new token wraps on a phone
+  and selects with one tap.
+- **The phone header**: the robot's state ("docked, charging") is no longer cut short with large text, and some
+  Android browsers no longer leave an empty band above the title. An installed app still keeps clear of the status
+  bar.
 - **An armed emergency button no longer keeps keyboard focus** (#57). Keeping focus across Live refreshes (#36) had
   left Pause, Resume, Stop or Return to dock focused for its whole 4 s armed window. A click to arm it, followed by
   Space to scroll, sent the command. Every tap now drops focus from the card, the armed button never gets it back, and a
   second tap within 0.6 s is ignored as a bounce, a held key or a double-click.
-- **Cloud-only: a serial saved in Settings → Robot reaches the cloud connection at once** (#15). With no robot address
-  set, the card kept saying "waiting for the robot's serial" until the panel restarted.
 - **The Cameras tile says which step failed and why** (#38), for example "Joining failed: OperationError", instead of
   "Something went wrong.". It never shows the token, key, channel or App ID.
 - **Keyboard focus stays put when Live refreshes** (#36, #37). Live redraws its cards every few seconds and the Cameras
@@ -78,6 +92,8 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
   Close) or, when it goes away, moves to the one that replaces it (Open to Close, Close to Open).
 - **The Agora Web SDK's licence is stated as MIT** (#40), as its npm package declares, not Apache-2.0. The MIT text
   now ships beside the SDK in the image (`web/vendor/THIRD_PARTY_NOTICES.md`).
+- **Cloud-only: a serial saved in Settings → Robot reaches the cloud connection at once** (#15, #91). With no robot address
+  set, the card kept saying "waiting for the robot's serial" until the panel restarted.
 
 ## 0.19.6 — 2026-11-09
 

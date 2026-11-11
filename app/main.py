@@ -464,7 +464,8 @@ async def map_geojson(request: Request):
     r = rec(request)
     if not r.map_geojson:
         raise HTTPException(503, "map not fetched yet")
-    return {"geojson": r.map_geojson, "bounds": geo.bounds(r.map_geojson), "fetched": r.map_fetched or None,
+    bbox, far = _yard_bounds(r)
+    return {"geojson": r.map_geojson, "bounds": bbox, "far": far, "fetched": r.map_fetched or None,
             "versions": r.store.versions("map")}
 
 
@@ -883,7 +884,7 @@ async def _terrain(request: Request, source: str = "lidar") -> dict:
     if not r.map_geojson:
         raise HTTPException(503, "the robot's map has not been read yet")
     el = request.app.state.elevation
-    bounds = geo.bounds(r.map_geojson)
+    bounds = _yard_bounds(r)[0]
     try:
         if source == "robot":
             pts, runs = r.store.height_points()
@@ -1996,10 +1997,20 @@ async def _map_issues(raw, ref) -> list:
     if not raw or not ref:
         return []
     try:
-        return await asyncio.to_thread(mapstudio.validate, raw, ref)
+        issues = await asyncio.to_thread(mapstudio.validate, raw, ref)
     except Exception:
         log.exception("validating the robot's map failed")
-        return []
+        issues = []
+    return issues + far_issues(geo.map_to_geojson(raw, ref), ref)
+
+
+def far_issues(fc: dict, ref) -> list[dict]:
+    """A shape far from the rest of the yard, as a Map Studio warning: it is left out of the map's view, the imagery
+    and the terrain (geo.yard_bounds), and it is most likely a stray to fix or delete in the Yarbo app."""
+    shapes = mapstudio.POLYGONS + mapstudio.LINES                 # a charging point or pile is not selectable there
+    return [{"level": "warning", "kind": f["kind"], "id": f["id"] if f["kind"] in shapes else None, "name": f["name"],
+             "msg": f"{f['km']:,.1f} km from the yard; left out of the map's view and the imagery", "code": "far",
+             "count": 1} for f in geo.yard_bounds(fc, ref)[1]]
 
 
 @app.get("/api/studio")
@@ -2530,7 +2541,7 @@ def _alignment(request: Request) -> dict:
 
 def _imagery_view(request: Request) -> dict:
     r = rec(request)
-    return {"yard": r.yard, "context": request.app.state.imagery.context_info(),
+    return {"yard": r.yard, "context": request.app.state.imagery.context_info(), "far": _yard_bounds(r)[1],
             "alignment": _alignment(request), "ref": list(r.gps_ref) if r.gps_ref else None}
 
 
@@ -2539,9 +2550,21 @@ async def imagery(request: Request):
     return _imagery_view(request)
 
 
+def _yard_bounds(r) -> tuple[list[float] | None, list[dict]]:
+    """The yard's box and the shapes left out of it as too far away (geo.yard_bounds)."""
+    return geo.yard_bounds(r.map_geojson, getattr(r, "gps_ref", None)) if r.map_geojson else (None, [])
+
+
+def _yard_box(r) -> list[float] | None:
+    """The box the yard photo covers: the yard's own shapes (strays far away left out) with 60 m around them, or None
+    before the map is read (the imagery then keeps the box it had)."""
+    bbox = _yard_bounds(r)[0]
+    return geo.pad(bbox, 60) if bbox else None
+
+
 def _yard_centre(request: Request, required: bool = True) -> tuple[float, float] | tuple[None, None]:
     im = request.app.state.imagery
-    bbox = im.bbox or (geo.bounds(rec(request).map_geojson) if rec(request).map_geojson else None)
+    bbox = _yard_bounds(rec(request))[0] or im.bbox
     if not bbox:
         if required:
             raise HTTPException(503, "the map has not been read yet")
@@ -2571,6 +2594,7 @@ async def imagery_sources(request: Request):
             "counts": {"contacted": len(im.candidates(lon, lat)) if lon is not None else 0,
                        "elsewhere": sum(1 for c in sources if c["covers"] is False)},
             "kinds": im.kinds(), "problems": im.problems, "yard": rec(request).yard,
+            "far": _yard_bounds(rec(request))[1],
             "local_catalog": str(im.local_dir),
             "context": {"world_on": im.world_on,
                         "world_layer": {"name": world["name"], "attribution": world["attribution"],
@@ -2600,10 +2624,10 @@ async def imagery_preview(request: Request, sid: str):
 
 def _map_centre(app) -> tuple[float, float] | None:
     im, r = app.state.imagery, app.state.rec
-    if im.yard_centre():
-        return im.yard_centre()
-    bbox = geo.bounds(r.map_geojson) if r.map_geojson else None
-    return ((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2) if bbox else None
+    bbox = _yard_bounds(r)[0]          # the map first: a box kept from before may have been stretched by a stray shape
+    if bbox:
+        return (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+    return im.yard_centre()
 
 
 async def _check(app, ids: list[str] | None = None) -> dict:
@@ -2634,7 +2658,7 @@ async def _switch(app, provider: str, mode: str) -> None:
     before = {"provider": im.source_id, "mode": im.mode}
     im.configure({"provider": provider, "mode": mode}, store.setting("imagery_keys"))
     try:
-        r.yard = await im.ensure_yard(strict=True)
+        r.yard = await im.ensure_yard(_yard_box(r), strict=True)
     except ImageryError as exc:
         im.configure(before, store.setting("imagery_keys"))
         raise HTTPException(502, f"could not use that source: {exc}")
@@ -2674,7 +2698,7 @@ async def _fall_back(app) -> str | None:
     im.configure({"provider": target, "mode": "auto"}, store.setting("imagery_keys"))
     store.set_setting("imagery_source", {"provider": target, "mode": "auto"})
     try:
-        app.state.rec.yard = await im.ensure_yard(strict=True)
+        app.state.rec.yard = await im.ensure_yard(_yard_box(app.state.rec), strict=True)
         return None
     except ImageryError as exc:
         app.state.rec.yard = im.yard_meta
@@ -2944,7 +2968,7 @@ async def imagery_refresh(request: Request):
     im = request.app.state.imagery
     async with im.lock:
         try:
-            rec(request).yard = await im.ensure_yard(force=True)
+            rec(request).yard = await im.ensure_yard(_yard_box(rec(request)), force=True)
         except ImageryError as exc:
             raise HTTPException(502, str(exc))
     return _imagery_view(request)

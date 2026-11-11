@@ -91,6 +91,68 @@ def bounds(fc: dict) -> list[float] | None:
     return [min(xs), min(ys), max(xs), max(ys)]
 
 
+# A yard, with its pathways, fits well inside this distance of the robot's map origin (HaLow reaches a few hundred
+# metres). A shape further out is a stray, e.g. one whose own ref is empty (0, 0): fitting the map or picking imagery
+# around it would take the view, and the yard's centre, an ocean away.
+FAR_M = 2000.0
+
+
+def _points(c) -> list[tuple[float, float]]:
+    if isinstance(c, (list, tuple)) and c and isinstance(c[0], (int, float)):
+        return [(float(c[0]), float(c[1]))]
+    return [p for item in c for p in _points(item)] if isinstance(c, (list, tuple)) else []
+
+
+def ground_m(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Great-circle metres between two (lon, lat)."""
+    la1, la2 = math.radians(a[1]), math.radians(b[1])
+    h = math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin(math.radians(b[0] - a[0]) / 2) ** 2
+    return 2 * 6371000.0 * math.asin(min(1.0, math.sqrt(h)))
+
+
+def usable_ref(ref) -> bool:
+    """A (lat, lon) that can be a yard: finite, in range, and not the empty (0, 0)."""
+    if not isinstance(ref, (list, tuple)) or len(ref) != 2:
+        return False
+    lat, lon = ref
+    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in (lat, lon)):
+        return False
+    return -90 <= lat <= 90 and -180 <= lon <= 180 and (abs(lat) > 1e-6 or abs(lon) > 1e-6)
+
+
+def yard_bounds(fc: dict, gps_ref) -> tuple[list[float] | None, list[dict]]:
+    """([west, south, east, north] of the shapes that make up the yard, the shapes left out as too far away).
+
+    The yard is anchored on the robot's map origin (gps_ref); when that is missing or unusable, or most shapes are
+    not near it, on the median of the shapes' centres, which one stray cannot move. A shape with any point more than
+    FAR_M from the anchor is left out and listed (kind, id, name, km), so the map can say which one to fix."""
+    shapes = [(f, pts) for f in fc.get("features", []) if (pts := _points(f["geometry"]["coordinates"]))]
+    if not shapes:
+        return None, []
+
+    def reach(pts, anchor):
+        return max(ground_m(anchor, p) for p in pts)
+
+    anchor = (gps_ref[1], gps_ref[0]) if usable_ref(gps_ref) else None
+    if anchor is None or 2 * sum(reach(pts, anchor) <= FAR_M for _, pts in shapes) < len(shapes):
+        centres = sorted(((min(x for x, _ in pts) + max(x for x, _ in pts)) / 2,
+                          (min(y for _, y in pts) + max(y for _, y in pts)) / 2) for _, pts in shapes)
+        lons, lats = sorted(c[0] for c in centres), sorted(c[1] for c in centres)
+        anchor = (lons[len(lons) // 2], lats[len(lats) // 2])
+    keep, far = [], []
+    for f, pts in shapes:
+        d = reach(pts, anchor)
+        if d <= FAR_M:
+            keep.extend(pts)
+        else:
+            props = f.get("properties") or {}
+            far.append({"kind": props.get("kind"), "id": props.get("id"), "name": props.get("name") or "",
+                        "km": round(d / 1000, 1)})
+    if not keep:                     # nothing sits together: show everything rather than nothing
+        return bounds(fc), []
+    return [min(x for x, _ in keep), min(y for _, y in keep), max(x for x, _ in keep), max(y for _, y in keep)], far
+
+
 def pad(bbox: list[float], metres: float) -> list[float]:
     west, south, east, north = bbox
     lat = (south + north) / 2

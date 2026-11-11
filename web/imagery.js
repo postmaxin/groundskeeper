@@ -225,6 +225,7 @@ function drawPicker(el, d) {
       h("span", { class: "row gap" },
         h("button", { type: "button", class: "btn slim pri", onclick: () => openBrowse(d) }, "Browse the catalog"),
         h("button", { type: "button", class: "btn slim pri", onclick: (e) => act(e.target, "Fetching…", () => postJSON("/api/imagery/refresh"), "Imagery fetched again.") }, "Fetch again"))),
+    farNote(d.far),
     modeBox(d),
     (d.problems || []).length ? h("p", { class: "small", style: `color:${CORAL}` }, `Skipped catalog entries: ${d.problems.join(" · ")}`) : null,
     resScale(),
@@ -417,18 +418,6 @@ const LICENCES = {
 };
 const licenceKey = (l) => !l ? "unknown" : l.id === "public-domain" ? "public-domain" : l.id === "CC-BY-4.0" ? "cc-by"
   : l.commercial === false ? "nc" : l.id === "unknown" ? "unknown" : "credit";
-
-async function copyText(text) {
-  try { await navigator.clipboard.writeText(text); return true; } catch { /* not a secure context: fall back */ }
-  const ta = h("textarea", { style: "position:fixed;left:-9999px;top:0", "aria-hidden": "true" });
-  ta.value = text;
-  document.body.append(ta);
-  ta.select();
-  let ok = false;
-  try { ok = document.execCommand("copy"); } catch { /* nothing more to try */ }
-  ta.remove();
-  return ok;
-}
 
 function download(name, text) {
   const href = URL.createObjectURL(new Blob([text], { type: "application/json" }));

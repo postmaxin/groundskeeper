@@ -150,6 +150,11 @@ sign-in (optional: a fallback route), the imagery, cameras, Home Assistant and s
 set those to your own user if you want to edit `./data` by hand. It runs on amd64 and arm64, including a Raspberry
 Pi 4 or 5.
 
+**As a Python package.** `pyproject.toml` lets another Python tool depend on Groundskeeper (`pip install .` or
+`uv sync` in a checkout). An installed copy is the library only: the panel's `catalog/`, `web/` and `docs/` folders
+are not in it, so running the panel needs a checkout or the image. `app.codec` and `app.cloud` are not a stable API
+and can change in any release, patch releases included, so pin the version you depend on.
+
 **On Unraid,** use the Docker template: copy [`deploy/unraid/groundskeeper.xml`](deploy/unraid/groundskeeper.xml) to
 `/boot/config/plugins/dockerMan/templates-user/my-groundskeeper.xml`, then Docker → Add Container → pick
 **groundskeeper**. The container then shows like any other Unraid app (update check, autostart, Edit), not as

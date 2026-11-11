@@ -43,7 +43,7 @@ are pink, edge passes violet.
   Esc to close it). **Align**, next to the imagery credit at the foot of the map, lines the aerial photo up with the
   robot's map (also in [Settings → Map imagery](#settings/imagery)).
 - **3D:** tilts the map and raises the ground: the robot's own heights over the lawns (they sharpen with every mow),
-  public lidar elevation (USGS 3DEP) around them. The **1× to 3×** menu next to it draws it taller so small slopes show. Right-drag, or two fingers on
+  public lidar elevation (USGS 3DEP) around them. The **Height** menu next to it (1× to 3×) draws it taller so small slopes show. Right-drag, or two fingers on
   a phone, turns and tilts; the compass resets north. The same view works in Runs, for replay. In 3D the robot is a
   small 3D model of a Yarbo with the Lawn Mower Pro: it faces where it is heading, leans with its own tilt, stands on
   a soft shadow and glides between updates instead of jumping. The mower in front follows the drawn ground under it
