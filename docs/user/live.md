@@ -70,7 +70,8 @@ are pink, edge passes violet.
   open: **Close**, another page, a hidden tab or a closed page stop it. The panel never switches the cameras off,
   because that would cut the Yarbo app's view too; the robot does that itself. The panel asks Agora's SDK not to send
   usage statistics or upload logs, and switches off its remote configuration (which could turn those back on); a
-  network capture of the tile in use (SDK 4.24.9) found no statistics or log traffic (issue #35). Agora's servers see the panel's address (the `Origin` and
+  network capture of the tile in use (SDK 4.24.9) found no statistics or log traffic (issue #35). Agora's servers see
+  the panel's address (the `Origin` and
   `Referer` of the SDK's requests) and your browser's address. The stream's secret is longer than Agora's Web SDK can
   wrap, so the panel puts it into the SDK's join message and access-point request itself, unwrapped inside the TLS connections to Agora, whose
   servers decrypt the stream for your browser anyway; this is a stopgap until Agora fixes their SDK (issue #46). The SDK also keeps a few items of its own in this

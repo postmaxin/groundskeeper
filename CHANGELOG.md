@@ -15,8 +15,8 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 - **A Cameras tile on Live** shows the robot's own cameras (front, left, right, back), one at a time, while the tile
   is open. It switches the cameras on (Control on, never off), plays the stream with Agora's SDK from this panel
   (the panel asks the SDK not to send usage statistics or upload logs, and switches off its remote configuration; a
-  network capture found no statistics or log traffic, #35; Agora's servers see the panel's address) and leaves the channel
-  when closed, on another page or a hidden tab. Shown
+  network capture found no statistics or log traffic, #35; Agora's servers see the panel's address) and leaves the
+  channel when closed, on another page or a hidden tab. Shown
   only with Robot video on and the service address set; the demo shows a placeholder.
 - **The Cameras tile keeps the robot awake and plays on a real robot** (#45). The robot publishes video only while
   someone sends the keep-awake the Yarbo app sends while open (`set_working_state {"state":1}`), so while the tile is
