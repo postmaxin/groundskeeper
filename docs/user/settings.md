@@ -140,6 +140,7 @@ the browser anyway), because it is longer than
 Agora's Web SDK can wrap; a stopgap pending an Agora fix (issue #46). Allow `*.agora.io` and `*.sd-rtn.com` in ad
 blockers, or the tile cannot connect.
 The panel asks the SDK not to send Agora usage statistics or upload logs, and switches off its remote configuration;
-a network capture to confirm this is pending (issue #35). Agora still sees your browser's address, the panel's address
+a network capture of the tile in use (SDK 4.24.9) found no statistics or log traffic (issue #35). Agora still sees your
+browser's address, the panel's address
 (the `Origin` and `Referer` of the SDK's requests) and the camera's channel name, which carries the robot's serial
 number.

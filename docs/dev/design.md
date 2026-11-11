@@ -517,8 +517,12 @@ The panel does not get into the robot, and no video passes through the panel. It
    run one at a time. A join frame with no secret field fails visibly ("video library changed"). The secret goes unwrapped inside TLS to
    Agora, whose servers decrypt the stream for the viewer anyway. The vendored SDK is not modified. Retired by #46. It leaves the channel
    on close, camera change, leaving Live, a hidden tab and page close. A token's expiry event rejoins with a fresh token
-   (the route picks the viewer uid, so a token cannot be renewed in place). No CSP is set: `connect-src` cannot admit
-   `*.agora.io` and block `statscollector*.agora.io`, so an allowlist of exact gateway hosts needs a network capture.
+   (the route picks the viewer uid, so a token cannot be renewed in place). A network capture of the tile in use
+   (SDK 4.24.9, #35) found no statistics, log or remote-configuration traffic: only the access point, the edge
+   gateway's signalling and the media. Repeat that capture whenever the SDK is upgraded; `tests/test_cameras_js.py`
+   keeps the off-switches in place. No CSP is set: a `connect-src` allowlist would need every gateway host the SDK
+   knows (about 140 in 4.24.9), revisited on each upgrade, and a missed one breaks the video, for little gain while
+   the switches hold.
    Live's existing "Camera" layout is the Frigate yard cameras (§11), so the tile's title carries a tooltip saying it is
    the robot's own; a rename of that layout is raised with the maintainers first. A `no-referrer` policy was
    considered to hide the panel's address from Agora and rejected: a browser then sends `Origin: null` on the panel's
