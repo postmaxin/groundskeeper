@@ -1218,8 +1218,8 @@ function secAccess(d) {
         h("span", { class: "row gap" }, mono(`…${t.hint}`), sbtn("Revoke", () => revoke(t))))),
       apiTokenShown ? srow(apiTokenShown.scope === "metrics" ? "New token (metrics only)" : "New token",
         "Copy it now: it is not shown again.",
-        h("div", { class: "row gap wrap" }, mono(apiTokenShown.token),
-          sbtn("Copy", () => navigator.clipboard?.writeText(apiTokenShown.token).then(() => toast("Copied.")).catch(() => toast("Copy failed; select it by hand."))))) : null,
+        h("div", { class: "row gap wrap" }, h("span", { class: "mono secret" }, apiTokenShown.token),
+          sbtn("Copy", () => copyToast(apiTokenShown.token)))) : null,
       srow("New token", null, h("div", { class: "row gap wrap" }, name,
         h("label", { class: "row gap small tapmin",
           title: "A metrics-only token can read /api/metrics and nothing else. Use it for Prometheus." },
@@ -1265,7 +1265,7 @@ function secAssistant(d) {
   const bridgeArgs = ["-y", "mcp-remote", url, ...(url.startsWith("http:") ? ["--allow-http"] : []), "--header", "Authorization:${AUTH_HEADER}"];
   const desktopSnippet = JSON.stringify({ mcpServers: { groundskeeper: { command: "npx", args: bridgeArgs, env: { AUTH_HEADER: `Bearer ${token}` } } } }, null, 2);
   const codeSnippet = `claude mcp add --transport http groundskeeper ${url} --header "Authorization: Bearer ${token}"`;
-  const copyBtn = (text, label = "Copy") => sbtn(label, () => navigator.clipboard?.writeText(text).then(() => toast("Copied.")).catch(() => toast("Copy failed; select it by hand.")));
+  const copyBtn = (text, label = "Copy") => sbtn(label, () => copyToast(text));
   const code = (text) => h("pre", { class: "mdcode", style: "margin:6px 0 0;white-space:pre-wrap;word-break:break-all" }, text);
   const step = (n, title, ...body) => h("div", { class: "srow stack" },
     h("div", { class: "stext" }, h("div", { class: "sname" }, `${n}. ${title}`), ...body));
@@ -1284,7 +1284,8 @@ function secAssistant(d) {
         h("div", { class: "row gap wrap", style: "margin-top:6px" },
           sbtn(m.enabled ? "New token…" : "Create a token", create, m.enabled ? "btn slim" : "btn pri"),
           m.enabled ? sbtn("Revoke", revoke) : null),
-        mcpShown ? h("div", { class: "row gap wrap", style: "margin-top:8px" }, mono(mcpShown), copyBtn(mcpShown)) : null),
+        mcpShown ? h("div", { class: "row gap wrap", style: "margin-top:8px" },
+          h("span", { class: "mono secret" }, mcpShown), copyBtn(mcpShown)) : null),
       step(2, "Add the panel to your assistant",
         h("p", { class: "shelp" }, "Address: ", mono(url), mcpShown ? null : ". The snippets below fill in your token once you have created one."),
         h("p", { class: "shelp", style: "margin-top:8px" }, h("b", null, "Claude Code"), " (terminal), one command:"),

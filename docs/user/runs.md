@@ -11,7 +11,8 @@ coming back across mows. Trends need two mows or more.
 ## A run
 
 Open a run for its stats (duration, distance, RTK share, coverage, gaps, battery and energy per 100 m²), replay
-with a scrubber, coverage by area, and:
+with a scrubber (Play draws the track as it goes; the Speed menu next to it runs 1× to 300× real time, hurrying
+through stretches where the robot stood still, or the whole run in about 30 s), coverage by area, and:
 
 - **Duration** is working time: a pause or a charging stop mid-plan is not counted, so a mow paused overnight and
   finished in the morning shows its real length (and pace). A break of half an hour or more shows underneath.

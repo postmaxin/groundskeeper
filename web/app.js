@@ -153,6 +153,8 @@ const state = {
   replayIndex: 0,
   replayTimer: null,
   replayOn: false,        // once Play or the slider is used, the run's track is drawn only up to the replay point
+  replaySpeed: readPref("replaySpeed", 60, (v) => [1, 10, 60, 300, 0].includes(v)),   // x real time; 0 = the whole run in ~30 s
+  replayT: null,          // the robot time a replay at a real speed has reached (between two samples)
   dataCache: null,
   fitted: false,
   imagery: null,          // { yard: {url, coordinates}, alignment, ref }
@@ -387,6 +389,8 @@ async function loadZones() {
     return;
   }
   state.mapData = data;
+  const nfar = (data.far || []).length;
+  if (nfar) toast(`${nfar} map shape${nfar > 1 ? "s" : ""} far from the yard left out of the view: see Map Studio.`);
   const map = state.map;
   map.addSource("zones", { type: "geojson", data: data.geojson });
   const kind = (k) => ["==", ["get", "kind"], k];
@@ -898,6 +902,37 @@ function toast(text) {
   clearTimeout(toast.t);
   toast.t = setTimeout(() => { el.hidden = true; }, 5000);
 }
+
+/* The clipboard API needs a secure context, and a panel opened at http://<lan address> is not one: there
+   navigator.clipboard is missing, so fall back to a selected textarea and the old copy command. */
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* not a secure context: fall back */ }
+  const ta = h("textarea", { style: "position:fixed;left:-9999px;top:0", "aria-hidden": "true", readonly: "" });
+  ta.value = text;
+  document.body.append(ta);
+  ta.select();
+  ta.setSelectionRange(0, text.length);   // iOS selects nothing with select() alone
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { /* nothing more to try */ }
+  ta.remove();
+  return ok;
+}
+/* Map shapes far from the rest of the yard (geo.yard_bounds) are left out of the map's view, the imagery and the
+   terrain. Say which, so the stray can be fixed or deleted in the Yarbo app. */
+const FAR_KIND = { areas: "area", nogozones: "no-go zone", novisionzones: "no-vision zone", elec_fence: "fence",
+                   pathways: "pathway", sidewalks: "sidewalk", deadends: "dead end", charging: "charging point",
+                   snowpiles: "snow pile" };
+function farNote(far) {
+  if (!far || !far.length) return null;
+  const what = far.map((f) => `${f.name || FAR_KIND[f.kind] || f.kind} (${f.km.toLocaleString()} km away)`).join(", ");
+  const why = "A shape on the robot's map far from the rest of your yard is left out of the map's view and of where "
+    + "imagery is fetched. Fix or delete it in the Yarbo app; Map Studio lists it.";
+  return h("p", { class: "small", style: `color:${AMBER}`, title: why },
+    h("b", null, "Left out, far from the yard: "), what, ". ", h("a", { href: "#studio" }, "Map Studio"));
+}
+
+const copyToast = async (text) =>
+  toast(await copyText(text) ? "Copied." : "Copy did not work here: select it by hand.");
 
 /* ------------------------------------------------------ imagery alignment */
 const M_PER_DEG = 111320;
@@ -1649,7 +1684,15 @@ function runDetail() {
     h("div", { class: "replay" },
       playButton(),
       h("input", { type: "range", id: "scrub", min: "0", max: String(Math.max(0, rows.length - 1)), value: String(state.replayIndex),
-                   "aria-label": "Replay position", oninput: (e) => { state.replayOn = true; setReplay(Number(e.target.value)); } })),
+                   "aria-label": "Replay position", oninput: (e) => { state.replayOn = true; state.replayT = null; setReplay(Number(e.target.value)); } }),
+      h("label", { class: "replayspeed",
+                    title: "Replay speed, times real time. Stretches where the robot stands still go by quickly. Whole run plays it in about 30 s." },
+        "Speed",
+        h("select", { id: "replayspeed", class: "field slim", "aria-label": "Replay speed",
+                      onchange: (e) => { state.replaySpeed = Number(e.target.value); writePref("replaySpeed", state.replaySpeed);
+                                         if (state.replayTimer) { stopPlay(); togglePlay(); } } },
+          [[1, "1×"], [10, "10×"], [60, "60×"], [300, "300×"], [0, "Whole run"]].map(([v, t]) =>
+            h("option", { value: String(v), selected: v === state.replaySpeed || null }, t))))),
     h("p", { class: "mono small", id: "replayinfo" }, replayText(replay, idx)),
     areas.length ? h("div", null, h("p", { class: "label", style: "margin-top:10px" }, "Coverage by area"),
       areas.map((a) => kv(a.name, `${num(a.coverage_pct_of_known)}% · ${num(a.covered_m2)} m² · gaps ${num(a.gap_m2, 1)} m²`)),
@@ -1888,14 +1931,15 @@ function drawCoverage() {
   drawRunTrack();
 }
 
-function setReplay(i) {
+// The replay point: row i, or `frac` of the way on to the next row (a replay at a real speed moves between samples).
+function setReplay(i, frac = 0) {
   const run = state.run;
   if (!run || !run.rows.length) return;
   state.replayIndex = Math.max(0, Math.min(i, run.rows.length - 1));
-  const r = run.rows[state.replayIndex];
+  const r = run.rows[state.replayIndex], n = frac > 0 ? run.rows[state.replayIndex + 1] : null;
   setSource("replay", { type: "FeatureCollection", features: [{ type: "Feature", properties: {},
-    geometry: { type: "Point", coordinates: [r[1], r[2]] } }] });
-  robot3dReplay(r);
+    geometry: { type: "Point", coordinates: n ? [r[1] + (n[1] - r[1]) * frac, r[2] + (n[2] - r[2]) * frac] : [r[1], r[2]] } }] });
+  robot3dReplay(r, n, frac);
   const idx = Object.fromEntries(run.fields.map((f, k) => [f, k]));
   const info = $("#replayinfo");
   if (info) info.textContent = replayText(r, idx);
@@ -1910,11 +1954,40 @@ function togglePlay() {
   if (!state.replayOn || state.replayIndex >= state.run.rows.length - 1) setReplay(0);     // a replay starts at the start
   state.replayOn = true;
   queueReplayTrack();
-  const step = Math.max(1, Math.round((state.run?.rows.length || 0) / 600));
-  state.replayTimer = setInterval(() => {
-    if (!state.run || state.replayIndex >= state.run.rows.length - 1) { stopPlay(); renderRuns(); return; }
-    setReplay(state.replayIndex + step);
-  }, 50);
+  state.replayT = null;                                  // picks up from the replay row
+  const speed = state.replaySpeed;
+  if (!speed) {                                          // the whole run in about 30 s
+    const step = Math.max(1, Math.round((state.run?.rows.length || 0) / 600));
+    state.replayTimer = setInterval(() => {
+      if (!state.run || state.replayIndex >= state.run.rows.length - 1) { stopPlay(); renderRuns(); return; }
+      setReplay(state.replayIndex + step);
+    }, 50);
+  } else {
+    // Robot time runs at `speed`. Where the robot stands still (parked, charging) or the samples stop (a break in the
+    // track) it runs far faster, and the robot waits at the last sample instead of sliding across the break.
+    const spAt = state.run.fields.indexOf("speed");
+    let last = performance.now();
+    state.replayTimer = setInterval(() => {
+      const rows = state.run && state.run.rows;
+      if (!rows || state.replayIndex >= rows.length - 1) { stopPlay(); renderRuns(); return; }
+      const now = performance.now(), dt = Math.min(1, (now - last) / 1000);      // a slow page keeps the pace
+      last = now;
+      let i = state.replayIndex, left = dt;
+      if (state.replayT === null || state.replayT < rows[i][0]) state.replayT = rows[i][0];
+      // Spend the tick sample by sample, each at its own rate, so a hurried stretch ends where the robot moves again.
+      while (left > 0 && i < rows.length - 1) {
+        const span = rows[i + 1][0] - rows[i][0];
+        const rate = span > TRACK_GAP_S || !(Math.abs(rows[i][spAt] || 0) > 0.03) ? Math.max(speed * 20, 600) : speed;
+        const need = (rows[i + 1][0] - state.replayT) / rate;
+        if (need > left) { state.replayT += left * rate; break; }
+        left -= Math.max(0, need);
+        state.replayT = rows[++i][0];
+      }
+      const n = rows[i + 1];
+      const frac = n && n[0] - rows[i][0] <= TRACK_GAP_S ? (state.replayT - rows[i][0]) / Math.max(1e-6, n[0] - rows[i][0]) : 0;
+      setReplay(i, Math.max(0, Math.min(1, frac)));
+    }, 50);
+  }
   $("#playbtn")?.replaceWith(playButton());
 }
 

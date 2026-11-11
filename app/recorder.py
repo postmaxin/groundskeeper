@@ -1223,10 +1223,18 @@ class Recorder:
                                      "in the Yarbo app); they start mows without the panel's run rules")
         except asyncio.TimeoutError:
             log.info("read_schedules: no reply")
-        bbox = geo.bounds(self.map_geojson)
+        bbox, far = self.yard_bounds()
+        if far:
+            log.warning("%d map shape(s) lie more than %.0f km from the yard and are left out of its outline",
+                        len(far), geo.FAR_M / 1000)
         if bbox:
             self.yard = await self.imagery.ensure_yard(geo.pad(bbox, 60))
         log.info("map refreshed: %d features, %d plans", len(self.map_geojson["features"]), len(self.plans))
+
+    def yard_bounds(self) -> tuple[list[float] | None, list[dict]]:
+        """The yard's [west, south, east, north] and the map shapes left out of it as too far away (geo.yard_bounds):
+        what the map opens on, where imagery and terrain are fetched for."""
+        return geo.yard_bounds(self.map_geojson, self.gps_ref) if self.map_geojson else (None, [])
 
     def _set_ref(self, data: dict) -> None:
         ref = data.get("ref") or {}

@@ -69,8 +69,9 @@ someone else on your network cannot claim the panel before you do. Sessions last
 
 The panel can let people sign in through an OpenID Connect provider you already run, such as Authentik, Keycloak
 or Authelia, or a hosted one like Google. It works like Grafana's generic OAuth sign-in, and the settings are named
-after Grafana's. Set them in the panel's environment (`docker run -e`, compose or the Helm chart's `env`/`envFrom`;
-keep the secret in a secret):
+after Grafana's. Set them in the panel's environment (`docker run -e`, compose or the Helm chart's `env`/`envFrom`; keep the
+secret out of any file you share). They are read from the environment only, on purpose: they are not on the
+Settings page, so nobody who is signed in can widen who may sign in:
 
 | Setting | What it is |
 |---|---|
@@ -94,7 +95,12 @@ keep the secret in a secret):
   because that is where the provider sends you back.
 - **Sessions** are the same 30-day sessions the password gives. Signing out ends the panel's session, not the
   provider's. The event log names who signed in, and anyone turned away.
-- **Provider down?** Set `PANEL_PASSWORD` back on (and, if you never set one, the log shows a setup code).
+- **Locked out because the provider is down or wrong?** This can only happen once you turned the password off.
+  Remove `PANEL_PASSWORD=off` from the panel's environment (or set it to anything else) and restart the panel: the
+  password form is back, and your old password works again. If you never set one, the panel's log
+  (`docker logs groundskeeper`) shows a one-time setup code, as on a first install. If the panel won't start at all,
+  its log says which `OIDC_*` setting it refused: fix it, or remove `OIDC_ISSUER` as well to turn single sign-on
+  off. Leave `PANEL_PASSWORD` unset until single sign-on works, then turn it off.
 
 ## Wi-Fi survey
 

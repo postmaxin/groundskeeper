@@ -14,6 +14,13 @@ The aerial photo under the robot's map. Set in [Settings → Map imagery](#setti
 - **Align:** Align on the map (in this section, or **Align** next to the imagery credit on Live's map). Pick a spot on the robot's map, then the same spot in the photo. One pair
   fixes the shift; two or more fix rotation; three or more fix scale too.
 
+## Where the panel thinks your yard is
+
+From the robot's own map: the shapes around the robot's map origin. A shape more than 2 km from the rest (for example a
+charging point with an empty location) is left out, so the map still opens on your yard and the right sources are
+listed. The panel names it here, on Live and in [Map Studio](#studio) as **km from the yard**; fix or delete it in the
+Yarbo app. If a source you expected says it **does not cover this yard**, look for that note first.
+
 ## How sharp is sharp?
 
 The number on every card (and in the corner of each sample) is how much ground one pixel covers. **Smaller is

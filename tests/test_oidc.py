@@ -302,7 +302,7 @@ def test_userinfo_is_read_when_the_token_lacks_what_decides(panel):
 
 
 @pytest.mark.parametrize("token, info", [
-    ({"groups": [], "email": "tess@other.example"}, {"groups": ["lawn admins"]}),           # an empty list in the token is the answer
+    ({"groups": [], "email": "tess@other.example"}, {"groups": ["lawn admins"]}),       # [] in the token is the answer
     ({"groups": None, "email": "tess@other.example"}, {"groups": ["lawn admins"]}),
     ({"groups": {"lawn admins": True}, "email": "tess@other.example"}, {"groups": ["lawn admins"]}),
     ({"groups": [], "email_verified": None}, {"email": "tess@example.org", "email_verified": True}),
@@ -477,7 +477,7 @@ def test_an_https_panel_url_makes_the_cookies_secure_behind_a_quiet_proxy(panel)
     assert "secure" in cookie_attrs(start.headers["set-cookie"])
     back = p.idp.authorize(start.headers["location"])
     flow = start.cookies.get(oidc.COOKIE)
-    p.c.cookies.set(oidc.COOKIE, flow, domain="panel.test", path=oidc.COOKIE_PATH)   # the client won't resend it on http
+    p.c.cookies.set(oidc.COOKIE, flow, domain="panel.test", path=oidc.COOKIE_PATH)   # not resent on http
     done = p.c.get("/api/auth/oidc/callback?" + urlencode(back), follow_redirects=False)
     assert done.headers["location"] == "/"
     session = [c for c in done.headers.get_list("set-cookie") if c.startswith(auth.COOKIE + "=")]
@@ -563,6 +563,27 @@ def test_with_the_password_off_there_is_no_setup_code_and_no_password_sign_in(pa
     assert sign_in(p).headers["location"] == "/" and signed_in(p)
     r = p.c.post("/api/auth/password", json={"current": "correct horse", "password": "battery staple"})
     assert r.status_code == 403 and r.json()["detail"] == off
+
+
+def test_an_oidc_session_is_a_person_and_an_api_token_still_is_not(panel):
+    p = panel()                                                   # the password is still on, so it can be changed
+    p.auth.set_password("correct horse")
+    assert sign_in(p).headers["location"] == "/"
+    made = p.c.post("/api/auth/tokens", json={"name": "script"})
+    assert made.status_code == 200                                # signed in through OIDC: may make a token
+    bot = TestClient(main.app, base_url=PANEL, headers={"Authorization": f"Bearer {made.json()['token']}"})
+    assert bot.get("/api/auth/tokens").status_code == 200         # the token reads...
+    for r in (bot.post("/api/auth/tokens", json={"name": "more"}),
+              bot.delete(f"/api/auth/tokens/{made.json()['id']}"),
+              bot.post("/api/auth/password", json={"current": "correct horse", "password": "battery staple"}),
+              bot.post("/api/auth/signout_all")):
+        assert r.status_code == 403                                                        # ...and changes nothing
+    assert len(p.c.get("/api/auth/tokens").json()["tokens"]) == 1 and p.auth.check_password("correct horse")
+
+    assert p.c.delete(f"/api/auth/tokens/{made.json()['id']}").status_code == 200       # the OIDC session may revoke
+    assert bot.get("/api/auth/tokens").status_code == 401
+    r = p.c.post("/api/auth/password", json={"current": "correct horse", "password": "battery staple"})
+    assert r.status_code == 200 and p.auth.check_password("battery staple")              # and change the password
 
 
 def test_the_sign_in_page_learns_what_to_show(panel):

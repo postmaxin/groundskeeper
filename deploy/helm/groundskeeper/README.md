@@ -4,10 +4,15 @@ Run [Groundskeeper](https://github.com/Groundskeeper-robot/groundskeeper) on Kub
 Service, and a PersistentVolumeClaim for its `/data`. Everything site-specific (the robot's address, Home Assistant, Frigate,
 imagery) is configured in the panel's **Settings** UI after it starts — not in `values.yaml`.
 
+> **Community-maintained.** This chart is kept up by community contributors who run the panel on Kubernetes. Open an
+> issue for a problem with the chart and say it is about the Helm chart.
+
 > Groundskeeper controls a machine with blades and stores the location of a home. Control, map writing, guard
 > auto-resume and assistant commands are **off** on a new install; turn them on deliberately in **Settings → Safety**.
 
 ## Install
+
+From a checkout of this repository (the chart is not published to a chart repository), with Helm 3:
 
 ```bash
 helm install groundskeeper ./deploy/helm/groundskeeper \
@@ -82,3 +87,8 @@ helm upgrade <release> deploy/helm/groundskeeper
 ```
 
 Only upgrades from 0.1.0 need this; a fresh install is unaffected.
+- **Your data survives `helm uninstall`.** The chart-created PVC carries `helm.sh/resource-policy: keep`, so
+  uninstalling leaves it in place. To reinstall onto it, set `persistence.existingClaim` to its name; to throw the
+  data away, delete the PVC yourself.
+- **A release bumps the chart too.** `appVersion` in `Chart.yaml` is the image the chart runs by default;
+  `tests/test_helm_chart.py` fails until it equals `app/version.py`.
