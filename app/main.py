@@ -1699,7 +1699,8 @@ async def control_catalogue(request: Request):
 
 def _actor(request: Request) -> str:
     """Who a command is from, for the interlocks and the audit log: a program with an API token, or a person."""
-    return "token" if getattr(request.state, "who", None) in ("token", "metrics") else "user"     # metrics: never reaches here; strictest if it did
+    who = getattr(request.state, "who", None)
+    return "token" if who in ("token", "metrics") else "user"     # metrics never gets here; the strict actor if it did
 
 
 @app.post("/api/control/preview")
