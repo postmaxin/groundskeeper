@@ -89,8 +89,8 @@ def test_emergency_tap_ignores_a_too_quick_second_tap_sends_once_after_the_gap_a
     out = subprocess.run(["node", str(ROOT / "tests" / "emerg_flow.cjs")], capture_output=True, text=True, check=True)
     r = json.loads(out.stdout)
     assert r["armed"] is True                                          # the first tap arms and sends nothing
-    assert r["tooQuick"] == {"sent": 0, "stillArmed": True}            # 100 ms later: a bounce, ignored, still armed
-    assert r["afterGap"]["sent"] == [["/api/control/send", "resume", True]]   # 450 ms after arming: sent once
+    assert r["tooQuick"] == {"sent": 0, "stillArmed": True}            # 500 ms on: a double-click, ignored
+    assert r["afterGap"]["sent"] == [["/api/control/send", "resume", True]]   # 1.05 s after arming: sent once
     assert r["afterGap"]["armAfter"] is None
     assert r["expired"]["arm"] is None                                 # an arm left for 4 s lapses
     assert r["rearmNoSend"] is True                                    # so the next tap only arms again

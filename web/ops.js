@@ -276,17 +276,18 @@ function emergencyCard(s) {
       : h("p", { class: "muted small", style: "margin:8px 0 0" }, why || "These need two taps: the first arms the button (it turns amber), the second sends."));
 }
 
-// The second tap must come at least this long after the first: a held or bouncing key is not a decision.
-const ARM_MIN_GAP_MS = 400;
+// The second tap must come at least this long after the first: a bounce, a held key or a habitual double-click (500 ms
+// is the usual system double-click time) is not a decision.
+const ARM_MIN_GAP_MS = 600;
 async function emergencyTap(cmd, label) {
   // Never leave a two-tap button focused, on any tap (an ignored one too): Space or Enter on it would be the next tap.
   const f = document.activeElement;
   if (f && f.closest && f.closest(".ecard")) f.blur();
   const a = ops.arm;
   // A bounce or key repeat, not a second tap: ignore it, and the button stays armed.
-  if (a && a.cmd === cmd && Date.now() - (a.until - 4000) < ARM_MIN_GAP_MS) return;
+  if (a && a.cmd === cmd && Date.now() - a.at < ARM_MIN_GAP_MS) return;
   if (!a || a.cmd !== cmd || Date.now() > a.until) {
-    ops.arm = { cmd, until: Date.now() + 4000 };
+    ops.arm = { cmd, at: Date.now(), until: Date.now() + 4000 };
     refreshLive();
     setTimeout(() => { if (ops.arm && ops.arm.cmd === cmd && Date.now() >= ops.arm.until) { ops.arm = null; refreshLive(); } }, 4100);
     return;

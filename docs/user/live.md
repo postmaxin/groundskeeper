@@ -9,7 +9,7 @@ the foot; the map becomes a small card in the panel. The panel then starts with 
 a big red **Pause** (it turns into **Resume** while the plan is paused), with **Stop** and **Return to dock** under
 it, and the small map right under them. Each needs two taps: the first arms it for 4 seconds (it turns amber and says "Tap again"), the second sends. They go through the same checks as the
 Control card and need control on. Once a button is armed, keyboard focus leaves it, so a stray Space or Enter cannot
-send it, and a second tap within 0.4 s of the first is ignored as a bounce or a held key.
+send it, and a second tap within 0.6 s of the first is ignored as a bounce, a held key or a double-click.
 Drawing camera coverage and aligning the imagery switch back to the big map while
 they last. When no camera's coverage holds the robot (it has driven out of every camera's view, or no position yet),
 the big slot shows the map again and the camera comes back when the robot drives into view; both changes wait 10 s so

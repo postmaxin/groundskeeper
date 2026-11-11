@@ -31,8 +31,8 @@ const runTimers = () => { for (const t of timers.splice(0)) if (t.at <= now) t.f
 (async () => {
   const out = {};
   await tap("resume"); out.armed = !!sandbox.ops.arm && sent.length === 0;
-  now += 100; await tap("resume"); out.tooQuick = { sent: sent.length, stillArmed: !!sandbox.ops.arm };
-  now += 350; await tap("resume"); out.afterGap = { sent: sent.slice(), armAfter: sandbox.ops.arm };
+  now += 500; await tap("resume"); out.tooQuick = { sent: sent.length, stillArmed: !!sandbox.ops.arm };
+  now += 550; await tap("resume"); out.afterGap = { sent: sent.slice(), armAfter: sandbox.ops.arm };
   await tap("stop"); now += 4200; runTimers(); out.expired = { arm: sandbox.ops.arm };
   await tap("stop"); out.rearmNoSend = sent.length === 1 && !!sandbox.ops.arm;
   out.blurs = blurred;
