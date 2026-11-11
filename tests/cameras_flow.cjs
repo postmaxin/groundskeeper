@@ -113,6 +113,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   mark("join-operation-error"); sandbox.camerasOpen(); await settle(); phase();
   knobs.joinFail = { code: "INVALID_OPERATION", message: "token=007tok key=k" };
   mark("join-sdk-code"); sandbox.camerasOpen(); await settle(); phase();
+  knobs.joinFail = { name: "AbortError", code: 20, message: "" };      // a DOMException also has a legacy numeric code
+  mark("join-abort-error"); sandbox.camerasOpen(); await settle(); phase();
   knobs.joinFail = { name: "Error", message: "x".repeat(300) };
   mark("join-long"); sandbox.camerasOpen(); await settle(); phase();
   knobs.joinFail = null; sandbox.camerasStop(); await settle();

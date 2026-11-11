@@ -120,6 +120,8 @@ def test_a_failed_join_says_which_step_failed_and_why_without_secrets():
     seg = segment(calls, "join-sdk-code")                               # an SDK error shows its code, never its message
     assert ["phase", "error", "Joining failed: INVALID_OPERATION"] in seg
     assert "007tok" not in json.dumps([c for c in seg if c[0] == "phase"])
+    seg = segment(calls, "join-abort-error")                            # a numeric DOMException code is not an Agora code
+    assert ["phase", "error", "Joining failed: AbortError"] in seg
     long = next(c for c in segment(calls, "join-long") if c[0] == "phase")
     assert long[2].startswith("Joining failed: xxx") and len(long[2]) <= 100
     seg = segment(calls, "token-502")                                   # the server's fixed phrase, as before

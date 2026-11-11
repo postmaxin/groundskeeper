@@ -189,12 +189,12 @@ function camerasQuietSdk(AgoraRTC) {
 const camerasBytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
 // A short, safe reason for the screen, with the step that failed: our own errors say what they mean; an SDK error is
-// shown by its code only; an error with no message (a DOMException from the browser's crypto, say) by its name.
+// shown by its (string) code only, not a DOMException's legacy number; an error with no message (a DOMException from the browser's crypto, say) by its name.
 // Never the token, key, salt, channel or App ID, and never more than CAM_WHY_MAX characters.
 const CAM_WHY_MAX = 100;
 function camerasWhy(e, step) {
   let reason = "";
-  if (e && e.code && !e.status) reason = String(e.code);
+  if (e && typeof e.code === "string" && e.code && !e.status) reason = String(e.code);
   else if (e && e.message) reason = String(e.message);
   else if (e && e.name) reason = String(e.name);
   const text = reason ? `${step} failed: ${reason}` : `${step} failed.`;
