@@ -61,7 +61,7 @@ are pink, edge passes violet.
   the tile is open your browser also asks the panel for a **keep-awake** every 4 seconds, the same
   `set_working_state` the Yarbo app sends while it is open: the robot publishes video only while someone does. Each
   request makes the panel send exactly one, only for a signed-in person, only with Robot video and Control on, so
-  closing the tile (or the tab) stops it; the Events list notes when it starts and when it stops, not each one. The
+  closing the tile (or the tab) stops it (a beat already on its way can still arrive just after Close); the Events list notes when it starts and when it stops, not each one. The
   Yarbo app, in turn, switches the cameras off when it goes to the background, so opening the app and then leaving it
   stops the panel's video until you reopen the tile (**Try again**). The video library needs `*.agora.io` and
   `*.sd-rtn.com` allowed in ad blockers and privacy extensions; if one blocks them, the tile shows an error. The
@@ -72,7 +72,7 @@ are pink, edge passes violet.
   usage statistics or upload logs, and switches off its remote configuration (which could turn those back on); a
   network capture to confirm this is pending (issue #35). Agora's servers see the panel's address (the `Origin` and
   `Referer` of the SDK's requests) and your browser's address. The stream's secret is longer than Agora's Web SDK can
-  wrap, so the panel puts it into the SDK's join message itself, unwrapped inside the TLS connection to Agora, whose
+  wrap, so the panel puts it into the SDK's join message and access-point request itself, unwrapped inside the TLS connections to Agora, whose
   servers decrypt the stream for your browser anyway; this is a stopgap until Agora fixes their SDK (issue #46). The SDK also keeps a few items of its own in this
   browser's storage; the panel clears them when the SDK has loaded and when the tile leaves the channel. The demo shows
   a placeholder.

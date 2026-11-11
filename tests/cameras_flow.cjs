@@ -97,7 +97,7 @@ const sandbox = {
 };
 vm.createContext(sandbox);
 const tail = "\nthis.cams = cams; this.camerasCard = camerasCard; this.camerasOpen = camerasOpen;" +
-  " this.camerasPick = camerasPick; this.camerasStop = camerasStop; this.camerasStart = camerasStart;";
+  " this.camerasPick = camerasPick; this.camerasStop = camerasStop; this.camerasStart = camerasStart; this.camerasSwapInstall = camerasSwapInstall; this.camerasJoinSwapped = camerasJoinSwapped; this.camerasLeave = camerasLeave;";
 vm.runInContext(fs.readFileSync(process.argv[2], "utf8") + tail, sandbox);
 
 const tick = () => new Promise((r) => setImmediate(r));
@@ -340,5 +340,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   relA(); knobs.joinGate = null; await settle(); restored();
   afterJoin();                                                        // a reconnect of B's client: B's secret, not A's
   sandbox.camerasStop(); await settle(); restored();
+  // 19. The helpers on their own, with no start around them (so nothing but their own lines can clean up after them).
+  const direct = (name, client) => { mark(name); return sandbox.camerasJoinSwapped(client, [], "DIRECTSECRET"); };
+  const sends = () => { const ws = new sandbox.WebSocket(); ws.send(joinMessage(WRAPPED)); };
+  let r1 = "resolved"; try { await direct("direct-join-fails", { join: async () => { throw new Error("boom"); } }); } catch (e) { r1 = e.message; }
+  calls.push(["direct", r1]); restored();                              // a failed join took its own wrapper off
+  let r2 = "resolved"; try { await direct("direct-no-frame", { join: async () => {} }); } catch (e) { r2 = e.message; }
+  calls.push(["direct", r2]); restored();                              // no secret field: error, and nothing left behind
+  await direct("direct-ok", { join: async () => { sends(); } });
+  calls.push(["direct", "joined"]); restored();                        // kept for the client's life ...
+  sandbox.camerasLeave(); restored();                                  // ... and gone on leave
+  // A wrapper that cannot be restored (someone wrapped over it) must still go quiet once removed.
+  mark("direct-wrapped-over");
+  sandbox.camerasSwapInstall("OVERSECRET");
+  const inner = sandbox.WebSocket.prototype.send;
+  sandbox.WebSocket.prototype.send = function (d) { return inner.call(this, d); };    // another script wrapping on top
+  sandbox.camerasLeave();
+  sends();                                                             // must go out as the SDK made it
+  sandbox.WebSocket.prototype.send = wsSendOriginal;
   console.log(JSON.stringify(calls));
 })();

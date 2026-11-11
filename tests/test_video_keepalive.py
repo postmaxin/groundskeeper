@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from app import auth, control, link as link_mod, main, mcp_server, ops as ops_mod, recorder
 from app.link import NoRoute, RobotLink
 from app.recorder import Recorder
+from app.transport_local import ReadOnlyViolation
 from app.store import Store
 from tests.fakelink import FakeLink
 from tests.test_link import FakeCloud as LinkCloud, FakeRec as LinkRec
@@ -31,7 +32,7 @@ def t(tmp_path, monkeypatch):
     gate.announce()
     cloud = FakeCloud()
     clock = [10_000.0]
-    monkeypatch.setattr(control.time, "time", lambda: clock[0])
+    monkeypatch.setattr(control.time, "monotonic", lambda: clock[0])
 
     async def context(args):
         return good_ctx()
@@ -261,7 +262,7 @@ def test_the_link_refuses_any_keep_awake_payload_but_state_1(tmp_path, payload):
 
 def test_the_run_command_door_still_refuses_it(tmp_path):
     lk, rec, cl, _ = _link(tmp_path)
-    with pytest.raises(NoRoute):
+    with pytest.raises((NoRoute, ReadOnlyViolation)):
         lk.command("set_working_state", {"state": 1})
     assert cl.sent == []
 
@@ -277,14 +278,24 @@ def test_only_the_controller_uses_the_keep_awake_door():
 
 
 # -- the panel's own beats are not the phone app --------------------------------------------------------------------
-def _recorder(tmp_path):
+def _recorder(tmp_path, trusted=True):
     r = Recorder.__new__(Recorder)
     r.store, r.session, r._sent, r.foreign_cmd_at, r.foreign_cmds = Store(str(tmp_path)), None, {}, 0.0, {}
     r._wifi_foreign_at, r._robot_at, r.loop = 0.0, 0.0, None
+    r._own()["trusted"] = trusted               # most tests are about the matching; see the self-check tests
     return r
 
 
+def deliver(o, r, topic, data, ts):
+    """A cloud message the way the app handles it: ops decides once and hands its verdict to the recorder's queue."""
+    o._from_cloud(topic, data, ts)
+    queued = r._queued.pop()
+    r._handle(*queued)
+
+
 def _ops(rec, cloud_state="connected"):
+    rec._queued = []
+    rec._from_thread = lambda topic, data, ts, ours=None: rec._queued.append((topic, data, ts, ours))
     o = ops_mod.Ops.__new__(ops_mod.Ops)
     o.rec, o.phone_app_at = rec, 0.0
     o.cloud = SimpleNamespace(state=cloud_state, connected_since=1.0)
@@ -301,8 +312,7 @@ def test_the_panels_own_echo_is_ours_in_both_the_recorder_and_the_phone_app_chec
     o = _ops(r)
     r.mark_sent(name)
     now = r._sent[name]
-    o._from_cloud(f"snowbot/SN/app/{name}", {"state": 1}, now + 0.2)          # the cloud thread's look at it
-    r._handle(f"snowbot/SN/app/{name}", {"state": 1}, now + 0.2)               # the recorder's, later: the same answer
+    deliver(o, r, f"snowbot/SN/app/{name}", {"state": 1}, now + 0.2)
     assert o.phone_app_at == 0.0 and seen(r, name) == []
 
 
@@ -314,13 +324,11 @@ def test_the_real_apps_beat_still_counts_while_the_panel_beats_every_four_second
     monkeypatch.setattr(recorder.time, "time", lambda: clock[0])
     for _ in range(4):                                                        # the panel: a send and its echo every 4 s
         r.mark_sent(name)
-        o._from_cloud(f"snowbot/SN/app/{name}", {"state": 1}, clock[0] + 0.3)
-        r._handle(f"snowbot/SN/app/{name}", {"state": 1}, clock[0] + 0.3)
+        deliver(o, r, f"snowbot/SN/app/{name}", {"state": 1}, clock[0] + 0.3)
         clock[0] += 4
     assert o.phone_app_at == 0.0 and seen(r, name) == []
     app_at = clock[0] - 4 + 1.5                                                # the app's, 1.5 s after ours
-    o._from_cloud(f"snowbot/SN/app/{name}", {"state": 1}, app_at)
-    r._handle(f"snowbot/SN/app/{name}", {"state": 1}, app_at)
+    deliver(o, r, f"snowbot/SN/app/{name}", {"state": 1}, app_at)
     assert o.phone_app_at == app_at                                            # the interlock sees the real app
     assert len(seen(r, name)) == 1                                             # and the recorder logs another client
 
@@ -329,9 +337,9 @@ def test_one_send_accounts_for_one_echo_only(tmp_path):
     r = _recorder(tmp_path)
     r.mark_sent("set_working_state")
     t = r._sent["set_working_state"]
-    assert r.own_echo("set_working_state", t + 0.1, {"state": 1}) is True
-    assert r.own_echo("set_working_state", t + 0.1, {"state": 1}) is True  # asked again: the same answer
-    assert r.own_echo("set_working_state", t + 0.9, {"state": 1}) is False  # a second message is somebody else's
+    assert r.own_echo("set_working_state", t + 0.1, {"state": 1}) is True   # the first of two with the same timestamp
+    assert r.own_echo("set_working_state", t + 0.1, {"state": 1}) is False  # equal timestamps, two messages: one credit
+    assert r.own_echo("set_working_state", t + 0.9, {"state": 1}) is False  # a later message is somebody else's
     r.mark_sent("set_working_state")
     t2 = r._sent["set_working_state"]
     assert r.own_echo("set_working_state", t2 + 7, {"state": 1}) is False  # an echo that never came ages out
@@ -364,7 +372,7 @@ def _controller(tmp_path, monkeypatch, clock):
     from tests.test_phase2 import make_controller
     store, cloud, c = make_controller(tmp_path, enabled=True)
     store.set_setting("robot_video_enabled", True)
-    monkeypatch.setattr(control.time, "time", lambda: clock[0])
+    monkeypatch.setattr(control.time, "monotonic", lambda: clock[0])
     return store, cloud, c
 
 
@@ -429,7 +437,7 @@ def test_a_send_that_fails_takes_its_mark_back(tmp_path):
     lk = RobotLink(LinkRec(), Failing(), Store(str(tmp_path)), mark_sent=r.mark_sent)
     with pytest.raises(ConnectionError):
         lk.keep_awake_beat({"state": 1})
-    assert r._sent["set_working_state"] == 1.0 and not r._own_beats["set_working_state"]
+    assert r._sent["set_working_state"] == 1.0 and not r._own()["beats"]["set_working_state"]
     assert r.own_echo("set_working_state", __import__("time").time(), {"state": 1}) is False
 
 
@@ -448,8 +456,7 @@ def test_the_apps_camera_off_before_our_camera_on_echo_is_not_ours_and_leaves_ou
     monkeypatch.setattr(recorder.time, "time", lambda: 1000.0)
     r.mark_sent("smart_vision_control")
     name = "smart_vision_control"
-    o._from_cloud(f"snowbot/SN/app/{name}", {"state": 0}, 1000.2)           # the app switching the cameras off
-    r._handle(f"snowbot/SN/app/{name}", {"state": 0}, 1000.2)
+    deliver(o, r, f"snowbot/SN/app/{name}", {"state": 0}, 1000.2)
     assert o.phone_app_at == 1000.2 and len(seen(r, name)) == 1             # seen as the app's, not hidden
     assert r.own_echo(name, 1000.4, {"state": 1}) is True                    # our send was still waiting for its echo
     for odd in ({"state": 2}, {"state": True}, {"state": "1"}, {}):
@@ -494,3 +501,160 @@ def test_a_person_check_wants_a_session_cookie_not_a_bearer_token(t, monkeypatch
         main._person(bearer)
     assert e.value.status_code == 403
     assert asyncio.run(t.controller.keep_awake(actor=main._actor(bearer)))["sent"] is False
+
+
+# -- review: the cloud may not echo our own publishes: the matching must fail towards "the app" ------------------------
+def _beat_both(o, r, clock, app_offset, rounds, echo):
+    """The panel and the Yarbo app each beat every 4 s. `echo`: the cloud sends the panel's own beat back (at once)."""
+    app_seen = []
+    for _ in range(rounds):
+        r.mark_sent("set_working_state")
+        if echo:
+            deliver(o, r, "snowbot/SN/app/set_working_state", {"state": 1}, clock[0] + 0.05)
+        before = o.phone_app_at
+        deliver(o, r, "snowbot/SN/app/set_working_state", {"state": 1}, clock[0] + app_offset)     # the real app's beat
+        app_seen.append(o.phone_app_at != before)
+        clock[0] += 4
+    return app_seen
+
+
+def test_without_an_echo_the_apps_beats_are_seen_and_the_interlock_blocks(tmp_path, monkeypatch):
+    clock = [5000.0]
+    monkeypatch.setattr(recorder.time, "time", lambda: clock[0])
+    r = _recorder(tmp_path, trusted=False)                 # a fresh start: not trusted until echoes have been seen
+    o = _ops(r)
+    r.app_stream_at = 0.0
+    seen_ = _beat_both(o, r, clock, 1.0, 15, echo=False)   # the app lands 1 s after ours, inside the 1.5 s window
+    assert all(seen_)                                       # every one of the app's beats counted as the app's
+    assert o.phone_app_active(60) is True                   # so automatic starts stay blocked
+
+
+def test_the_matching_gives_up_after_three_credits_expire_and_says_so_once(tmp_path, monkeypatch):
+    clock = [5000.0]
+    monkeypatch.setattr(recorder.time, "time", lambda: clock[0])
+    r = _recorder(tmp_path, trusted=True)                  # it had been trusted ...
+    o = _ops(r)
+    for _ in range(recorder.OWN_UNMATCHED_MAX + 1):        # ... then the echoes stop coming
+        r.mark_sent("set_working_state")
+        clock[0] += 4
+    r.mark_sent("set_working_state")
+    assert r._own()["trusted"] is False
+    deliver(o, r, "snowbot/SN/app/set_working_state", {"state": 1}, clock[0] + 0.3)
+    assert o.phone_app_at == clock[0] + 0.3                 # even a message right after our send counts as the app's
+    notes = [e for e in r.store.events(20) if e["kind"] == "cloud_echo_missing"]
+    r.mark_sent("set_working_state")
+    clock[0] += 4
+    r.mark_sent("set_working_state")
+    assert len([e for e in r.store.events(20) if e["kind"] == "cloud_echo_missing"]) == len(notes) == 1
+    assert "count as the phone app" in notes[0]["detail"]
+
+
+def test_an_echo_that_comes_back_restores_the_matching(tmp_path, monkeypatch):
+    clock = [5000.0]
+    monkeypatch.setattr(recorder.time, "time", lambda: clock[0])
+    r = _recorder(tmp_path, trusted=False)
+    o = _ops(r)
+    stamps = []
+    for _ in range(recorder.OWN_TRUST_AFTER):               # quick echoes, one per send
+        r.mark_sent("set_working_state")
+        deliver(o, r, "snowbot/SN/app/set_working_state", {"state": 1}, clock[0] + 0.05)
+        stamps.append((clock[0] + 0.05, o.phone_app_at))
+        clock[0] += 4
+    assert r._own()["trusted"] is True
+    assert all(at == seen_at for at, seen_at in stamps[:-1])        # until trusted each counted as possibly the app's
+    assert stamps[-1][1] == stamps[-2][0]                            # the one that earned the trust was ours
+    r.mark_sent("set_working_state")
+    last = o.phone_app_at
+    deliver(o, r, "snowbot/SN/app/set_working_state", {"state": 1}, clock[0] + 0.05)
+    assert o.phone_app_at == last                                    # trusted: ours, not the app's
+
+
+def test_an_app_beat_that_lands_in_the_window_does_not_earn_trust(tmp_path, monkeypatch):
+    clock = [5000.0]
+    monkeypatch.setattr(recorder.time, "time", lambda: clock[0])
+    r = _recorder(tmp_path, trusted=False)
+    o = _ops(r)
+    for _ in range(6):
+        r.mark_sent("set_working_state")
+        deliver(o, r, "snowbot/SN/app/set_working_state", {"state": 1}, clock[0] + 1.0)   # slower than an echo
+        clock[0] += 4
+    assert r._own()["trusted"] is False and o.phone_app_at == clock[0] - 4 + 1.0
+
+
+def test_the_window_for_the_two_commands_is_short_and_named():
+    assert recorder.OWN_ECHO_COUNTED_S == 1.5 and recorder.OWN_ECHO_COUNTED_S < recorder.OWN_ECHO_S
+    assert recorder.OWN_UNMATCHED_MAX == 3
+
+
+def test_two_messages_with_the_same_timestamp_are_each_decided_on_their_own(tmp_path, monkeypatch):
+    clock = [5000.0]
+    monkeypatch.setattr(recorder.time, "time", lambda: clock[0])
+    r = _recorder(tmp_path)
+    o = _ops(r)
+    r.mark_sent("set_working_state")
+    deliver(o, r, "snowbot/SN/app/set_working_state", {"state": 1}, 5000.1)       # ours
+    assert o.phone_app_at == 0.0
+    deliver(o, r, "snowbot/SN/app/set_working_state", {"state": 1}, 5000.1)       # the app, the very same timestamp
+    assert o.phone_app_at == 5000.1
+    assert len([e for e in r.store.events(20) if e["kind"] == "new_command_seen"]) == 1
+
+
+def test_a_local_message_without_a_verdict_is_decided_once_by_the_recorder(tmp_path, monkeypatch):
+    r = _recorder(tmp_path)
+    monkeypatch.setattr(recorder.time, "time", lambda: 1000.0)
+    r.mark_sent("smart_vision_control")
+    r._handle("snowbot/SN/app/smart_vision_control", {"state": 1}, 1000.1)         # no ops in front of it
+    assert [e for e in r.store.events(20) if e["kind"] == "new_command_seen"] == []
+
+
+def test_a_publish_the_cloud_refuses_raises_so_the_mark_is_undone(tmp_path):
+    import threading
+    from app.cloud import CloudTransport
+    r = _recorder(tmp_path)
+    c = CloudTransport.__new__(CloudTransport)
+    c._lock, c.sn, c.published, c.state, c.connected = threading.Lock(), "SN", 0, "connected", True
+
+    class Client:
+        def __init__(self, rc):
+            self.rc = rc
+
+        def publish(self, topic, payload):
+            return SimpleNamespace(rc=self.rc)
+
+    c._mqtt = Client(4)                                     # MQTT_ERR_NO_CONN
+    lk = RobotLink(LinkRec(), c, Store(str(tmp_path)), mark_sent=r.mark_sent)
+    with pytest.raises(ConnectionError):
+        lk.keep_awake_beat({"state": 1})
+    assert c.published == 0 and not r._own()["beats"]["set_working_state"] and "set_working_state" not in r._sent
+    c._mqtt = Client(0)
+    assert lk.keep_awake_beat({"state": 1}) == "cloud" and c.published == 1
+
+
+def test_a_beat_does_not_replace_the_links_last_command(tmp_path):
+    lk, rec, cl, _ = _link(tmp_path)
+    lk.command("pause", {})
+    lk.keep_awake_beat({"state": 1})
+    assert lk.last_command["cmd"] == "pause"
+
+
+def test_the_local_broker_takes_the_keep_awake_only_with_state_1():
+    from app.transport_local import check_command
+    check_command("set_working_state", {"state": 1})
+    for bad in (None, {}, {"state": 0}, {"state": True}, {"state": 1, "x": 2}):
+        with pytest.raises(ReadOnlyViolation):
+            check_command("set_working_state", bad)
+
+
+@pytest.mark.parametrize("who, actor", [("session", "user"), ("open", "user"), ("internal", "token"),
+                                        ("signed", "token"), ("token", "token"), ("metrics", "token"),
+                                        (None, "token")])
+def test_only_a_session_or_an_open_panel_is_a_person(who, actor):
+    assert main._actor(SimpleNamespace(state=SimpleNamespace(who=who))) == actor
+
+
+def test_the_rate_limit_ignores_the_wall_clock(tmp_path, monkeypatch):
+    store, cloud, c = _controller(tmp_path, monkeypatch, [100.0])     # monotonic stands still ...
+    monkeypatch.setattr(control.time, "time", lambda: 1.0)           # ... while the wall clock jumps about
+    assert asyncio.run(c.keep_awake())["sent"] is True
+    monkeypatch.setattr(control.time, "time", lambda: 10 ** 9)
+    assert asyncio.run(c.keep_awake()) == {"sent": False, "limited": True}

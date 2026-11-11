@@ -133,7 +133,7 @@ exponentially from 5 s to 5 min. Sign-in is interactive and the password is neve
 `DATA_DIR` with owner-only permissions.
 
 ### 5.4 Keep-awake
-The phone app sends `set_working_state {"state":1}` about every 10 s while it is open. Local reads are answered
+The phone app sends `set_working_state {"state":1}` every few seconds (about 4 s, seen 2026-11-10) while it is open. Local reads are answered
 while the robot is docked and idle without it, so the panel does not send it, with one exception: the robot streams
 its cameras only while someone sends it, so the Cameras tile asks for one every 4 s while it is open (§13).
 
@@ -451,7 +451,18 @@ The panel does not get into the robot, and no video passes through the panel. It
    by the 5 s guard loop, or by the next beat), never one per beat. The panel's own `set_working_state` and
    `smart_vision_control` are matched to their echoes one for one (`Recorder.own_echo`, `COUNTED_OWN`): a time window
    of 5 s would hide the phone app's own beats, as the panel beats every 4 s. The official app switches the cameras off
-   when it goes to the background, so the panel's video stops until the tile is reopened.
+   when it goes to the background, so the panel's video stops until the tile is reopened. A beat already in flight can
+   still arrive just after Close.
+
+   **Echo assumption, and the safe fallback.** Matching our own beat to its echo assumes the cloud delivers the
+   panel's own publishes back. That is not verified. So the matching is trusted only after `OWN_TRUST_AFTER` (3) quick
+   echoes in a row (within `OWN_TRUST_LATENCY_S`, 0.5 s), and trust is withdrawn when `OWN_UNMATCHED_MAX` (3) credits in
+   a row expire unmatched. Until trusted (including right after a start) every `set_working_state` and
+   `smart_vision_control` counts as possibly the phone app's, which blocks automatic starts while the cameras are open:
+   the safe direction. Giving up is one event ("the cloud is not echoing..."), regaining it another. A credit lasts
+   `OWN_ECHO_COUNTED_S` (1.5 s; to be measured on a real robot). A send that the cloud client refuses (paho's return
+   code) raises, so its credit is undone. The verdict is decided once per message (ops, for the cloud) and carried to
+   the recorder with the message, so two messages with the same timestamp are decided separately.
 4. **Switching on.** The Cameras panel sends `smart_vision_control {"state":1}` when it opens, through
    `control.CATALOGUE` and `control.check`, marked as the panel's own send so `app/ops.py` does not mistake its echo
    for the phone app (`PHONE_APP_COMMANDS`). It is its own PR for separate review. **Switching off is not decided:**

@@ -427,3 +427,22 @@ def test_the_beat_has_one_route_and_is_cleared_when_leaving():
     assert CODE.count("/api/video/keepalive") == 1
     assert re.search(r"function camerasLeave\(\) \{[^}]*clearInterval\(cams\.beatTimer\)", CODE, re.S)
     assert "CAM_BEAT_MS = 4000" in CODE
+
+
+@needs_node
+def test_the_swap_helpers_clean_up_after_themselves_without_the_caller():
+    calls = run_flow()
+    start = next(i for i, c in enumerate(calls) if c == ["--", "direct-join-fails"])
+    seg = [c for c in calls[start:] if c[0] in ("direct", "restored")]
+    assert seg == [["direct", "boom"], ["restored", True, True],                  # a failed join: its own removal
+                   ["direct", "video library changed"], ["restored", True, True],  # no secret field: its own removal
+                   ["direct", "joined"], ["restored", False, False],               # success: kept for the client's life
+                   ["restored", True, True]]                                       # camerasLeave() removes it
+
+
+@needs_node
+def test_a_wrapper_that_cannot_be_restored_goes_quiet_once_removed():
+    calls = run_flow()
+    seg = segment(calls, "direct-wrapped-over")
+    frames = [c for c in seg if c[0] == "ws-send"]
+    assert len(frames) == 1 and "WRAPPED-BY-THE-SDK" in frames[0][1] and "OVERSECRET" not in frames[0][1]

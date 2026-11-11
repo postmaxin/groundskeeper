@@ -179,7 +179,8 @@ class RobotLink:
             route = "cloud" if self.cloud_up() else None
             if route is None:
                 raise NoRoute(f"the Yarbo cloud is {getattr(self.cloud, 'state', 'not set up')}")
-        return self._send(control.KEEP_AWAKE, payload, route or self.command_route(), None if route else "commands")
+        return self._send(control.KEEP_AWAKE, payload, route or self.command_route(), None if route else "commands",
+                          record=False)
 
     def write_command(self, cmd: str, payload: dict, route: str | None = None) -> str:
         """A captured write (MapWriter only). Returns the route it went."""
@@ -192,7 +193,7 @@ class RobotLink:
             raise NoRoute("writes on your network aren't proved yet; they go through the Yarbo cloud")
         return self._send(cmd, payload, route, None)
 
-    def _send(self, cmd: str, payload: dict, route: str | None, what: str | None) -> str:
+    def _send(self, cmd: str, payload: dict, route: str | None, what: str | None, record: bool = True) -> str:
         if route is None:
             raise NoRoute(self._why_none() if what is not None or cmd not in self._writes() else self._why_no_writes())
         if not self._allowed(route):
@@ -214,7 +215,8 @@ class RobotLink:
             if callable(undo):
                 undo()
             raise
-        self.last_command = {"cmd": cmd, "route": route, "at": time.time()}
+        if record:                       # a keep-awake beat every 4 s is not "the last command" (status shows that)
+            self.last_command = {"cmd": cmd, "route": route, "at": time.time()}
         if what:
             self._note(what, route)
         return route

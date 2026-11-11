@@ -237,8 +237,8 @@ class Controller:
         self.start_out: dict | None = None  # the last start or resume this panel sent: {"cmd", "at"} (#69)
         self.writing = lambda: False      # a write to the robot holds the writer's lock; set by Ops
         self._tasks: set = set()
-        self._beat_at = 0.0               # when the last keep-awake was attempted (the rate limit), any viewer
-        self._beat_ok_at = 0.0            # when the last one went out; 0.0 = none since the watching stopped
+        self._beat_at = None              # monotonic time of the last keep-awake attempt (the rate limit), any viewer
+        self._beat_ok_at = None           # monotonic time of the last one that went out; None = none since it stopped
 
     async def _watch(self, cmd: str, fut: asyncio.Future, last: dict, rowid: int, logged: dict) -> None:
         """Confirm a background command; the audit row gets the outcome, the status stream gets `last`."""
@@ -315,35 +315,35 @@ class Controller:
         run-neutral (it says nothing about a run) and is audited as one event when the beats start and one when they
         stop, never per beat."""
         async with self._lock:
-            now = time.time()               # under the lock: a request that queued behind a send is timed when it goes
+            now = time.monotonic()          # under the lock: a request that queued behind a send is timed when it goes
             if actor != "user":
                 return {"sent": False, "refused": f"{actor} may not keep the robot awake: the video is for people"}
             if not self.store.setting("robot_video_enabled", False):    # again: Settings may have changed while queued
                 return {"sent": False, "refused": "robot video is off (Settings → Robot)"}
             if not self.enabled():
                 return {"sent": False, "control_off": True, "refused": "control is switched off (Settings → Safety)"}
-            if now - self._beat_at < KEEP_AWAKE_MIN_S:
+            if self._beat_at is not None and now - self._beat_at < KEEP_AWAKE_MIN_S:
                 return {"sent": False, "limited": True}
             self._beat_at = now
             try:
                 route = self.link.keep_awake_beat(dict(KEEP_AWAKE_PAYLOAD))
             except Exception as exc:
                 return {"sent": False, "error": str(exc)}
-            if self._beat_ok_at and now - self._beat_ok_at > KEEP_AWAKE_GAP_S:
+            if self._beat_ok_at is not None and now - self._beat_ok_at > KEEP_AWAKE_GAP_S:
                 self._beat_stopped(self._beat_ok_at)        # the stop was not noticed in time: say it now, then start
-            if not self._beat_ok_at:
+            if self._beat_ok_at is None:
                 self.store.event("keep_awake_started", "the robot is being kept awake for the Cameras tile")
             self._beat_ok_at = now
             return {"sent": True, "cmd": KEEP_AWAKE, "payload": dict(KEEP_AWAKE_PAYLOAD), "route": route}
 
     def _beat_stopped(self, last_at: float) -> None:
-        self._beat_ok_at = 0.0
+        self._beat_ok_at = None
         self.store.event("keep_awake_stopped", f"the Cameras tile stopped keeping the robot awake "
-                                               f"(last beat {time.time() - last_at:.0f} s ago)")
+                                               f"(last beat {time.monotonic() - last_at:.0f} s ago)")
 
     def keep_awake_tick(self) -> None:
         """Called from an existing loop: the beats have stopped once none came for KEEP_AWAKE_GAP_S."""
-        if self._beat_ok_at and time.time() - self._beat_ok_at > KEEP_AWAKE_GAP_S:
+        if self._beat_ok_at is not None and time.monotonic() - self._beat_ok_at > KEEP_AWAKE_GAP_S:
             self._beat_stopped(self._beat_ok_at)
 
     async def preview(self, cmd: str, args: dict, actor: str = "user") -> dict:

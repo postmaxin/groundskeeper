@@ -104,10 +104,12 @@ class Ops:
         """Cloud messages join the recorder's queue (so DeviceMSG and replies are handled once, in one place)
         and also feed phone-app detection."""
         parts = topic.split("/", 3)
+        ours = None
         if len(parts) == 4 and parts[2] == "app" and parts[3] in PHONE_APP_COMMANDS:
-            if not self.rec.own_echo(parts[3], ts, data):
+            ours = self.rec.own_echo(parts[3], ts, data)      # decided once here; the recorder is handed the verdict
+            if not ours:
                 self.phone_app_at = ts
-        self.rec._from_thread(topic, data, ts)
+        self.rec._from_thread(topic, data, ts, ours)
 
     def _route_changed(self, what: str, before: str, after: str) -> None:
         """A route to the robot changed (local <-> cloud): say so once, so a firmware lockout or a 4G spell shows."""
