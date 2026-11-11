@@ -1186,7 +1186,8 @@ function secAccess(d) {
   const metricsOnly = h("input", { type: "checkbox", "data-key": "token-metrics", checked: setUI.tokenMetrics || null,
     onchange: (e) => { setUI.tokenMetrics = e.target.checked; } });
   const create = async () => {
-    try { apiTokenShown = await authPost("/api/auth/tokens", { name: name.value, scope: setUI.tokenMetrics ? "metrics" : "full" }); } catch (e) { toast(e.message); return; }
+    const body = { name: name.value, scope: setUI.tokenMetrics ? "metrics" : "full" };
+    try { apiTokenShown = await authPost("/api/auth/tokens", body); } catch (e) { toast(e.message); return; }
     setUI.tokenMetrics = false;
     await renderSettings();
   };
