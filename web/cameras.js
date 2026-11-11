@@ -188,8 +188,18 @@ function camerasQuietSdk(AgoraRTC) {
 
 const camerasBytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
-// A short, safe reason for the screen: our own errors say what they mean; an SDK error is shown by its code only.
-const camerasWhy = (e) => (e && e.code && !e.status ? `Video error (${String(e.code).slice(0, 40)}).` : (e && e.message) || "Something went wrong.");
+// A short, safe reason for the screen, with the step that failed: our own errors say what they mean; an SDK error is
+// shown by its code only; an error with no message (a DOMException from the browser's crypto, say) by its name.
+// Never the token, key, salt, channel or App ID, and never more than CAM_WHY_MAX characters.
+const CAM_WHY_MAX = 100;
+function camerasWhy(e, step) {
+  let reason = "";
+  if (e && e.code && !e.status) reason = String(e.code);
+  else if (e && e.message) reason = String(e.message);
+  else if (e && e.name) reason = String(e.name);
+  const text = reason ? `${step} failed: ${reason}` : `${step} failed.`;
+  return text.length > CAM_WHY_MAX ? `${text.slice(0, CAM_WHY_MAX - 1)}…` : text;
+}
 
 async function camerasStart({ on }) {
   camerasLeave();
@@ -198,6 +208,7 @@ async function camerasStart({ on }) {
   const camera = cams.camera;
   camerasSet("connecting", "Connecting…");
   let hint = "";
+  let step = "Getting a token";                   // what failed, for the error; a label only, no join details
   try {
     await cams.leaving;                           // never two live clients: wait out any leave still in flight
     if (!live()) return;
@@ -205,9 +216,11 @@ async function camerasStart({ on }) {
     if (!live()) return;
     const join = await postJSON("/api/video/token", { camera });
     if (!live()) return;
+    step = "Loading the video library";
     const AgoraRTC = await camerasLoadSdk();      // only after the panel has given a token
     if (!live()) return;
     if (AgoraRTC.checkSystemRequirements && !AgoraRTC.checkSystemRequirements()) throw new Error("This browser cannot play the robot's video.");
+    step = "Setting up";
     camerasQuietSdk(AgoraRTC);
     const client = AgoraRTC.createClient({ mode: "live", codec: "h264" });
     cams.client = client;
@@ -215,6 +228,7 @@ async function camerasStart({ on }) {
     if (!live()) return;
     client.setEncryptionConfig("aes-128-gcm2", join.key, camerasBytes(join.salt));
     camerasListen(client, ticket);
+    step = "Joining";
     await client.join(join.app_id, join.channel, join.token, join.uid);
     if (!live()) return;
     // The robot may have been publishing already: user-published can have started the video before join returned.
@@ -228,13 +242,14 @@ async function camerasStart({ on }) {
     }
     // Already-present users: subscribe only to the robot, and only if it is publishing video. Otherwise stay in
     // Waiting; user-published starts the playback.
+    step = "Playing";
     for (const u of client.remoteUsers || []) {
       if (Number(u.uid) === CAM_ROBOT_UID && u.hasVideo) await camerasPlay(client, u, "video", ticket);
     }
   } catch (e) {
     if (!live()) return;
     camerasLeave();                               // the tile stays open, in its error state
-    camerasSet("error", camerasWhy(e), hint);
+    camerasSet("error", camerasWhy(e, step), hint);
   }
 }
 
@@ -263,7 +278,7 @@ function camerasListen(client, ticket) {
     } catch (e) {
       if (!live()) return;
       camerasLeave();                             // the tile stays open, in its error state
-      camerasSet("error", camerasWhy(e));
+      camerasSet("error", camerasWhy(e, "Playing"));
     }
   });
   client.on("user-unpublished", (user, mediaType) => {

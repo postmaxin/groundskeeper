@@ -59,7 +59,7 @@ are pink, edge passes violet.
   switches the robot's cameras on (needs Control on; with Control off it says so and plays only if the cameras are
   already on, for example from the Yarbo app) and shows one camera at a time: pick Front, Left, Right or Back. The
   state beside the title is *Connecting*, *Waiting for the robot* (cameras off or the robot asleep), *Live* or an
-  error with **Try again**. The video comes from Agora's network to your browser and plays only while the tile is
+  error with **Try again**. An error says which step failed and a short reason, such as "Joining failed: OperationError". The video comes from Agora's network to your browser and plays only while the tile is
   open: **Close**, another page, a hidden tab or a closed page stop it. The panel never switches the cameras off,
   because that would cut the Yarbo app's view too; the robot does that itself. The panel asks Agora's SDK not to send
   usage statistics or upload logs, and switches off its remote configuration (which could turn those back on); a

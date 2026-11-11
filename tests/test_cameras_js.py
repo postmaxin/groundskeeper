@@ -109,7 +109,21 @@ def test_a_refused_token_never_loads_the_sdk():
     calls = run_flow()
     seg = segment(calls, "refused-token")
     assert "sdkRead" not in [c[0] for c in seg]
-    assert ["phase", "error", "The panel refused."] in seg
+    assert ["phase", "error", "Getting a token failed: The panel refused."] in seg
+
+
+@needs_node
+def test_a_failed_join_says_which_step_failed_and_why_without_secrets():
+    calls = run_flow()
+    seg = segment(calls, "join-operation-error")                        # a DOMException with an empty message
+    assert ["phase", "error", "Joining failed: OperationError"] in seg
+    seg = segment(calls, "join-sdk-code")                               # an SDK error shows its code, never its message
+    assert ["phase", "error", "Joining failed: INVALID_OPERATION"] in seg
+    assert "007tok" not in json.dumps([c for c in seg if c[0] == "phase"])
+    long = next(c for c in segment(calls, "join-long") if c[0] == "phase")
+    assert long[2].startswith("Joining failed: xxx") and len(long[2]) <= 100
+    seg = segment(calls, "token-502")                                   # the server's fixed phrase, as before
+    assert ["phase", "error", "Getting a token failed: The robot video service did not answer."] in seg
 
 
 @needs_node
@@ -124,7 +138,7 @@ def test_a_robot_present_but_not_publishing_stays_waiting():
 def test_a_failed_subscribe_leaves_and_shows_a_sanitized_error():
     seg = segment(run_flow(), "publish-fails")
     assert "leave" in [c[0] for c in seg]
-    assert ["phase", "error", "Video error (SUBSCRIBE_FAILED)."] in seg
+    assert ["phase", "error", "Playing failed: SUBSCRIBE_FAILED"] in seg
     assert "007tok" not in json.dumps(seg)
 
 
@@ -232,7 +246,7 @@ def test_the_sdks_own_storage_is_cleared_after_it_loads_and_on_leaving():
 def test_a_script_load_that_hangs_gives_up_and_the_next_try_loads_again():
     calls = run_flow()
     hung = segment(calls, "sdk-hangs")
-    assert ["phase", "error", "The video library took too long to load."] in hung
+    assert ["phase", "error", "Loading the video library failed: The video library took too long to load."] in hung
     assert ["sdk-cleared", True] in hung
     retry = segment(calls, "sdk-retry")
     assert "createClient" in [c[0] for c in retry] and ["phase", "waiting", "Waiting for the robot's video…"] in retry
@@ -246,6 +260,7 @@ def test_the_source_rejects_a_client_kept_before_it_has_joined():
 def test_the_source_never_names_state_zero_log_upload_or_the_console():
     assert "enableLogUpload" not in CODE
     assert not re.search(r"console\.", CODE)
+    assert "setLogLevel(4)" in CODE
     assert not re.search(r"state\s*:\s*0\b", CODE)
     assert not re.search(r"(localStorage|sessionStorage)[^;]*(token|key|salt)", CODE, re.I)
 

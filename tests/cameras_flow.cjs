@@ -12,7 +12,7 @@ const ROBOT = { uid: 1, hasVideo: true, videoTrack: { play: (...a) => log("play"
 const SDK_USER = ROBOT;
 let client;
 const knobs = { leaveGate: null, roleGate: null, joinGate: null, joinEmit: false, refuseToken: false, remote: [],
-                subscribeFail: false, tokenGate: null, writeOnLeave: false, sdkPresent: true, fastSdk: false, videoOff: false, scripts: [] };
+                subscribeFail: false, joinFail: null, tokenFail: null, tokenGate: null, writeOnLeave: false, sdkPresent: true, fastSdk: false, videoOff: false, scripts: [] };
 const storage = {};
 const AgoraRTC = {
   checkSystemRequirements: () => true,
@@ -31,6 +31,7 @@ const AgoraRTC = {
       setEncryptionConfig: (mode, key, salt) => log("setEncryptionConfig", mode, key, Array.from(salt).join(",")),
       join: async (app, channel, token, uid) => {
         log("join", app, channel, token, uid);
+        if (knobs.joinFail) throw knobs.joinFail;
         if (knobs.joinEmit) await handlers["user-published"](ROBOT, "video");   // the robot was already publishing
         if (knobs.joinGate) await knobs.joinGate;
       },
@@ -57,6 +58,7 @@ const sandbox = {
     log("post", url, JSON.stringify(body));
     if (url === "/api/video/token") {
       if (knobs.tokenGate) await knobs.tokenGate;
+      if (knobs.tokenFail) throw knobs.tokenFail;
       if (knobs.refuseToken) throw new Error("The panel refused.");
       return { app_id: "0".repeat(32), channel: "YB0000DEMO0001_middle_image", token: "007tok", uid: 888881, key: "k", salt: "AQID" };
     }
@@ -105,6 +107,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   knobs.refuseToken = true;
   mark("refused-token"); sandbox.camerasOpen(); await settle(); phase();
   knobs.refuseToken = false; sandbox.camerasStop(); await settle();
+  // 2b. Why a start failed, by step: a join that rejects with an empty-message DOMException, an SDK error with a code
+  // (its message carries a secret and must not show), and the server's own phrase for a 502.
+  knobs.joinFail = { name: "OperationError", message: "" };
+  mark("join-operation-error"); sandbox.camerasOpen(); await settle(); phase();
+  knobs.joinFail = { code: "INVALID_OPERATION", message: "token=007tok key=k" };
+  mark("join-sdk-code"); sandbox.camerasOpen(); await settle(); phase();
+  knobs.joinFail = { name: "Error", message: "x".repeat(300) };
+  mark("join-long"); sandbox.camerasOpen(); await settle(); phase();
+  knobs.joinFail = null; sandbox.camerasStop(); await settle();
+  knobs.tokenFail = new Error("The robot video service did not answer.");
+  mark("token-502"); sandbox.camerasOpen(); await settle(); phase();
+  knobs.tokenFail = null; sandbox.camerasStop(); await settle();
   // 3. The robot is present but not publishing: stay in Waiting, no subscribe, no leave.
   knobs.remote = [{ uid: 1, hasVideo: false }];
   mark("present-not-publishing"); sandbox.camerasOpen(); await settle(); phase();
