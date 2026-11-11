@@ -488,7 +488,8 @@ The panel does not get into the robot, and no video passes through the panel. It
    Only a match within `OWN_TRUST_LATENCY_S` is ever ours: a slower one is taken for the app's and the credit expires
    unmatched, so the app's beats can neither earn trust nor keep it alive. Known gap: with no echo at all, an app beat
    that lands as quickly as an echo for several beats in a row (the two beats drift into phase) cannot be told apart
-   and can briefly earn trust; the first slower beat or three expired credits withdraw it. With a cloud that echoes,
+   and can briefly earn trust; a slower beat is taken for the app's and restarts the run of quick echoes, but only
+   three expired credits in a row withdraw trust. With a cloud that echoes,
    as seen so far, this case does not arise (issue #48).
 4. **Switching on.** The Cameras panel sends `smart_vision_control {"state":1}` when it opens, through
    `control.CATALOGUE` and `control.check`, marked as the panel's own send so `app/ops.py` does not mistake its echo
