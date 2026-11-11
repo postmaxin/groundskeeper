@@ -75,7 +75,7 @@ are pink, edge passes violet.
   wrap, so the panel puts it into the SDK's join message and access-point request itself, unwrapped inside the TLS connections to Agora, whose
   servers decrypt the stream for your browser anyway; this is a stopgap until Agora fixes their SDK (issue #46). The SDK also keeps a few items of its own in this
   browser's storage; the panel clears them when the SDK has loaded and when the tile leaves the channel. The demo shows
-  a placeholder. It has played the back camera during a run while the Yarbo app was also open. **Known limitations**,
+  a placeholder card ("The demo robot has no cameras"; it loads nothing from Agora). It has played the back camera during a run while the Yarbo app was also open. **Known limitations**,
   from one robot so far:
   - Waking a docked, sleeping robot is not shown to work: with the Yarbo app closed, no video arrived within about
     35 seconds. Opening the Yarbo app once, or a running plan, may be needed first.

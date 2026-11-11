@@ -35,6 +35,9 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 - **Cameras: known limitations in Help** (Live → Cameras). It has played the back camera during a run on one robot;
   waking a docked, sleeping robot, the front, left and right cameras, a phone and more than one viewer are not yet
   shown to work.
+- **Cameras tile in the demo and the screenshots** (#23): the demo's Live page shows the tile as a placeholder (it
+  loads nothing from Agora), the Live screenshots in `docs/screenshots/` are regenerated to include it, and Help
+  (Live → Cameras) says what the demo shows.
 - **Robot video setting** (Settings → Robot → Yarbo cloud, off by default): lets a signed-in person ask for a robot
   camera's join details (`POST /api/video/token`); the viewer's browser then connects to Agora. People only: API tokens
   and AI assistants are refused, and the stream key is never logged. Needs `YARBO_ROBOT_SERVICE_URL` (environment only); the Live tile
