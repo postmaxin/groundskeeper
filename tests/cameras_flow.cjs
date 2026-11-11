@@ -44,7 +44,7 @@ const AgoraRTC = {
           const ws = new sandbox.WebSocket(), xhr = new sandbox.XMLHttpRequest();
           ws.send("ping"); ws.send(new Uint8Array(2)); ws.send('{"x":1}');
           ws.send(knobs.joinMsg === "default" ? joinMessage(WRAPPED) : knobs.joinMsg === "camel" ? joinMessage('"aesSecret":"d3JhcHBlZA==","aesEncrypt":true') : joinMessage('"y":2'));
-          xhr.send(knobs.joinMsg === "default" ? `{"aesMode":"aes-128-gcm2","aesSecret":"d3JhcHBlZA==","aesEncrypt":true,"uid":5}` : "{}");
+          xhr.send(knobs.joinMsg === "default" || knobs.joinMsg === "xhr-only" ? `{"aesMode":"aes-128-gcm2","aesSecret":"d3JhcHBlZA==","aesEncrypt":true,"uid":5}` : "{}");
         }
         if (knobs.joinFail) throw knobs.joinFail;
         if (knobs.joinEmit) await handlers["user-published"](ROBOT, "video");   // the robot was already publishing
@@ -313,6 +313,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   mark("swap-camel"); knobs.joinMsg = "camel"; sandbox.camerasOpen(); await settle(); restored();
   sandbox.camerasStop(); await settle();
   mark("swap-changed"); knobs.joinMsg = "no-secret-field"; sandbox.camerasOpen(); await settle(); phase(); restored();
+  sandbox.camerasStop(); await settle();
+  mark("swap-xhr-only"); knobs.joinMsg = "xhr-only"; sandbox.camerasOpen(); await settle(); phase(); restored();
   sandbox.camerasStop(); await settle();
   mark("swap-none"); knobs.joinMsg = "none"; sandbox.camerasOpen(); await settle(); phase(); restored();
   sandbox.camerasStop(); await settle(); knobs.joinMsg = "default";

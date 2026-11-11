@@ -260,9 +260,11 @@ async function camerasJoinSwapped(client, args, secret) {
   const xhrSend = XMLHttpRequest.prototype.send;
   let active = true;
   let seen = 0;
-  const fix = (body) => { const r = camerasSwapBody(body, secret); if (r.swapped) seen++; return r.body; };
-  const wsWrap = function (data) { return wsSend.call(this, active ? fix(data) : data); };
-  const xhrWrap = function (data) { return xhrSend.call(this, active ? fix(data) : data); };
+  const fix = (body, isJoin) => { const r = camerasSwapBody(body, secret); if (r.swapped && isJoin) seen++; return r.body; };
+  // Only the WebSocket frame counts as the join having carried the secret: an access-point request that still has the
+  // field must not hide a join frame that no longer does.
+  const wsWrap = function (data) { return wsSend.call(this, active ? fix(data, true) : data); };
+  const xhrWrap = function (data) { return xhrSend.call(this, active ? fix(data, false) : data); };
   let timer;
   WebSocket.prototype.send = wsWrap;
   XMLHttpRequest.prototype.send = xhrWrap;

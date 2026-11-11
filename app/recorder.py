@@ -263,13 +263,17 @@ class Recorder:
                         pass                      # already used by an echo, or aged out
         return undo
 
-    def own_echo(self, name: str, ts: float) -> bool:
+    def own_echo(self, name: str, ts: float, data=None) -> bool:
         """Is the message `name` that arrived at `ts` the echo of something this panel sent? One answer per message, so
         the phone-app detection (ops) and the recorder, which both look at it, agree. Most commands: sent within
         the last OWN_ECHO_S. The keep-awake and camera-on (COUNTED_OWN): each of our sends accounts for ONE echo
-        and goes unused after OWN_ECHO_S, so the Yarbo app's own beats, arriving seconds after ours, still count as the app's."""
+        and goes unused after OWN_ECHO_S, so the Yarbo app's own beats, arriving seconds after ours, still count as
+        the app's. What we send is always {"state": 1}: a message that says anything else (the app switching the cameras
+        off) is never ours and leaves our pending send for its real echo."""
         if name not in COUNTED_OWN:
             return ts - self._sent.get(name, 0) < OWN_ECHO_S
+        if isinstance(data, dict) and not (type(data.get("state")) is int and data["state"] == 1):
+            return False
         lock = self.__dict__.setdefault("_own_lock", threading.Lock())
         with lock:
             seen = self.__dict__.setdefault("_own_seen", {})
@@ -511,7 +515,7 @@ class Recorder:
         elif channel == "device" and name == "heart_beat" and isinstance(data, dict):
             self.heartbeat, self.heartbeat_at = data, ts
         elif channel == "app":
-            ours = self.own_echo(name, ts)
+            ours = self.own_echo(name, ts, data)
             if not ours and name in PEOPLE_COMMANDS:
                 self.foreign_cmd_at = ts
                 self.foreign_cmds[name] = ts     # by command: a late echo of the panel's own is told apart
@@ -594,7 +598,7 @@ class Recorder:
             if reply_to in SESSION_SKIP_REPLIES and ts - self._sent.get(reply_to, 0) < 5:
                 return                                  # our own read, answered
             key = f"reply/{reply_to}"
-        if channel == "app" and self.own_echo(name, ts):
+        if channel == "app" and self.own_echo(name, ts, data):
             return                                      # our own request
         if len(s["entries"]) >= SESSION_MAX_ENTRIES:
             s["dropped"] += 1

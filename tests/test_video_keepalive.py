@@ -439,3 +439,19 @@ def test_a_send_recorded_after_a_message_arrived_is_not_what_it_echoes(tmp_path,
     r.mark_sent("set_working_state")
     assert r.own_echo("set_working_state", 1000.0) is False       # that message was somebody else's, from before
     assert r.own_echo("set_working_state", 1000.7) is True        # the real echo still finds its send
+
+
+# -- review round 2: only what we send can be our echo ------------------------------------------------------------
+def test_the_apps_camera_off_before_our_camera_on_echo_is_not_ours_and_leaves_our_send_pending(tmp_path, monkeypatch):
+    r = _recorder(tmp_path)
+    o = _ops(r)
+    monkeypatch.setattr(recorder.time, "time", lambda: 1000.0)
+    r.mark_sent("smart_vision_control")
+    name = "smart_vision_control"
+    o._from_cloud(f"snowbot/SN/app/{name}", {"state": 0}, 1000.2)           # the app switching the cameras off
+    r._handle(f"snowbot/SN/app/{name}", {"state": 0}, 1000.2)
+    assert o.phone_app_at == 1000.2 and len(seen(r, name)) == 1             # seen as the app's, not hidden
+    assert r.own_echo(name, 1000.4, {"state": 1}) is True                    # our send was still waiting for its echo
+    for odd in ({"state": 2}, {"state": True}, {"state": "1"}, {}):
+        r.mark_sent(name)
+        assert r.own_echo(name, 1000.6 + len(str(odd)), odd) is False
