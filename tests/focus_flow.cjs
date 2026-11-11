@@ -108,6 +108,8 @@ const press = (panel, key) => { const el = byKey(panel, key); el.focus(); el.on.
   const stage = h("div"); doc.body.append(stage);
   const chips = (names) => names.map((n) => h("button", { "data-key": `yardcam-${n}` }, n));
   fill(stage, chips(["a", "b"])); byKey(stage, "yardcam-b").focus(); fill(stage, h("p"), chips(["a", "b"])); out.push(["any-fill", ...here()]);
+  const layout = (cams) => [h("button", { "data-key": "yardcam-auto" }, "Auto"), ...cams.map((n) => h("button", { "data-key": `yardcam-cam-${n}` }, n))];
+  fill(stage, layout(["auto", "b"])); byKey(stage, "yardcam-cam-auto").focus(); fill(stage, layout(["auto", "b"])); out.push(["camera-named-auto", ...here()]);
   const ready = h("div"); doc.body.append(ready);
   const readiness = (error) => h("div", null, error ? h("p", null, "could not check") : null, h("details", null, h("summary", { "data-key": "ready-summary" }, "ready")),
     h("button", { class: "linkbtn" }, "check again"));

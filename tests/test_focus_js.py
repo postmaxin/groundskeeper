@@ -81,7 +81,12 @@ def test_focus_elsewhere_is_never_taken():
 
 def test_the_camera_layout_chips_have_stable_keys():
     code = (ROOT / "web" / "ops.js").read_text(encoding="utf-8")
-    assert '"data-key": "yardcam-auto"' in code and '"data-key": `yardcam-${c}`' in code
+    assert '"data-key": "yardcam-auto"' in code and '"data-key": `yardcam-cam-${c}`' in code   # cameras in their own namespace
+
+
+@needs_node
+def test_a_camera_named_auto_keeps_focus_and_is_not_taken_for_the_auto_chip():
+    assert run_flow()["camera-named-auto"] == ["BUTTON", "yardcam-cam-auto"]
 
 
 def test_live_control_buttons_and_readiness_summaries_have_stable_keys():
