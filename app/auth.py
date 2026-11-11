@@ -20,7 +20,7 @@ People can also sign in through an OpenID Connect provider (app/oidc.py); that g
 `PANEL_PASSWORD=off` then turns the password off: no password sign-in, no first-run setup code, no password change.
 
 Stored in the settings table: `auth` {scrypt hash, salt, set}, `auth_sessions` {sha256(session): {created, seen,
-agent, user and sub (OIDC sign-ins)}}, `api_tokens` [{id, name, sha256, hint, created, used}]. Only hashes; a session or
+agent, user and sub (OIDC sign-ins)}}, `api_tokens` [{id, name, sha256, hint, created, used, scope?}]. Only hashes; a session or
 token is shown once."""
 import hashlib
 import hmac
@@ -53,6 +53,10 @@ LOCKED_PREFIXES = ("/api/", "/tiles/", "/imagery/")
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 # The only changes an API token may ask for; everything else that is not a read needs a person. Default closed.
 TOKEN_WRITES = {("POST", "/api/control/preview"), ("POST", "/api/control/send")}
+# Token scopes. "full" (also a row with no scope, as every token made before scopes) is the behaviour above.
+# "metrics" may only GET or HEAD exactly METRICS_PATH (compared whole: no prefix) and nothing else (metrics_may).
+SCOPES = ("full", "metrics")
+METRICS_PATH = "/api/metrics"
 # Paths a signed, expiring link may open without a session: the camera snapshot in a phone notification, which the
 # phone's notification service fetches with no cookie (sign_path).
 SIGNED_PREFIXES = ("/api/frigate/snapshot/",)
@@ -197,19 +201,22 @@ class Auth:
 
     # -- API tokens --------------------------------------------------------------------------------------------------
     def tokens(self) -> list[dict]:
-        return [{k: t.get(k) for k in ("id", "name", "hint", "created", "used")} for t in self.store.setting("api_tokens") or []]
+        return [{**{k: t.get(k) for k in ("id", "name", "hint", "created", "used")}, "scope": _scope(t)}
+                for t in self.store.setting("api_tokens") or []]
 
-    def new_token(self, name: str) -> dict:
+    def new_token(self, name: str, scope: str = "full") -> dict:
         name = (name or "").strip()[:60]
         if not name:
             raise ValueError("give the token a name (what will use it)")
+        if not isinstance(scope, str) or scope not in SCOPES:
+            raise ValueError("scope must be 'full' or 'metrics'")
         token = "gk_" + secrets.token_urlsafe(32)
         rows = self.store.setting("api_tokens") or []
         row = {"id": secrets.token_hex(4), "name": name, "sha256": _sha(token), "hint": token[-4:],
-               "created": time.time(), "used": None}
+               "created": time.time(), "used": None, "scope": scope}
         self.store.set_setting("api_tokens", rows + [row])
-        self.store.event("auth", f"API token '{name}' was created")
-        return {"token": token, **{k: row[k] for k in ("id", "name", "hint", "created")}}
+        self.store.event("auth", f"API token '{name}'{' (metrics only)' if scope == 'metrics' else ''} was created")
+        return {"token": token, **{k: row[k] for k in ("id", "name", "hint", "created", "scope")}}
 
     def revoke_token(self, token_id: str) -> bool:
         rows = self.store.setting("api_tokens") or []
@@ -221,8 +228,12 @@ class Auth:
         return True
 
     def token_ok(self, header: str | None) -> bool:
+        return self.token_scope(header) is not None
+
+    def token_scope(self, header: str | None) -> str | None:
+        """The scope ('full' or 'metrics') of the API token in this Authorization header; None if it is not one."""
         if not header or not header.lower().startswith("bearer "):
-            return False
+            return None
         want = _sha(header[7:].strip())
         rows = self.store.setting("api_tokens") or []
         for t in rows:
@@ -231,8 +242,8 @@ class Auth:
                 if not t.get("used") or now - t["used"] > SEEN_EVERY_S:
                     t["used"] = now
                     self.store.set_setting("api_tokens", rows)
-                return True
-        return False
+                return _scope(t)
+        return None
 
     # -- signed links ------------------------------------------------------------------------------------------------
     def _key(self) -> bytes:
@@ -264,13 +275,15 @@ class Auth:
 
     # -- the gate ----------------------------------------------------------------------------------------------------
     def who(self, method: str, path: str, headers, cookies, query: str = "") -> str | None:
-        """'internal', 'token', 'session', 'signed' or 'open' when the request may go on; None when it must sign in."""
+        """'internal', 'token', 'metrics' (a metrics-only token), 'session', 'signed' or 'open' when the request may go
+        on; None when it must sign in. Only 'token' may ask for robot commands: nothing treats 'metrics' as one."""
         if disabled() or not needs_auth(path):
             return "open"
         if _same(headers.get(INTERNAL_HEADER), INTERNAL):
             return "internal"
-        if self.token_ok(headers.get("authorization")):
-            return "token"
+        scope = self.token_scope(headers.get("authorization"))
+        if scope is not None:
+            return "metrics" if scope == "metrics" else "token"
         if self.session_ok(cookies.get(COOKIE)):
             return "session"
         if method in ("GET", "HEAD") and self.signed_ok(path, query):
@@ -278,9 +291,19 @@ class Auth:
         return None
 
 
+def _scope(row: dict) -> str:
+    """A row's scope. Anything but exactly 'metrics' is full, so a row from before scopes behaves as it always did."""
+    return "metrics" if row.get("scope") == "metrics" else "full"
+
+
 def token_may(method: str, path: str) -> bool:
-    """May an API token make this request? Any read, and the short list of writes."""
+    """May a full API token make this request? Any read, and the short list of writes."""
     return method in SAFE_METHODS or (method, path) in TOKEN_WRITES
+
+
+def metrics_may(method: str, path: str) -> bool:
+    """May a metrics-only token make this request? Only GET or HEAD on exactly /api/metrics."""
+    return method in ("GET", "HEAD") and path == METRICS_PATH
 
 
 def same_origin(method: str, headers, panel_url: str | None = None) -> bool:

@@ -299,3 +299,104 @@ def test_no_gate_yet_fails_closed(client):
     main.app.state.auth = None
     assert client.c.get("/api/auth/tokens").status_code == 503
     assert client.c.get("/login.html").status_code in (200, 404)
+
+
+# -- metrics-only tokens (scope) ----------------------------------------------------------------------------------------
+def _scoped(client, scope=None, name="scrape"):
+    if not client.store.setting("auth"):                                # set the password once
+        signed_in(client)
+    body = {"name": name} if scope is None else {"name": name, "scope": scope}
+    r = client.c.post("/api/auth/tokens", json=body)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_a_token_without_a_scope_is_full(client):
+    signed_in(client)
+    old = {"id": "aa11", "name": "old", "sha256": auth._sha("gk_old"), "hint": "_old", "created": 1.0, "used": None}
+    client.store.set_setting("api_tokens", [old])                      # a row from before scopes: no scope field
+    assert client.c.get("/api/auth/tokens").json()["tokens"][0]["scope"] == "full"
+    bot = _bot("gk_old")
+    assert bot.get("/api/events").status_code == 200
+    assert client.auth.token_scope("Bearer gk_old") == "full"
+
+
+def test_create_with_each_scope_and_refuse_an_invalid_one(client):
+    assert _scoped(client)["scope"] == "full"                           # default when absent
+    assert _scoped(client, "full", "b")["scope"] == "full"
+    assert _scoped(client, "metrics", "c")["scope"] == "metrics"
+    for bad in ("admin", "", "METRICS", None, 5, ["metrics"], {"a": 1}):
+        r = client.c.post("/api/auth/tokens", json={"name": "bad", "scope": bad})
+        assert r.status_code == 400, (bad, r.text)
+    assert len(client.store.setting("api_tokens")) == 3                 # the refused ones made nothing
+    listed = {t["name"]: t["scope"] for t in client.c.get("/api/auth/tokens").json()["tokens"]}
+    assert listed == {"scrape": "full", "b": "full", "c": "metrics"}
+
+
+def test_a_metrics_token_is_shown_once_and_only_its_hash_is_kept(client):
+    made = _scoped(client, "metrics")
+    assert made["token"].startswith("gk_")
+    assert made["token"] not in str(client.store.setting("api_tokens"))
+    listed = client.c.get("/api/auth/tokens").json()["tokens"][0]
+    assert "token" not in listed and "sha256" not in listed and listed["scope"] == "metrics"
+    assert made["token"] not in client.c.get("/api/auth/tokens").text
+    assert client.store.setting("api_tokens")[0]["sha256"] == auth._sha(made["token"])
+
+
+def test_creating_a_metrics_token_says_so_in_the_event_log(client):
+    _scoped(client, "metrics", "prom")
+    _scoped(client, None, "ha")
+    msgs = str(client.store.events(50))
+    assert "API token 'prom' (metrics only) was created" in msgs
+    assert "API token 'ha' was created" in msgs
+
+
+METRICS_REFUSED = [
+    ("GET", "/api/status"), ("GET", "/api/settings"), ("GET", "/api/events"), ("GET", "/api/auth/tokens"),
+    ("GET", "/tiles/0/0/0.png"), ("GET", "/imagery/anything"), ("GET", "/api/stream"),
+    ("POST", "/api/control/send"), ("POST", "/api/control/preview"), ("POST", "/api/video/token"),
+    ("GET", "/api/metrics/x"), ("GET", "/api/metricsfoo"), ("GET", "/api/metrics/"), ("GET", "/api/Metrics"),
+    ("POST", "/api/metrics"), ("PUT", "/api/metrics"), ("DELETE", "/api/metrics"), ("OPTIONS", "/api/metrics"),
+]
+
+
+@pytest.mark.parametrize("method, path", METRICS_REFUSED)
+def test_a_metrics_token_is_refused_everywhere_but_the_metrics_read(client, controller, method, path):
+    bot = _bot(_scoped(client, "metrics")["token"])
+    r = bot.request(method, path, json={"cmd": "pause", "confirm": True} if method == "POST" else None,
+                    headers={"X-Panel-Request": "1"})
+    assert r.status_code == 403, (method, path, r.status_code)
+    assert "metrics" in r.json()["detail"]
+    assert controller.calls == []                                       # nothing reached the controller
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_a_metrics_token_passes_the_gate_on_the_metrics_read(client, method):
+    bot = _bot(_scoped(client, "metrics")["token"])
+    r = bot.request(method, "/api/metrics")
+    assert r.status_code not in (401, 403)                              # 404 until the endpoint exists
+
+
+def test_a_metrics_token_is_limited_even_beside_a_signed_in_cookie(client):
+    token = _scoped(client, "metrics")["token"]                         # client.c also holds the session cookie
+    r = client.c.get("/api/status", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 403
+
+
+def test_a_metrics_token_never_acts_as_a_token_or_a_user(client, controller):
+    token = _scoped(client, "metrics")["token"]
+    assert client.auth.who("GET", "/api/metrics", {"authorization": f"Bearer {token}"}, {}) == "metrics"
+    _bot(token).post("/api/control/send", json={"cmd": "pause", "confirm": True}, headers={"X-Panel-Request": "1"})
+    assert controller.calls == []
+    assert main._actor(SimpleNamespace(state=SimpleNamespace(who="metrics"))) == "token"     # never reached; the strictest if it were
+
+
+def test_a_full_token_is_unchanged(client, controller):
+    for scope in (None, "full"):
+        bot = _bot(_scoped(client, scope, f"f{scope}")["token"])
+        assert bot.get("/api/events").status_code == 200
+        assert bot.get("/api/metrics").status_code not in (401, 403)
+        assert bot.put("/api/settings/control_enabled", json=True).status_code == 403
+        controller.calls.clear()
+        assert bot.post("/api/control/send", json={"cmd": "pause", "confirm": True}).status_code == 200
+        assert controller.calls == [("send", "token")]
