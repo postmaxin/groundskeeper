@@ -239,13 +239,29 @@ class Recorder:
                 self._finish_wifi_survey(rid)
 
     # -- plumbing ----------------------------------------------------------------------------------------------
-    def mark_sent(self, cmd: str) -> None:
-        """The panel sent `cmd` just now (RobotLink calls this after every send): its echo is ours."""
+    def mark_sent(self, cmd: str):
+        """The panel is sending `cmd` now (RobotLink calls this just BEFORE every send: the echo can reach the broker's
+        thread before publish() returns): its echo is ours. Returns an undo for a send that then fails."""
         now = time.time()
+        before = self._sent.get(cmd)
         self._sent[cmd] = now
-        if cmd in COUNTED_OWN:
+        counted = cmd in COUNTED_OWN
+        if counted:
             with self.__dict__.setdefault("_own_lock", threading.Lock()):
                 self.__dict__.setdefault("_own_beats", {}).setdefault(cmd, deque(maxlen=16)).append(now)
+
+        def undo() -> None:
+            if before is None:
+                self._sent.pop(cmd, None)
+            else:
+                self._sent[cmd] = before
+            if counted:
+                with self.__dict__.setdefault("_own_lock", threading.Lock()):
+                    try:
+                        self.__dict__.setdefault("_own_beats", {}).get(cmd, deque()).remove(now)
+                    except ValueError:
+                        pass                      # already used by an echo, or aged out
+        return undo
 
     def own_echo(self, name: str, ts: float) -> bool:
         """Is the message `name` that arrived at `ts` the echo of something this panel sent? One answer per message, so
@@ -262,7 +278,7 @@ class Recorder:
             q = self.__dict__.setdefault("_own_beats", {}).setdefault(name, deque(maxlen=16))
             while q and q[0] < ts - OWN_ECHO_S:
                 q.popleft()                       # never echoed back (or the echo was missed): it matches nothing now
-            ours = bool(q) and q[0] <= ts + 1.0   # a send a moment after the message cannot be what it echoes
+            ours = bool(q) and q[0] <= ts         # a send recorded after the message arrived cannot be what it echoes
             if ours:
                 q.popleft()
             seen[(name, ts)] = ours

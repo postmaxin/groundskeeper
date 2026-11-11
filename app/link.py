@@ -44,7 +44,7 @@ class NoRoute(ConnectionError):
 class RobotLink:
     def __init__(self, rec, cloud, store, mark_sent=None):
         self.rec, self.cloud, self.store = rec, cloud, store
-        self.mark_sent = mark_sent or (lambda cmd: None)   # (cmd) -> None: the recorder's own-send record
+        self.mark_sent = mark_sent or (lambda cmd: None)   # (cmd) -> undo() or None: the recorder's own-send record
         self._misses = {"reads": 0, "commands": 0}
         self._off_until = {"reads": 0.0, "commands": 0.0}
         self.reads_route: str | None = None
@@ -200,12 +200,20 @@ class RobotLink:
         if route == "local":
             if not self.local_commands_up():
                 raise NoRoute("the robot's local broker is not connected")
-            self.rec.transport.command(cmd, payload)
-        else:
-            if not self.cloud_up():
-                raise NoRoute(f"the Yarbo cloud is {getattr(self.cloud, 'state', 'not set up')}")
-            self.cloud.publish(cmd, payload)
-        self.mark_sent(cmd)              # after it went: the robot's echo arrives later, on the event loop
+        elif not self.cloud_up():
+            raise NoRoute(f"the Yarbo cloud is {getattr(self.cloud, 'state', 'not set up')}")
+        # Marked before it goes: the echo can be handled on the broker's thread before publish() returns, and an echo
+        # that finds no mark is taken for another client's. A send that fails takes its mark back.
+        undo = self.mark_sent(cmd)
+        try:
+            if route == "local":
+                self.rec.transport.command(cmd, payload)
+            else:
+                self.cloud.publish(cmd, payload)
+        except Exception:
+            if callable(undo):
+                undo()
+            raise
         self.last_command = {"cmd": cmd, "route": route, "at": time.time()}
         if what:
             self._note(what, route)

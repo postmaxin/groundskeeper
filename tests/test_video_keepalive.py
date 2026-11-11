@@ -357,3 +357,85 @@ def test_other_commands_keep_the_old_five_second_window(tmp_path):
     assert r.own_echo("pause", t + 1) is True and r.own_echo("pause", t + 1.5) is True
     assert r.own_echo("pause", t + 6) is False
     assert recorder.COUNTED_OWN == {"set_working_state", "smart_vision_control"}
+
+
+# -- review round 1: timing under the lock, the setting rechecked, marks before the send -------------------------
+def _controller(tmp_path, monkeypatch, clock):
+    from tests.test_phase2 import make_controller
+    store, cloud, c = make_controller(tmp_path, enabled=True)
+    store.set_setting("robot_video_enabled", True)
+    monkeypatch.setattr(control.time, "time", lambda: clock[0])
+    return store, cloud, c
+
+
+def test_a_beat_that_queued_behind_a_send_is_timed_when_it_goes_not_when_it_asked(tmp_path, monkeypatch):
+    clock = [100.0]
+    store, cloud, c = _controller(tmp_path, monkeypatch, clock)
+
+    async def go():
+        await c._lock.acquire()                          # a send is holding the controller
+        first = asyncio.create_task(c.keep_awake())
+        await asyncio.sleep(0)
+        clock[0] = 103.0
+        second = asyncio.create_task(c.keep_awake())
+        await asyncio.sleep(0)
+        clock[0] = 105.0
+        c._lock.release()
+        return await first, await second
+
+    first, second = asyncio.run(go())
+    assert first["sent"] is True and second == {"sent": False, "limited": True}     # not two back to back
+    assert len(cloud.sent) == 1
+
+
+def test_a_beat_that_queued_while_video_was_switched_off_is_not_sent(tmp_path, monkeypatch):
+    store, cloud, c = _controller(tmp_path, monkeypatch, [100.0])
+
+    async def go():
+        await c._lock.acquire()
+        task = asyncio.create_task(c.keep_awake())
+        await asyncio.sleep(0)
+        store.set_setting("robot_video_enabled", False)
+        c._lock.release()
+        return await task
+
+    r = asyncio.run(go())
+    assert r["sent"] is False and "video is off" in r["refused"] and cloud.sent == []
+
+
+def test_the_mark_is_made_before_the_send_so_an_echo_during_publish_is_ours(tmp_path):
+    r = _recorder(tmp_path)
+    rec, store, answers = LinkRec(), Store(str(tmp_path)), []
+
+    class EchoingCloud(LinkCloud):
+        def publish(self, cmd, payload):                 # the broker's thread sees the echo before publish() returns
+            answers.append(r.own_echo(cmd, __import__("time").time()))
+            super().publish(cmd, payload)
+
+    lk = RobotLink(rec, EchoingCloud(), store, mark_sent=r.mark_sent)
+    lk.keep_awake_beat({"state": 1})
+    assert answers == [True]
+    assert r.own_echo("set_working_state", __import__("time").time() + 0.5) is False  # used once
+
+
+def test_a_send_that_fails_takes_its_mark_back(tmp_path):
+    r = _recorder(tmp_path)
+    r._sent["set_working_state"] = 1.0
+
+    class Failing(LinkCloud):
+        def publish(self, cmd, payload):
+            raise ConnectionError("down")
+
+    lk = RobotLink(LinkRec(), Failing(), Store(str(tmp_path)), mark_sent=r.mark_sent)
+    with pytest.raises(ConnectionError):
+        lk.keep_awake_beat({"state": 1})
+    assert r._sent["set_working_state"] == 1.0 and not r._own_beats["set_working_state"]
+    assert r.own_echo("set_working_state", __import__("time").time()) is False
+
+
+def test_a_send_recorded_after_a_message_arrived_is_not_what_it_echoes(tmp_path, monkeypatch):
+    r = _recorder(tmp_path)
+    monkeypatch.setattr(recorder.time, "time", lambda: 1000.5)
+    r.mark_sent("set_working_state")
+    assert r.own_echo("set_working_state", 1000.0) is False       # that message was somebody else's, from before
+    assert r.own_echo("set_working_state", 1000.7) is True        # the real echo still finds its send

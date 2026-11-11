@@ -298,6 +298,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   sandbox.camerasStop(); await settle(); knobs.beatFail = false;
   knobs.beatReply = { sent: false, control_off: true };
   mark("beat-control-off"); sandbox.camerasOpen(); await settle(); calls.push(["hint", sandbox.cams.hint]); phase();
+  knobs.beatReply = { sent: true }; await fire(); calls.push(["hint-after-control-on", sandbox.cams.hint]);   // Control came back on
+  sandbox.cams.hint = "something else"; await fire(); calls.push(["hint-unrelated", sandbox.cams.hint]);       // an unrelated hint stays
   sandbox.camerasStop(); await settle(); knobs.beatReply = { sent: true }; control(false);
   // 18. The secret swap. The SDK is given the placeholder; the real secret goes into the join message only while the
   // join runs, and the prototypes are the originals again afterwards, however the join ended.

@@ -314,10 +314,12 @@ class Controller:
         one every KEEP_AWAKE_MIN_S whoever asks, a fixed payload. It is not in CATALOGUE (nothing else can send it), is
         run-neutral (it says nothing about a run) and is audited as one event when the beats start and one when they
         stop, never per beat."""
-        now = time.time()
         async with self._lock:
+            now = time.time()               # under the lock: a request that queued behind a send is timed when it goes
             if actor != "user":
                 return {"sent": False, "refused": f"{actor} may not keep the robot awake: the video is for people"}
+            if not self.store.setting("robot_video_enabled", False):    # again: Settings may have changed while queued
+                return {"sent": False, "refused": "robot video is off (Settings → Robot)"}
             if not self.enabled():
                 return {"sent": False, "control_off": True, "refused": "control is switched off (Settings → Safety)"}
             if now - self._beat_at < KEEP_AWAKE_MIN_S:

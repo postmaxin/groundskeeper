@@ -215,6 +215,9 @@ function camerasBeats(ticket) {
       if (cams.controlOff && cams.phase !== "error" && cams.hint !== CAM_CONTROL_OFF_HINT) {
         cams.hint = CAM_CONTROL_OFF_HINT;
         camerasDraw();
+      } else if (!cams.controlOff && cams.hint === CAM_CONTROL_OFF_HINT) {
+        cams.hint = "";                               // Control came back on: only this hint goes, not an unrelated one
+        camerasDraw();
       }
     } catch { /* quiet: the next beat tries again */ }
   };

@@ -330,6 +330,8 @@ def test_control_off_from_the_server_shows_the_existing_hint_even_after_the_vide
     hint = next(c for c in seg if c[0] == "hint")
     assert "Control is off" in hint[1]
     assert ["phase", "waiting", "Waiting for the robot's video…"] in seg
+    assert ["hint-after-control-on", ""] in seg                        # Control back on: that hint goes ...
+    assert ["hint-unrelated", "something else"] in seg                 # ... and only that one
 
 
 # -- the scoped secret swap (a stopgap, #46) -----------------------------------------------------------------------
