@@ -20,8 +20,8 @@ People can also sign in through an OpenID Connect provider (app/oidc.py); that g
 `PANEL_PASSWORD=off` then turns the password off: no password sign-in, no first-run setup code, no password change.
 
 Stored in the settings table: `auth` {scrypt hash, salt, set}, `auth_sessions` {sha256(session): {created, seen,
-agent, user and sub (OIDC sign-ins)}}, `api_tokens` [{id, name, sha256, hint, created, used}]. Only hashes; a session or
-token is shown once."""
+agent, user and sub (OIDC sign-ins)}}, `api_tokens` [{id, name, sha256, hint, created, used}] and
+`api_tokens_metrics` (same rows: the metrics-only tokens). Only hashes; a session or token is shown once."""
 import hashlib
 import hmac
 import logging
@@ -53,6 +53,11 @@ LOCKED_PREFIXES = ("/api/", "/tiles/", "/imagery/")
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 # The only changes an API token may ask for; everything else that is not a read needs a person. Default closed.
 TOKEN_WRITES = {("POST", "/api/control/preview"), ("POST", "/api/control/send")}
+# Token scopes. "full" (also a row with no scope, as every token made before scopes) is the behaviour above.
+# "metrics" may only GET or HEAD exactly METRICS_PATH (compared whole: no prefix) and nothing else (metrics_may).
+SCOPES = ("full", "metrics")
+TOKEN_STORES = ("api_tokens", "api_tokens_metrics")     # settings holding token rows; the second is metrics-only
+METRICS_PATH = "/api/metrics"
 # Paths a signed, expiring link may open without a session: the camera snapshot in a phone notification, which the
 # phone's notification service fetches with no cookie (sign_path).
 SIGNED_PREFIXES = ("/api/frigate/snapshot/",)
@@ -196,43 +201,71 @@ class Auth:
         self.store.set_setting("auth_sessions", {})
 
     # -- API tokens --------------------------------------------------------------------------------------------------
-    def tokens(self) -> list[dict]:
-        return [{k: t.get(k) for k in ("id", "name", "hint", "created", "used")} for t in self.store.setting("api_tokens") or []]
+    # Full tokens live in `api_tokens`, exactly as before scopes. Metrics-only tokens live in `api_tokens_metrics`, a
+    # setting that code from before scopes never reads: if someone rolls back to an older image, a metrics token
+    # simply stops working. (Stored beside the full tokens with a `scope` flag, the old code would match its hash,
+    # ignore the flag, and the token would become a full, command-capable one.)
+    def _rows(self, key: str) -> list[dict]:
+        rows = self.store.setting(key)
+        return rows if isinstance(rows, list) else []
 
-    def new_token(self, name: str) -> dict:
+    def tokens(self) -> list[dict]:
+        out = []
+        for key in TOKEN_STORES:
+            for t in self._rows(key):
+                scope = _scope(t, key)
+                if scope is not None:                    # a row with a scope nobody knows is not listed as usable
+                    out.append({**{k: t.get(k) for k in ("id", "name", "hint", "created", "used")}, "scope": scope})
+        return sorted(out, key=lambda t: t.get("created") or 0)
+
+    def new_token(self, name: str, scope: str = "full") -> dict:
         name = (name or "").strip()[:60]
         if not name:
             raise ValueError("give the token a name (what will use it)")
+        if not isinstance(scope, str) or scope not in SCOPES:
+            raise ValueError("scope must be 'full' or 'metrics'")
         token = "gk_" + secrets.token_urlsafe(32)
-        rows = self.store.setting("api_tokens") or []
+        key = "api_tokens_metrics" if scope == "metrics" else "api_tokens"
         row = {"id": secrets.token_hex(4), "name": name, "sha256": _sha(token), "hint": token[-4:],
-               "created": time.time(), "used": None}
-        self.store.set_setting("api_tokens", rows + [row])
-        self.store.event("auth", f"API token '{name}' was created")
-        return {"token": token, **{k: row[k] for k in ("id", "name", "hint", "created")}}
+               "created": time.time(), "used": None}                  # no scope key: the store says what it is
+        self.store.set_setting(key, self._rows(key) + [row])
+        self.store.event("auth", f"API token '{name}'{' (metrics only)' if scope == 'metrics' else ''} was created")
+        return {"token": token, **{k: row[k] for k in ("id", "name", "hint", "created")}, "scope": scope}
 
     def revoke_token(self, token_id: str) -> bool:
-        rows = self.store.setting("api_tokens") or []
-        keep = [t for t in rows if t.get("id") != token_id]
-        if len(keep) == len(rows):
-            return False
-        self.store.set_setting("api_tokens", keep)
-        self.store.event("auth", f"API token '{next(t['name'] for t in rows if t.get('id') == token_id)}' was revoked")
-        return True
-
-    def token_ok(self, header: str | None) -> bool:
-        if not header or not header.lower().startswith("bearer "):
-            return False
-        want = _sha(header[7:].strip())
-        rows = self.store.setting("api_tokens") or []
-        for t in rows:
-            if _same(t.get("sha256", ""), want):
-                now = time.time()
-                if not t.get("used") or now - t["used"] > SEEN_EVERY_S:
-                    t["used"] = now
-                    self.store.set_setting("api_tokens", rows)
+        for key in TOKEN_STORES:
+            rows = self._rows(key)
+            keep = [t for t in rows if t.get("id") != token_id]
+            if len(keep) != len(rows):
+                self.store.set_setting(key, keep)
+                name = next(t.get("name") for t in rows if t.get("id") == token_id)
+                self.store.event("auth", f"API token '{name}' was revoked")
                 return True
         return False
+
+    def token_ok(self, header: str | None) -> bool:
+        return self.token_scope(header) is not None
+
+    def token_scope(self, header: str | None) -> str | None:
+        """The scope ('full' or 'metrics') of the API token in this Authorization header; None if it is not one.
+        If a hash is somehow in more than one row, the most restrictive scope wins; a row with a scope this code
+        does not know makes the token invalid (a future scope must not be read as full)."""
+        if not header or not header.lower().startswith("bearer "):
+            return None
+        want = _sha(header[7:].strip())
+        found = []
+        for key in TOKEN_STORES:
+            rows = self._rows(key)
+            for t in rows:
+                if _same(t.get("sha256", ""), want):
+                    found.append(_scope(t, key))
+                    now = time.time()
+                    if not t.get("used") or now - t["used"] > SEEN_EVERY_S:
+                        t["used"] = now
+                        self.store.set_setting(key, rows)
+        if not found or None in found:
+            return None
+        return "metrics" if "metrics" in found else "full"
 
     # -- signed links ------------------------------------------------------------------------------------------------
     def _key(self) -> bytes:
@@ -264,13 +297,15 @@ class Auth:
 
     # -- the gate ----------------------------------------------------------------------------------------------------
     def who(self, method: str, path: str, headers, cookies, query: str = "") -> str | None:
-        """'internal', 'token', 'session', 'signed' or 'open' when the request may go on; None when it must sign in."""
+        """'internal', 'token', 'metrics' (a metrics-only token), 'session', 'signed' or 'open' when the request may go
+        on; None when it must sign in. Only 'token' may ask for robot commands: nothing treats 'metrics' as one."""
         if disabled() or not needs_auth(path):
             return "open"
         if _same(headers.get(INTERNAL_HEADER), INTERNAL):
             return "internal"
-        if self.token_ok(headers.get("authorization")):
-            return "token"
+        scope = self.token_scope(headers.get("authorization"))
+        if scope is not None:
+            return "metrics" if scope == "metrics" else "token"
         if self.session_ok(cookies.get(COOKIE)):
             return "session"
         if method in ("GET", "HEAD") and self.signed_ok(path, query):
@@ -278,9 +313,25 @@ class Auth:
         return None
 
 
+def _scope(row: dict, store: str = "api_tokens") -> str | None:
+    """A stored row's scope, or None if it must not be used. A row in `api_tokens` with no scope (every row from before
+    scopes), None or "full" is full. In `api_tokens_metrics` it is metrics. Any other stored value, including "metrics"
+    in `api_tokens` (where code from before scopes would read it as full), is unknown, so the token is refused."""
+    if not isinstance(row, dict):
+        return None
+    if store == "api_tokens_metrics":
+        return "metrics" if row.get("scope") is None else None
+    return "full" if row.get("scope") in (None, "full") else None
+
+
 def token_may(method: str, path: str) -> bool:
-    """May an API token make this request? Any read, and the short list of writes."""
+    """May a full API token make this request? Any read, and the short list of writes."""
     return method in SAFE_METHODS or (method, path) in TOKEN_WRITES
+
+
+def metrics_may(method: str, path: str) -> bool:
+    """May a metrics-only token make this request? Only GET or HEAD on exactly /api/metrics."""
+    return method in ("GET", "HEAD") and path == METRICS_PATH
 
 
 def same_origin(method: str, headers, panel_url: str | None = None) -> bool:
@@ -307,7 +358,7 @@ def main(argv: list[str]) -> int:
     from .config import load
     from .store import Store
     store = Store(load().data_dir)
-    for key in ("auth", "auth_sessions", "api_tokens"):
+    for key in ("auth", "auth_sessions", *TOKEN_STORES):
         store.delete_setting(key)
     store.event("auth", "the password, sessions and API tokens were reset from the command line")
     print("Reset. Restart the panel; its log will show a new setup code.")

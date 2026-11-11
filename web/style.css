@@ -229,6 +229,7 @@ a { color: var(--link); }
 .btn.pri { background: var(--ok); color: var(--on-accent); border-color: transparent; }
 .playbtn { gap: 6px; min-width: 96px; }
 .btn.slim, .field.slim { min-height: 32px; padding: 0 10px; margin: 0; }
+.tapmin { min-height: 32px; align-items: center; }      /* a checkbox label is a tap target too */
 .tiny { font-size: 11px; }
 .seg { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 3px; border-radius: 10px; background: var(--card2); border: 1px solid var(--line); }
 .seg button { min-height: 36px; padding: 0 12px; border-radius: 7px; border: 0; background: transparent; color: var(--text2); font-size: 13px; font-weight: 500; cursor: pointer; }

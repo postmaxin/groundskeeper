@@ -43,6 +43,15 @@ someone else on your network cannot claim the panel before you do. Sessions last
   safety switches, the map, the password or other tokens; those need you, signed in. A token is shown once. AI
   assistants use their own token, set in
   [AI assistant](#settings/assistant).
+  - **A full token reaches** every read under `/api/` (the map, run tracks, positions, settings without their
+    secrets, Frigate snapshots and the live yard-camera streams), the aerial tiles under `/tiles/` and `/imagery/`,
+    and robot commands while Control is on (strict checks, never camera-on). Treat it like a key to the yard.
+  - **A metrics-only token** (tick **Metrics only** when you create it) reaches `GET /api/metrics` and nothing else:
+    every other locked path (`/api/`, `/tiles/`, `/imagery/`, including the live stream and the command routes)
+    answers 403. Open paths such as `/health` and the sign-in page answer as they do for anyone. Use
+    this kind for Prometheus: the token sits in a config file or a secret, and a leak shows no more than the
+    metrics. Until the metrics endpoint is added to the panel, such a token can read nothing at all. Tokens made
+    before this option stay full.
 - **Forgot the password?** Run `docker exec groundskeeper python -m app.auth reset` and restart the container.
   This also removes every session and API token. The log then shows a new setup code.
 - **Behind a reverse proxy** (for https or a hostname): set `PANEL_URL` to the address people open, so changes

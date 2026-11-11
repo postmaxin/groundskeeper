@@ -7,6 +7,11 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 
 ### Added
 
+- **"Metrics only" API tokens** (Settings → Access, or `"scope": "metrics"` on `POST /api/auth/tokens`). Such a token
+  can read `/api/metrics` and is refused (403) on every other locked path (`/api/`, `/tiles/`, `/imagery/`), so a
+  scrape token that leaks gives away nothing about the yard. Existing tokens stay full, and the box is off by
+  default. Metrics tokens are kept apart from the full ones, so rolling back to an older image cannot turn one into
+  a full token. The metrics endpoint itself comes next.
 - **A Cameras tile on Live** shows the robot's own cameras (front, left, right, back), one at a time, while the tile
   is open. It switches the cameras on (Control on, never off), plays the stream with Agora's SDK from this panel
   (the panel asks the SDK not to send usage statistics or upload logs, and switches off its remote configuration; a
