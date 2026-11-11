@@ -470,10 +470,12 @@ The panel does not get into the robot, and no video passes through the panel. It
    leaving. A load of the SDK script that hangs gives up after 20 s so the next try loads it again. It joins as
    an audience member with `aes-128-gcm2`, the key and the base64-decoded salt, and plays uid 1. **Stopgap (#46):** the
    Web SDK RSA-OAEP-wraps the secret with a built-in 1024-bit key, which holds at most 62 bytes, and the robot's secret
-   is 64, so `join()` throws. The tile gives `setEncryptionConfig` a constant placeholder (not a secret) and, only for
-   the length of `client.join()`, wraps `WebSocket.prototype.send` and `XMLHttpRequest.prototype.send` to write the real
-   secret into the join message (and drop `aes_encrypt`), restoring them in a `finally`; joins run one at a time, and a
-   join message with no secret field fails visibly ("video library changed"). The secret goes unwrapped inside TLS to
+   is 64, so `join()` throws. The tile gives `setEncryptionConfig` a constant placeholder (not a secret) and wraps
+   `WebSocket.prototype.send` and `XMLHttpRequest.prototype.send` to write the real secret into any SDK message that
+   carries the secret field (and drop `aes_encrypt`). The wrapper lives as long as the client, because when the SDK's
+   signalling reconnects it clears its join response and sends `join_v3` again from the same stored placeholder secret
+   (the lighter `rejoin_v3` carries no secret); `camerasLeave()` removes it, a new one replaces any old one, and joins
+   run one at a time. A join frame with no secret field fails visibly ("video library changed"). The secret goes unwrapped inside TLS to
    Agora, whose servers decrypt the stream for the viewer anyway. The vendored SDK is not modified. Retired by #46. It leaves the channel
    on close, camera change, leaving Live, a hidden tab and page close. A token's expiry event rejoins with a fresh token
    (the route picks the viewer uid, so a token cannot be renewed in place). No CSP is set: `connect-src` cannot admit

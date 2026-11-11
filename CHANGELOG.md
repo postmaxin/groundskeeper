@@ -25,7 +25,7 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
   not in the control catalogue, so `/api/control/send` cannot send it). Events note when it starts and stops, not
   each beat. The panel's own keep-awake and camera-on are matched to their echoes one for one, so they are not
   taken for the phone app, while the real app's beats still are. The stream's 64-character secret is longer than
-  Agora's Web SDK can wrap, so the tile now writes it into the join message itself, only for the length of the join
+  Agora's Web SDK can wrap, so the tile now writes it into the join message itself, for as long as the client lives (so a reconnect works too)
   (a stopgap, #46: it travels unwrapped inside TLS to Agora, whose servers decrypt the stream for your browser anyway).
   Allow `*.agora.io` and `*.sd-rtn.com` in ad blockers. The Yarbo app switches the cameras off when it goes to the
   background, which stops the panel's video until the tile is reopened.

@@ -336,7 +336,7 @@ def test_control_off_from_the_server_shows_the_existing_hint_even_after_the_vide
 
 # -- the scoped secret swap (a stopgap, #46) -----------------------------------------------------------------------
 @needs_node
-def test_the_real_secret_is_written_into_the_join_message_only_while_joining():
+def test_the_real_secret_goes_into_the_join_frame_and_into_a_rejoin_while_the_client_lives_and_is_removed_on_leave():
     seg = segment(run_flow(), "swap")
     n = next(i for i, c in enumerate(seg) if c[0] == "join")
     ws = [c for c in seg[n:] if c[0] == "ws-send"]
@@ -349,10 +349,14 @@ def test_the_real_secret_is_written_into_the_join_message_only_while_joining():
     assert '"ts":1731234567890123456' in during[3][1]                                               # nothing re-rounded
     xhr = [c for c in seg[n:] if c[0] == "xhr-send"]
     assert json.loads(xhr[0][1]) == {"aesMode": "aes-128-gcm2", "aesSecret": message["aes_secret"], "uid": 5}
-    assert ["restored", True, True] in seg
-    # After the join the same message goes out as the SDK made it: wrapped, with its flag, no real secret.
-    assert json.loads(after[0][1])["_message"]["aes_secret"] == "WRAPPED-BY-THE-SDK" and '"aes_encrypt":true' in after[0][1]
-    assert xhr[1] == ["xhr-send", '{"aesSecret":"x"}']
+    # Still installed after join (the SDK sends join_v3 again when its signalling reconnects): that frame, as the SDK
+    # makes it (wrapped, with its flag), gets the real secret; a frame with no secret field (rejoin_v3) is left alone.
+    restored = [c for c in seg if c[0] == "restored"]
+    assert restored == [["restored", False, False], ["restored", True, True]]                       # in place, then gone on leave
+    again = json.loads(after[0][1])["_message"]
+    assert again["aes_secret"] == message["aes_secret"] and "aes_encrypt" not in again
+    assert after[1] == ["ws-send", '{"_id":9,"_type":"rejoin_v3","_message":{"cid":1,"uid":2}}']
+    assert json.loads(xhr[1][1]) == {"aesSecret": message["aes_secret"]}
 
 
 @needs_node
@@ -390,8 +394,10 @@ def test_overlapping_starts_never_share_a_wrapper_or_a_secret():
     assert [c[0] for c in first].count("join") == 1                              # A joins and is held there
     assert [c[0] for c in held][:2] == ["intervals", "join"]                    # B's join waited until A let go
     used = [re.search(r"SYNTHETICSECRET0+\d+", c[1]).group(0) for c in first + held if c[0] == "ws-send" and "aes_secret" in c[1]]
-    assert used == [key(1), key(2)]                                              # each join carried its own start's secret
-    assert ["restored", True, True] in held
+    assert used == [key(1), key(2), key(2)]                                              # each join carried its own start's secret
+    assert ["restored", False, False] in held and ["restored", True, True] in held       # one wrapper, gone on leave
+    again = [json.loads(c[1])["_message"]["aes_secret"] for c in held if c[0] == "ws-send" and "_type\":\"join" in c[1]]
+    assert again == [key(2), key(2)]                                                       # B's reconnect carries B's secret
 
 
 @needs_node
@@ -407,12 +413,13 @@ def test_the_source_gives_the_sdk_only_the_placeholder_and_uses_the_secret_in_on
     assert not re.search(r"\bsecret\b[^;]*(cams\.|localStorage|sessionStorage|console|location\.)", CODE)
 
 
-def test_the_swap_is_scoped_to_the_join_and_restored_in_a_finally():
-    body = CODE[CODE.index("async function camerasJoinSwapped"):]
-    body = body[:body.index("const camerasBytes")]
+def test_the_swap_is_one_wrapper_removed_on_leave_and_when_the_join_fails():
+    body = CODE[CODE.index("function camerasSwapInstall"):]
+    body = body[:body.index("let camJoinTail")]
     assert body.count("WebSocket.prototype.send =") == 3 and body.count("XMLHttpRequest.prototype.send =") == 3
-    assert body.index("finally") < body.index("= wsSend") and body.index("finally") < body.index("= xhrSend")
-    assert "Promise.race([client.join(" in body
+    assert body.startswith("function camerasSwapInstall(secret) {\n  if (camSwapRemove) camSwapRemove();")   # never two
+    assert re.search(r"function camerasLeave\(\) \{[^}]*camSwapRemove\(\)", CODE, re.S)
+    assert "Promise.race([client.join(" in CODE
     assert CODE.count("WebSocket.prototype.send =") == 3                       # nowhere else is a prototype touched
 
 

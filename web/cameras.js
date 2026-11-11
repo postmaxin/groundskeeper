@@ -16,7 +16,7 @@
      hiding the tab and closing the page all leave the channel.
    - The token, key and salt live in local variables of one function call. They are not kept on `cams`, in the DOM, in
      storage or the URL, and nothing here writes to the console. The stream's secret is longer than Agora's Web SDK
-     can wrap (see camerasJoin), so only around client.join() is it written into the join message in its place. (The SDK keeps a few `websdk_ng_*` items of its own
+     can wrap (see camerasSwapInstall), so for the client's lifetime it is written into the SDK's join messages in its place. (The SDK keeps a few `websdk_ng_*` items of its own
      in this panel's localStorage: a device id, a cache of its settings and of a preload. This file clears them when
      the SDK has loaded and when the channel is left; none of them holds the token, key or salt.)
    - Agora's SDK is told, before any client exists, not to send usage statistics, not to upload logs, not to fetch
@@ -150,6 +150,7 @@ function camerasLeave() {
   clearInterval(cams.beatTimer);                    // no more keep-awake beats, on every way of stopping
   cams.beatTimer = null;
   cams.controlOff = false;
+  if (camSwapRemove) camSwapRemove();               // the secret swap lives as long as the client
   const client = cams.client;
   cams.client = null;
   camerasForgetSdkStorage();
@@ -240,15 +241,48 @@ function camerasSwapBody(body, secret) {
 
 // STOPGAP (#46): joins with the real stream secret although the Web SDK cannot wrap one this long. The SDK was given a
 // placeholder (CAM_PLACEHOLDER_SECRET), wraps that, and puts it in its join message (a WebSocket text frame, and the
-// access-point request on XMLHttpRequest). For the length of the join only, WebSocket.prototype.send and
-// XMLHttpRequest.prototype.send are wrapped to put the real secret in that message. The connection is wss/TLS, to Agora's
-// servers, which decrypt the stream for the viewer anyway. The functions are put back in a finally; joins run one at a
-// time, so a wrapper never outlives its join or carries another start's secret; the secret stays in this call's locals.
-// Fails (visibly) when the join message had no secret field: the library has changed and the stream would not decrypt.
+// access-point request on XMLHttpRequest). WebSocket.prototype.send and XMLHttpRequest.prototype.send are wrapped to put
+// the real secret in any message that carries the secret field. The wrapper lives as long as the client does, not only
+// for join(): when the SDK's signalling reconnects it clears its join response and sends join_v3 again, built from the
+// same stored (placeholder) secret, and asks the access point again (agora.js 4.24.9: Signal websocket RECONNECTING sets
+// joinResponse to undefined, join() then sends RF.JOIN; getRejoinMessage, used by the lighter rejoin_v3, carries no
+// secret). camerasLeave() removes it, and installing a new one removes any old one first, so there is never more than one
+// wrapper and a left client's secret is never swapped into another start's frames. The connection is wss/TLS, to Agora's
+// servers, which decrypt the stream for the viewer anyway. The secret lives only in this closure. Fails (visibly) when
+// the join frame had no secret field: the library has changed and the stream would not decrypt.
+let camSwapRemove = null;
+function camerasSwapInstall(secret) {
+  if (camSwapRemove) camSwapRemove();
+  const wsSend = WebSocket.prototype.send;
+  const xhrSend = XMLHttpRequest.prototype.send;
+  let active = true;
+  let frames = 0;
+  // Only a WebSocket frame counts as the join having carried the secret: an access-point request that still has the
+  // field must not hide a join frame that no longer does.
+  const wsWrap = function (data) {
+    if (!active) return wsSend.call(this, data);
+    const r = camerasSwapBody(data, secret);
+    if (r.swapped) frames++;
+    return wsSend.call(this, r.body);
+  };
+  const xhrWrap = function (data) { return xhrSend.call(this, active ? camerasSwapBody(data, secret).body : data); };
+  const remove = () => {
+    active = false;                                 // a wrapper someone else wrapped over stays harmless
+    if (WebSocket.prototype.send === wsWrap) WebSocket.prototype.send = wsSend;
+    if (XMLHttpRequest.prototype.send === xhrWrap) XMLHttpRequest.prototype.send = xhrSend;
+    if (camSwapRemove === remove) camSwapRemove = null;
+  };
+  WebSocket.prototype.send = wsWrap;
+  XMLHttpRequest.prototype.send = xhrWrap;
+  camSwapRemove = remove;
+  return { frames: () => frames };
+}
+
+// Joins run one at a time. A start that is no longer live never reaches the wrapper.
 let camJoinTail = Promise.resolve();
 function camerasJoin(client, args, secret, live) {
   const run = camJoinTail.then(() => {
-    if (!live()) throw new Error("This start was closed.");     // never reached the wrapper; the caller is not live either
+    if (!live()) throw new Error("This start was closed.");     // the caller is not live either, and says nothing
     return camerasJoinSwapped(client, args, secret);
   });
   camJoinTail = run.catch(() => {});
@@ -256,28 +290,21 @@ function camerasJoin(client, args, secret, live) {
 }
 
 async function camerasJoinSwapped(client, args, secret) {
-  const wsSend = WebSocket.prototype.send;
-  const xhrSend = XMLHttpRequest.prototype.send;
-  let active = true;
-  let seen = 0;
-  const fix = (body, isJoin) => { const r = camerasSwapBody(body, secret); if (r.swapped && isJoin) seen++; return r.body; };
-  // Only the WebSocket frame counts as the join having carried the secret: an access-point request that still has the
-  // field must not hide a join frame that no longer does.
-  const wsWrap = function (data) { return wsSend.call(this, active ? fix(data, true) : data); };
-  const xhrWrap = function (data) { return xhrSend.call(this, active ? fix(data, false) : data); };
+  const swap = camerasSwapInstall(secret);
   let timer;
-  WebSocket.prototype.send = wsWrap;
-  XMLHttpRequest.prototype.send = xhrWrap;
   try {
     await Promise.race([client.join(...args),
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("The join timed out.")), CAM_JOIN_TIMEOUT_MS); })]);
+  } catch (e) {
+    if (camSwapRemove) camSwapRemove();             // no client to keep it for
+    throw e;
   } finally {
-    active = false;                                 // a wrapper someone else wrapped over stays harmless
     clearTimeout(timer);
-    if (WebSocket.prototype.send === wsWrap) WebSocket.prototype.send = wsSend;
-    if (XMLHttpRequest.prototype.send === xhrWrap) XMLHttpRequest.prototype.send = xhrSend;
   }
-  if (!seen) throw new Error("video library changed");
+  if (!swap.frames()) {
+    if (camSwapRemove) camSwapRemove();
+    throw new Error("video library changed");
+  }
 }
 
 const camerasBytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));

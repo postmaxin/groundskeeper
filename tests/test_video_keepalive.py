@@ -464,3 +464,33 @@ def test_a_malformed_payload_takes_no_pending_send(tmp_path, monkeypatch):
     for junk in (None, "oops", [1], b"junk", 7):
         assert r.own_echo("set_working_state", 1000.1, junk) is False
     assert r.own_echo("set_working_state", 1000.3, {"state": 1}) is True       # the real echo still finds its send
+
+
+# -- metrics-only tokens (#43) are not people ------------------------------------------------------------------------------
+def test_a_metrics_only_token_is_refused_on_both_video_routes_and_never_reaches_a_handler(t):
+    ready(t)
+    made = t.c.post("/api/auth/tokens", json={"name": "scrape", "scope": "metrics"}).json()["token"]
+    scraper = TestClient(main.app, base_url="http://panel.test", headers={"Authorization": f"Bearer {made}"})
+    for path, body in (("/api/video/keepalive", {}), ("/api/video/token", {"camera": "front"})):
+        r = scraper.post(path, json=body)
+        assert r.status_code == 403 and "only read /api/metrics" in r.json()["detail"]
+    assert scraper.post("/api/control/send", json={"cmd": "pause", "confirm": True}).status_code == 403
+    assert t.cloud.sent == []
+    assert beat(t).json()["sent"] is True                          # the person still can
+
+
+@pytest.mark.parametrize("who, actor", [("metrics", "token"), ("token", "token"), ("session", "user")])
+def test_a_metrics_gate_result_is_never_a_person(who, actor):
+    request = SimpleNamespace(state=SimpleNamespace(who=who))
+    assert main._actor(request) == actor                           # the keep-awake refuses any actor but "user"
+
+
+def test_a_person_check_wants_a_session_cookie_not_a_bearer_token(t, monkeypatch):
+    monkeypatch.delenv("PANEL_AUTH", raising=False)
+    from fastapi import HTTPException
+    bearer = SimpleNamespace(cookies={}, headers={"authorization": "Bearer gk_x"}, state=SimpleNamespace(who="metrics"),
+                             app=main.app)
+    with pytest.raises(HTTPException) as e:
+        main._person(bearer)
+    assert e.value.status_code == 403
+    assert asyncio.run(t.controller.keep_awake(actor=main._actor(bearer)))["sent"] is False

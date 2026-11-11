@@ -304,14 +304,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // 18. The secret swap. The SDK is given the placeholder; the real secret goes into the join message only while the
   // join runs, and the prototypes are the originals again afterwards, however the join ended.
   const restored = () => calls.push(["restored", sandbox.WebSocket.prototype.send === wsSendOriginal, sandbox.XMLHttpRequest.prototype.send === xhrSendOriginal]);
-  const afterJoin = () => { new sandbox.WebSocket().send(joinMessage(WRAPPED)); new sandbox.XMLHttpRequest().send("{\"aesSecret\":\"x\"}"); };
+  // After the join, as on a signalling reconnect: join_v3 sent again with the SDK's stored (wrapped) secret, the lighter
+  // rejoin_v3 (no secret), and another access-point request.
+  const afterJoin = () => {
+    new sandbox.WebSocket().send(joinMessage(WRAPPED));
+    new sandbox.WebSocket().send('{"_id":9,"_type":"rejoin_v3","_message":{"cid":1,"uid":2}}');
+    new sandbox.XMLHttpRequest().send("{\"aesSecret\":\"x\"}");
+  };
   mark("swap"); sandbox.camerasOpen(); await settle(); restored(); afterJoin();
   calls.push(["leak", JSON.stringify(Object.values(storage)).includes(KEY_PREFIX),
     Object.entries(sandbox.cams).filter(([k]) => k !== "client").some(([, v]) => { try { return String(JSON.stringify(v)).includes(KEY_PREFIX); } catch { return false; } }),
     Object.values(sandbox.cams).some((v) => typeof v === "string" && v.includes(KEY_PREFIX))]);
-  sandbox.camerasStop(); await settle();
+  sandbox.camerasStop(); await settle(); restored();                  // leaving removes it
   mark("swap-camel"); knobs.joinMsg = "camel"; sandbox.camerasOpen(); await settle(); restored();
-  sandbox.camerasStop(); await settle();
+  sandbox.camerasStop(); await settle(); restored();
   mark("swap-changed"); knobs.joinMsg = "no-secret-field"; sandbox.camerasOpen(); await settle(); phase(); restored();
   sandbox.camerasStop(); await settle();
   mark("swap-xhr-only"); knobs.joinMsg = "xhr-only"; sandbox.camerasOpen(); await settle(); phase(); restored();
@@ -332,6 +338,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   sandbox.camerasPick("right"); await settle();
   mark("swap-overlap-held"); calls.push(["intervals", intervals.size]);
   relA(); knobs.joinGate = null; await settle(); restored();
-  sandbox.camerasStop(); await settle();
+  afterJoin();                                                        // a reconnect of B's client: B's secret, not A's
+  sandbox.camerasStop(); await settle(); restored();
   console.log(JSON.stringify(calls));
 })();
