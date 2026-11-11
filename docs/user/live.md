@@ -75,7 +75,18 @@ are pink, edge passes violet.
   wrap, so the panel puts it into the SDK's join message and access-point request itself, unwrapped inside the TLS connections to Agora, whose
   servers decrypt the stream for your browser anyway; this is a stopgap until Agora fixes their SDK (issue #46). The SDK also keeps a few items of its own in this
   browser's storage; the panel clears them when the SDK has loaded and when the tile leaves the channel. The demo shows
-  a placeholder.
+  a placeholder. It has played the back camera during a run while the Yarbo app was also open. **Known limitations**,
+  from one robot so far:
+  - Waking a docked, sleeping robot is not shown to work: with the Yarbo app closed, no video arrived within about
+    35 seconds. Opening the Yarbo app once, or a running plan, may be needed first.
+  - Only the back camera has been seen. The front camera may depend on the head (mower, snow blower, leaf blower);
+    left and right are untried.
+  - The Yarbo app going to the background switches the cameras off; reopen the tile (**Try again**).
+  - Ad blockers must allow `*.agora.io` and `*.sd-rtn.com`.
+  - The secret swap is a stopgap: Agora Web SDK 4.24.9 can wrap at most 62 bytes and the robot's secret is 64
+    (issue #46, [AgoraIO/agora-rtc-web#15](https://github.com/AgoraIO/agora-rtc-web/issues/15)).
+  - Not yet looked at on a phone.
+  - Tried with one robot and one viewer at a time.
 - **Control card:** pick a plan and see its areas. Only the buttons that make sense in the robot's state are on.
   Needs control switched on ([Safety](#help/safety)). Hover a button that is off to see why; on a phone or a narrow
   window a line under the buttons says it instead.
