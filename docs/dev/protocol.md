@@ -151,6 +151,23 @@ password and does not join open networks.
 `lte_csq` and `lte_netera`: all 0 on a robot that was on HaLow and Wi-Fi; their units are not confirmed, so the panel
 shows them as reported. Wi-Fi strength is not in the device message; only a scan gives it.
 
+### The robot's own CPU, memory and disk (`system_info`)
+
+The device message carries a `system_info` block with the robot computer's own readings. Its keys are **flat dotted
+strings** (`"cpu.Usage"` is one key, not `cpu` then `Usage`); the panel reads either form. Every key may be missing.
+
+| Key | Value | Unit |
+|---|---|---|
+| `cpu.Temperature` | string such as `"40.5 °C"` | °C (the panel reads the number) |
+| `cpu.Usage` | number | percent of the whole CPU, 0 to 100, as reported (not clamped) |
+| `mem.MemAvailable`, `mem.MemFree`, `mem.Cached` | integer | kB, as in `/proc/meminfo` |
+| `userdata.disk.availableSize`, `userdata.disk.usedSize` | integer | bytes, the robot's user-data partition |
+| `topProc` | list of `{command, cpuUsage, pid}` | `cpuUsage` is per process and can pass 100 |
+
+`topProc` exists but the panel does not read it: process names and PIDs are not needed and the list has no fixed
+size. The metrics endpoint turns these into `yarbo_cpu_usage_ratio`, `yarbo_memory_*_bytes` (kB times 1024) and
+`yarbo_disk_*_bytes`. The units come from one robot's messages.
+
 ## Commands the phone app sends that are not writes
 
 | Command | Payload | Notes |

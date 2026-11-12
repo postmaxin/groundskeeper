@@ -79,6 +79,31 @@ def test_extract_tolerates_missing_and_odd_values():
     assert t["cpu_temp"] == pytest.approx(44.384)
 
 
+def test_extract_reads_the_robots_flat_system_info_keys():
+    flat = {"system_info": {"cpu.Temperature": "40.5 °C", "cpu.Usage": 43.8, "mem.Cached": 4704332,
+                            "mem.MemAvailable": "5895624", "mem.MemFree": 748496,
+                            "userdata.disk.availableSize": 17685383168, "userdata.disk.usedSize": 22105933824,
+                            "topProc": [{"command": "demo", "cpuUsage": 200.0, "pid": 1}]}}
+    t = telemetry.extract(flat)
+    assert t["cpu_temp"] == pytest.approx(40.5) and t["cpu_usage"] == 43.8
+    assert t["mem_cached_kb"] == 4704332 and t["mem_available_kb"] == 5895624 and t["mem_free_kb"] == 748496
+    assert t["disk_available_b"] == 17685383168 and t["disk_used_b"] == 22105933824
+    assert not any("topProc" in str(k) or "demo" in str(v) for k, v in t.items())
+    nested = telemetry.extract({"system_info": {"cpu": {"Usage": 12.5}, "mem": {"MemFree": 7}}})
+    assert nested["cpu_usage"] == 12.5 and nested["mem_free_kb"] == 7
+
+
+def test_extract_tolerates_a_missing_or_odd_system_info():
+    for info in (None, [], "x", {}, {"cpu.Usage": "n/a", "mem.MemFree": [1], "mem.Cached": float("nan")}):
+        t = telemetry.extract({"system_info": info})
+        assert t["cpu_usage"] is None and t["mem_free_kb"] is None and t["disk_used_b"] is None
+        assert t["mem_cached_kb"] is None or math.isnan(t["mem_cached_kb"])
+    assert telemetry.extract({})["cpu_usage"] is None
+    flags = telemetry.extract({"system_info": {"cpu.Usage": True, "mem.MemFree": True,
+                                               "userdata.disk.usedSize": False}})
+    assert flags["cpu_usage"] is None and flags["mem_free_kb"] is None and flags["disk_used_b"] is None
+
+
 def test_labels():
     assert telemetry.head_label(5) == "Mower Pro"
     assert telemetry.head_label(1) == "Snow Blower"

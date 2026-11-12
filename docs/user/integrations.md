@@ -22,6 +22,40 @@ All optional. Each is set in Settings and has a Test button.
 - **Notifications** ([Notifications](#settings/alerts)): an HA notify service, picked from the ones your Home
   Assistant has (the companion app's phones first), and/or a webhook. Alerts: robot
   error, stuck, head changed, cloud needs sign-in, maintenance due, schedule confirmations.
+- **Prometheus** ([Access](#settings/access)): switch **Metrics** on and make a [metrics-only token](#settings/access),
+  then point Prometheus at `GET /api/metrics`. It is built from what the panel already holds, so a scrape asks the
+  robot, Home Assistant and Frigate for nothing, and it is safe to scrape often. It has no position (no latitude,
+  longitude, local x/y or RTK height), no serial number and no robot label; heading is the only pose value.
+
+  ```yaml
+  scrape_configs:
+    - job_name: groundskeeper
+      metrics_path: /api/metrics
+      scrape_interval: 30s
+      authorization:
+        credentials: gk_your_metrics_only_token      # or credentials_file: /etc/prometheus/groundskeeper.token
+      static_configs:
+        - targets: ["192.0.2.10:8425"]               # the panel; add scheme: https behind a reverse proxy
+  ```
+
+  Over plain HTTP the token crosses the network unencrypted. On a shared network, put the panel behind an HTTPS
+  reverse proxy and set `scheme: https` in the scrape job.
+
+  `yarbo_*` are the robot's own values: `yarbo_battery_ratio`, `_battery_voltage_volts`, `_battery_current_amperes`,
+  `_battery_temperature_celsius`, `_cpu_temperature_celsius`, `_charging`, `_error_code`, `_working_state`,
+  `_activity{state}`, `_rtk_fix{quality}`, `_rtk_satellites`, `_odometry_confidence_ratio`, `_heading_degrees`,
+  `_wheel_speed_metres_per_second{side}`, `_wheel_current_amperes{side}`, `_wheel_distance_metres_total{side}`,
+  `_cpu_usage_ratio`, `_memory_available_bytes`, `_memory_free_bytes`, `_memory_cached_bytes`,
+  `_disk_available_bytes`, `_disk_used_bytes` (the robot's computer; its process list is never read),
+  `_halow_signal_dbm`, `_plan_active`, `_plan_progress_ratio` and `_plan_time_left_seconds` (the plan's own progress),
+  and `_heartbeat_age_seconds`. A robot that goes quiet would leave a flat battery line, so once its last snapshot is
+  older than 5 minutes the panel **drops the `yarbo_*` values** and keeps `yarbo_snapshot_age_seconds` and
+  `yarbo_data_fresh` (0) to alert on. `groundskeeper_*` is the panel's own state and is always there: `_up`,
+  `_cloud_connected`, `_route_connected` (the Yarbo cloud is the only route to the robot), `_robot_heard`,
+  `_last_message_age_seconds`, `_robot_messages_total`, `_run_active`, `_stalled`, `_lost_contact`,
+  `_guard_active{guard}`, `_last_command_result{result}`, `_last_command_age_seconds`, `_uptime_seconds` and
+  `_build_info`. States are gauges with a fixed set of labels, so the number of series never grows. Example alerts:
+  `groundskeeper_cloud_connected == 0`, `yarbo_data_fresh == 0`, `yarbo_battery_ratio < 0.2`.
 - **API:** every endpoint with its schema is at [/api/docs](/api/docs). A program such as a Home Assistant
   integration can poll `GET /api/ha/summary` with an [API token](#settings/access): state, battery, positioning,
   lawn, the last finished run, the next schedule window, whether the robot is stuck or out of touch, and whether a

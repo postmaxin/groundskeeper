@@ -14,6 +14,7 @@ from app.store import Store
 class FakeRec:
     def __init__(self, store):
         self.store = store
+        self.t = {}
 
     def status(self):
         return {"snapshot_age_s": 3, "run": None, "plan": {"active": True}}
@@ -28,8 +29,11 @@ def client(tmp_path, monkeypatch):
     store = Store(str(tmp_path))
     gate = auth.Auth(store)
     gate.announce()
-    old = {k: getattr(main.app.state, k, None) for k in ("auth", "rec")}
-    main.app.state.auth, main.app.state.rec = gate, FakeRec(store)
+    store.set_setting("metrics_enabled", True)          # the endpoint is off by default; these tests are about the gate
+    fake_ops = SimpleNamespace(cloud=SimpleNamespace(state="connected"), guard_status=lambda: [],
+                               controller=SimpleNamespace(last=None))
+    old = {k: getattr(main.app.state, k, None) for k in ("auth", "rec", "ops")}
+    main.app.state.auth, main.app.state.rec, main.app.state.ops = gate, FakeRec(store), fake_ops
     with_host = TestClient(main.app, base_url="http://panel.test")      # no `with`: the lifespan (recorder) never runs
     yield SimpleNamespace(c=with_host, auth=gate, store=store)
     for k, v in old.items():
@@ -176,6 +180,7 @@ class RecordingController:
 
     def __init__(self):
         self.calls = []
+        self.last = None
 
     def enabled(self):
         return False
@@ -192,7 +197,8 @@ class RecordingController:
 @pytest.fixture
 def controller(monkeypatch):
     fake = RecordingController()
-    monkeypatch.setattr(main.app.state, "ops", SimpleNamespace(controller=fake), raising=False)
+    ops = SimpleNamespace(controller=fake, cloud=SimpleNamespace(state="connected"), guard_status=lambda: [])
+    monkeypatch.setattr(main.app.state, "ops", ops, raising=False)
     return fake
 
 
