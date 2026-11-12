@@ -49,7 +49,7 @@ recorded, and guarded.
 
 ## 2. What the robot exposes
 
-| Capability | Local broker (`<robot-ip>:1883`, anonymous) | Cloud (Yarbo SDK, account session) |
+| Capability | Local broker (`<robot-ip>:1883`, anonymous; before V3.14.4x) | Cloud (Yarbo SDK, account session) |
 |---|---|---|
 | Connect | Yes | Yes (EMQX; the SDK picks the broker per robot) |
 | Telemetry (`get_device_msg`, `DeviceMSG`, `heart_beat`) | Yes | Yes |
@@ -348,7 +348,7 @@ Before a route is trusted for control it is proved with a harmless command:
 
 1. **Cloud control:** `cmd_recharge` (return to dock) through the SDK while the robot is already docked. Nothing can
    move.
-2. **Local control:** a harmless setting whose result the robot reports, on the local broker. Done 2026-10-21 with
+2. **Local control:** a harmless setting whose result the robot reports, on the local broker. Proved with
    `set_sound_param` (as the app sends it): accepted, with no handshake and no cloud (`docs/dev/protocol.md` →
    Access control). Run commands work locally too (start, pause, stop and return to dock, each seen in the robot's
    state within about 2 s, against up to a minute through the cloud on a weak link). Firmware V3.14.4x then closed

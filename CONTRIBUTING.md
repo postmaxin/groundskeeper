@@ -12,7 +12,8 @@ that breaks one of its rules can't be merged, whether a person or an AI assistan
 - **Imagery sources.** A sharper free aerial map for your county or country helps everyone there. See
   [catalog/README.md](catalog/README.md).
 - **Bug reports**, especially from robots, heads or firmware versions other than the ones the panel was built on.
-- **Code and docs.** Look for issues labelled `good first issue` or `help wanted`.
+- **Code and docs.** Look for issues labelled `good first issue` or `help wanted`. If none are open, ask in
+  [Discussions](https://github.com/Groundskeeper-robot/groundskeeper/discussions) what would help.
 
 ## Set up
 
@@ -36,6 +37,15 @@ Demo mode runs a made-up robot mowing a made-up yard, through the same recorder,
 
 ```bash
 DEMO=1 PANEL_AUTH=off DATA_DIR=./demo-data .venv/bin/python -m app     # http://127.0.0.1:8425
+```
+
+On Windows the commands on this page work as they are in WSL. With Windows Python (Git Bash or PowerShell) the
+virtual environment's programs are in `.venv/Scripts`, not `.venv/bin`. In PowerShell, this runs the demo and then
+clears the variables, so a later run in the same window doesn't start with sign-in off:
+
+```powershell
+$env:DEMO = "1"; $env:PANEL_AUTH = "off"; $env:DATA_DIR = "./demo-data"
+try { .venv\Scripts\python -m app } finally { Remove-Item Env:DEMO, Env:PANEL_AUTH, Env:DATA_DIR }
 ```
 
 `DEMO_SPEED=10` makes it mow faster. Use a separate `DATA_DIR` for the demo: it refuses to start on a folder that
@@ -86,6 +96,10 @@ and Microsoft Edge or Chrome:
 6. [CodeRabbit](https://coderabbit.ai) reviews each PR once it is ready for review, and again on each push
    (`.coderabbit.yaml`; drafts wait). It checks the PR against `AGENTS.md`. Its comments are suggestions: fix what is
    right, reply where it is wrong, and leave the decision to the maintainer. Never weaken a check because it asked.
+
+Dependabot opens PRs for Python packages (weekly), and GitHub Actions and the Docker base image (monthly), as set in
+`.github/dependabot.yml`. A maintainer merges them once CI passes. Some moves are left out on purpose and done by hand
+as their own change: a new `mcp` major, and a new Python minor for the image.
 
 ## Working with an AI assistant
 
