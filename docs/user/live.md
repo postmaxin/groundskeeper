@@ -40,7 +40,7 @@ are pink, edge passes violet.
   the foot of the map explains the colours.
 - **Map tools** (top right): layers (imagery, zones, labels, track, cameras), Problem areas, Signal, 3D and
   Fit yard. On a phone the row keeps Imagery, Zones and Track; the rest are under **More** (tap outside it or press
-  Esc to close it). **Align**, next to the imagery credit at the foot of the map, lines the aerial photo up with the
+  Esc to close it). **Align**, next to the imagery credit just above the legend, lines the aerial photo up with the
   robot's map (also in [Settings → Map imagery](#settings/imagery)).
 - **3D:** tilts the map and raises the ground: the robot's own heights over the lawns (they sharpen with every mow),
   public lidar elevation (USGS 3DEP) around them. The **Height** menu next to it (1× to 3×) draws it taller so small slopes show. Right-drag, or two fingers on
@@ -59,8 +59,14 @@ are pink, edge passes violet.
 - **Cameras:** the robot's own cameras (front, left, right, back), not the yard cameras of the follow-cam. The tile
   is there only when [Settings → Robot → Robot video](#settings/robot) is on. **Open**
   switches the robot's cameras on (needs Control on) and shows one camera at a time: pick Front, Left, Right or
-  Back. The state beside the title is *Connecting*, *Waiting for the robot*, *Live* or an error with **Try again**.
+  Back (each pick switches the cameras on again: the robot stops its video when the last viewer leaves a camera).
+  The state beside the title is *Connecting*, *Waiting for the robot*, *Live* or an error with **Try again**.
   An error says which step failed and a short reason, such as "Joining failed: OperationError".
+  - The tile works with the panel opened over plain http at its LAN address (`http://<server>:8427`) as well as
+    over https: it only watches, so it never asks for the browser's camera or microphone, which browsers allow
+    only on https or localhost. Over plain http the panel hands the browser the stream's token and key
+    unencrypted, as it does everything else, so anyone on the same network can read them: use https on a network
+    you do not trust.
   - **Control is off** (hover the note for this): the panel cannot switch the cameras on, so it plays only if they
     are already on, for example from the Yarbo app. Switch Control on, then **Close** and **Open** the tile again:
     an open tile does not send the camera switch again when Control comes on.

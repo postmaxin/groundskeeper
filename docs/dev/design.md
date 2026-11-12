@@ -1,7 +1,11 @@
 # Groundskeeper design
 
-How the panel works and why. Section numbers are stable: the code cites them (for example `app/control.py` cites
-§10.3, `app/cloud.py` §5.3, `app/mapwrite.py` §7.4).
+How the panel works now, subsystem by subsystem, and the rules each one keeps. Section numbers are stable: the code
+cites them (for example `app/control.py` cites §10.3, `app/cloud.py` §5.3, `app/mapwrite.py` §7.4).
+
+What this document is not: the reasons behind the larger decisions are in [`decisions/`](decisions/) (ADRs, linked
+from the sections below), and plans and open questions are GitHub issues. When the code changes how something works,
+the section changes in the same PR.
 
 Companion documents in this folder:
 
@@ -10,6 +14,7 @@ Companion documents in this folder:
 - [`robot-states.md`](robot-states.md): state codes, pause reasons, error codes and the thresholds the panel uses.
 - [`ui-design.md`](ui-design.md): navigation, the colour tokens and the chart rules.
 - [`imagery-catalog.md`](imagery-catalog.md): the aerial imagery source catalog.
+- [`decisions/`](decisions/): why the panel is the way it is, one decision per record.
 
 Groundskeeper is not affiliated with Yarbo. It uses the commands Yarbo's own SDK documents, read commands the
 community has documented, and write commands only as they were captured from the official app.
@@ -40,7 +45,7 @@ recorded, and guarded.
 ### Non-goals
 
 - **Manual driving** (`cmd_vel`). Never exposed, never sent. It is hard-blocked in the control module, refused in
-  the capture console and not recorded.
+  the capture console and not recorded ([ADR 0002](decisions/0002-no-manual-driving.md)).
 - Multi-tenant hosting. **One install = one household.** All configuration lives in one place, with no hard-coded
   ids, hosts or serials.
 - Firmware modification, or anything over the robot's SSH port. The panel leaves both alone.
@@ -56,12 +61,13 @@ recorded, and guarded.
 | Map / plans / GPS reference / low-confidence config reads | Yes | Yes |
 | Listen to `snowbot/{SN}/#` (including the app's commands) | Yes | Own robot only |
 | Where the phone app's traffic goes | — | **Cloud, even on the home Wi-Fi** |
-| Official run commands | Not used (see §10.2) | Yes; the panel's control route |
+| Official run commands | Not used ([ADR 0007](decisions/0007-yarbo-cloud-only.md)) | Yes; the panel's control route |
 | Map / plan / schedule writes | Not used | Yes, as captured from the app (`map-writes.md`) |
 | Camera video | No | Yes, not on MQTT: the switch is, the stream is Agora's (§13) |
 
 Details and ACLs are in [`protocol.md`](protocol.md). Firmware V3.14.4x closes the local broker (connection refused
-on 1883; #91), so the panel uses only the cloud; the local column is what earlier firmware showed.
+on 1883; #91), so the panel uses only the cloud ([ADR 0007](decisions/0007-yarbo-cloud-only.md)); the local column
+is what earlier firmware showed.
 
 A known failure mode of the cloud route: the SDK can swallow a failed token refresh and keep reconnecting with a
 stale session, which the broker answers with "Not authorized". §5.3 designs around it.
@@ -73,7 +79,6 @@ stale session, which the broker answers with "Not authorized". §5.3 designs aro
 - **Owner:** everything. Switching control or map writing on needs a typed confirmation (`ENABLE`).
 - **Automation identities** (scheduler, Home Assistant, MCP): each has its own entries in the audit log and its own
   allow-list of commands. The MCP identity can never switch a safety setting on (§17).
-- A read-only household viewer role is a possible later addition.
 
 ---
 
@@ -276,12 +281,10 @@ Clean up, Straighten, Round, Smooth and Square work on a feature's own points an
 `[]` on a robot that has none), so nothing fires twice. Home Assistant supplies gate inputs (weather, presence) and
 receives notifications.
 
-The trade-off is explicit: **if the panel is down, nothing runs.** Mitigations: a scheduler heartbeat sensor in Home
-Assistant with an alert when it goes stale, an external uptime monitor, and the phone app as the manual fallback.
-
-Robot-side schedules can be written (`save_schedule`, see `map-writes.md`), but a robot-side schedule starts without
-the panel's gates, so the panel runs its windows itself and **never writes them**. It reads them (`read_schedules`, at
-each map refresh) and shows any it finds on the Schedule page, with an event the first time one appears.
+**If the panel is down, nothing runs.** There is no heartbeat entity yet; an uptime monitor on `/health` notices.
+The panel **never writes robot-side schedules** (`save_schedule` exists, see `map-writes.md`, but it would start without
+the panel's gates). It reads them (`read_schedules`, at each map refresh) and shows any it finds on the Schedule page,
+with an event the first time one appears. Why: [ADR 0003](decisions/0003-panel-owns-scheduling.md).
 
 ### 8.2 Plans
 Plans live on the robot (`read_all_plan`). The panel can create, rename, change the areas of and delete a plan
@@ -294,12 +297,18 @@ Gates: Conditions (§9), battery, presence (an alarm panel, `zone.home` or perso
 "phone app not active" (§5.5). **Auto-start** is opt-in per window and skips the confirmation, never the checks.
 A skipped window records why and what would fix it.
 
-### 8.4 Season profiles by head type
-- **Mower:** the windows and gates above.
-- **Snow:** a first-class profile. Snow runs are the harder ones (night, cold, worse RTK, a real deadline). The
-  recorder, Runs and Health work unchanged on snow runs; snow piles and push directions come from the map.
-- **Leaf:** manual.
-- The UI hides controls for heads that are not attached, and a head change triggers the maintenance checklist (§15).
+### 8.4 Heads
+- Every run records the attached head (`HeadMsg.head_type`); the recorder, Runs and Health work the same for every
+  head. Snow piles are drawn from the map; push directions are kept in the area records but not drawn.
+- A window has a head (mower, snow or any). A window for another head than the attached one is skipped without a
+  notification, so mower windows can stay through the snow season.
+- A head change is an alert and counts for the maintenance items that run "once per head change" (§15).
+- The area settings editor holds the mower's record, so it is read-only on an area labelled only for other heads
+  (a snow blower's driveway) and when the area's labels cannot be read; an unlabelled area stays editable
+  (`areasettings.other_head_block`).
+- The start checks and guards do not depend on the head yet: "Lawn dry" and the rain guard apply to a snow head too
+  (#126, #127), and the UI shows the same controls and wording for every head (#134). The direction is
+  [ADR 0009](decisions/0009-head-aware-run-rules.md).
 
 ---
 
@@ -344,17 +353,10 @@ unconfirmed command is still watched for a few minutes in case the robot acts la
 logged as such.
 
 ### 10.2 First-command proofs
-Before a route is trusted for control it is proved with a harmless command:
-
-1. **Cloud control:** `cmd_recharge` (return to dock) through the SDK while the robot is already docked. Nothing can
-   move.
-2. **Local control:** a harmless setting whose result the robot reports, on the local broker. Proved with
-   `set_sound_param` (as the app sends it): accepted, with no handshake and no cloud (`docs/dev/protocol.md` →
-   Access control). Run commands work locally too (start, pause, stop and return to dock, each seen in the robot's
-   state within about 2 s, against up to a minute through the cloud on a weak link). Firmware V3.14.4x then closed
-   the local broker (#91), so the panel sends everything through the cloud.
-
-The control route follows the result; it is a code-level decision, not a setting a user can flip.
+A route is trusted for control only after a harmless command on it has been seen to work: for the cloud,
+`cmd_recharge` (return to dock) while the robot is already docked, so nothing can move. The route is a code-level
+decision, not a setting a user can flip; today it is the cloud alone ([ADR 0007](decisions/0007-yarbo-cloud-only.md)).
+A new route, or a new class of command, is proved the same way before the panel uses it.
 
 ### 10.3 Interlocks (enforced in core, not just the UI)
 Every request passes, in order: the catalogue, the master switch (`control_enabled`, off on a new install), then the
@@ -364,14 +366,13 @@ interlocks for that command.
 - **Start plan:** the plan exists; no active error; battery ≥ the start threshold; not already running; presence
   rule; Conditions gate; yard clear; phone app not active (§5.5). For a start or resume requested by an AI
   assistant, a check that cannot tell (camera, weather or Home Assistant down) counts as failed.
-- **RTK is not a panel-side gate.** A docked robot often has no RTK fix and no RTCM, and acquires the fix after
-  leaving. The robot enforces its own RTK precondition; the panel sends the command and **surfaces the robot's
-  refusal** verbatim.
+- **RTK is not a panel-side gate.** The robot enforces its own RTK precondition; the panel sends the command and
+  **surfaces the robot's refusal** verbatim ([ADR 0006](decisions/0006-rtk-not-a-start-gate.md)).
 - **Hard checks are never overridable.** Soft checks (a wet lawn) can be overridden by a person, never by the
   scheduler or an assistant.
 - **During a run (guards, every 5 s):** a person or pet on a yard camera, rain starting, or everyone leaving → pause,
   dock or notify, per setting. With control off they only notify. **Resuming after a guard pause is off unless the
-  owner turns it on** (`guard_resume`), because resuming spins the blades.
+  owner turns it on** (`guard_resume`; [ADR 0005](decisions/0005-guard-resume-opt-in.md)).
 - Every command, from any actor, sent or refused, goes into the audit log with its route, payload, checks, result
   and latency.
 
@@ -410,10 +411,8 @@ as `cmd_roller`) are never sent.
   Candidates are uncovered cells over a minimum size (default 1 m²) that were not unknown.
 - **Presentation:** gaps on the Runs map, each with size and a likely cause (missed, boundary margin, next to RTK
   loss).
-- **Execution options**, best first: a robot-side spot or waypoint mow if one exists (`auto_plan_status` has
-  waypoint states and the map has `mul_points`, which suggests it does; not yet captured); a temporary area and
-  plan, created, run once and deleted (read-back verified); or a notification so the gap is fixed in the app.
-  Touch-ups obey every gate and never enter a no-go zone.
+- **Not built:** sending a touch-up to the robot. Gaps are shown, not mowed; the options are in #22. Whatever
+  runs a touch-up obeys every gate and never enters a no-go zone.
 
 ---
 
@@ -537,9 +536,10 @@ The panel does not get into the robot, and no video passes through the panel. It
    Agora hosts), and a random `INSTALL_ID`, all before creating the client (never `enableLogUpload`). The SDK's own
    `websdk_ng_*` localStorage items (device id, cached settings, preload cache) are cleared when it has loaded and on
    leaving. A load of the SDK script that hangs gives up after 20 s so the next try loads it again. It joins as
-   an audience member with `aes-128-gcm2`, the base64-decoded salt and, in place of the key, a placeholder that the
+   a host that publishes nothing (the robot publishes only to broadcasters) with `aes-128-gcm2`, the base64-decoded salt and, in place of the key, a placeholder that the
    secret swap replaces (step 6), and plays uid 1. It leaves the channel
-   on close, camera change, leaving Live, a hidden tab and page close. A token's expiry event rejoins with a fresh token
+   on close, camera change, leaving Live, a hidden tab and page close; a camera change waits 3 s after the leave and
+   sends camera-on again (an Open within 3 s of a Close waits out the rest too), since the robot stops a moment after the last broadcaster leaves. A token's expiry event rejoins with a fresh token and camera-on
    (the route picks the viewer uid, so a token cannot be renewed in place). A network capture of the tile in use
    (SDK 4.24.9, #35) found no statistics, log or remote-configuration traffic: only the access point, the edge
    gateway's signalling and the media. Repeat that capture whenever the SDK is upgraded; `tests/test_cameras_js.py`
@@ -595,9 +595,9 @@ run), H.264 only, the browser SDK's decryption with a bytes salt, and any cap on
 - **Decoder:** zlib/JSON/binary detection; known commands annotated.
 - **Command explorer:** every command seen or documented, its payloads, replies, route, and safety class
   (read / control / write / blocked).
-- **Schema diff:** after a firmware update, the `get_device_msg` field set is diffed against the last version.
 - **Replay rule:** reads replay freely. A write is used by the panel only after it has been captured from the app
-  and replayed against a harmless test object (create and delete a small test feature), with read-back.
+  and replayed against a harmless test object (create and delete a small test feature), with read-back
+  ([ADR 0004](decisions/0004-writes-from-captures-read-back.md)).
 
 One capture per change type, one change per save, so each field can be matched to its meaning. The captures behind
 the panel's write support are summarised in [`map-writes.md`](map-writes.md).
@@ -614,8 +614,7 @@ the panel's write support are summarised in [`map-writes.md`](map-writes.md).
 - **Power:** battery capacity, health, cell temperatures, voltage and current; charging history.
 - **Drive and deck:** wheel and blade motor currents and temperatures, fault flags; wheel slip as a Runs layer, not a
   gate.
-- **Firmware tracker:** versions recorded on change (in the database, never in docs), with an alert. A change
-  should trigger the schema diff and a re-check of local access.
+- **Firmware tracker:** versions recorded on change (in the database, never in docs), with an event in the log.
 - **Error dictionary:** state and error codes mapped to plain English and what to do
   ([`robot-states.md`](robot-states.md)).
 - **Maintenance timers:** by blade-motor hours, distance, mows, runs, charge cycles, days, or once per head change.
@@ -637,9 +636,11 @@ the panel's write support are summarised in [`map-writes.md`](map-writes.md).
 
 ## 17. Integrations
 
-- **Home Assistant, out:** state, battery, RTK quality, current plan, last run, transport health, needs-sign-in,
-  scheduler heartbeat; alerts (stuck, error, guard action, run finished, firmware changed, needs sign-in, scheduler
-  stale, maintenance due). Via HA's REST API with a long-lived token.
+- **Home Assistant, out:** entities for state, battery, RTK quality, running, the robot link, lawn conditions and
+  the last run (`app/ha.py`), every minute, via HA's REST API with a long-lived token. Alerts go to a notify service
+  and/or the webhook: robot error, the robot pausing itself, stuck, lost contact, guard action, head changed, cloud
+  needs sign-in, maintenance due, a start waiting for confirmation, a skipped window and auto-starts
+  (`app/notify.py`).
 - **Home Assistant, in:** weather and soil sensors, presence.
 - **Webhooks:** run and alert events with a JSON payload.
 - **MCP server** (`/mcp`, streamable HTTP, bearer token, off until a token is created). Three tiers:
@@ -679,10 +680,10 @@ the panel's write support are summarised in [`map-writes.md`](map-writes.md).
 | The phone app and the panel fight for the robot | §5.5 guard; confirmation by state change |
 | RTK gating would block every start | §10.3: the robot gates, the panel surfaces the refusal |
 | Gap detection flags RTK-float segments | §12: fixed-RTK only |
-| The panel is down, so nothing mows | §8.1: heartbeat alert, uptime monitor, phone app as fallback |
+| The panel is down, so nothing mows | §8.1: an uptime monitor on `/health`; the phone app as fallback |
 | Frigate misses a person or pet | §11: additional to the robot's detection, never a replacement |
-| A firmware update closed the local broker (V3.14.4x, #91) | The panel is cloud only; the firmware tracker alerts on a change |
-| A firmware update renames telemetry fields | §6.3 tolerant ingestion; schema diff |
+| A firmware update closed the local broker (V3.14.4x, #91) | The panel is cloud only; the firmware tracker logs a change |
+| A firmware update renames telemetry fields | §6.3 tolerant ingestion |
 | A bad map write | §7.4: docked only, validation, diff, read-back, undo, restore |
 | Session-expiry loops | §5.3 |
 | The robot's stuck flag misses a real stuck | §6.4: the panel's own stall rule |
@@ -692,17 +693,7 @@ the panel's write support are summarised in [`map-writes.md`](map-writes.md).
 
 ## 20. Build order
 
-The panel was built in this order; each step works without the next.
-
-| Step | Scope |
-|---|---|
-| 1a | Read-only transports, recorder, Live map on imagery |
-| 1b | Runs analytics and layers, gap detection, imagery alignment, Health, Conditions |
-| 2 | Control catalogue, interlocks and audit; scheduler, windows and gates; Frigate polygons, follow-cam and guards; notifications; maintenance timers |
-| 3 | Capture of app writes |
-| 4 | Map Studio editing with read-back; plans; robot backups; tidy tools |
-| 5 | Integrations: webhooks, MCP server, Home Assistant inputs |
-| 6 | Setup wizard, in-panel help, light theme, phone layout |
+Retired: how the panel was built, step by step, is history. `CHANGELOG.md` and the git log keep it.
 
 ---
 
@@ -713,17 +704,15 @@ The panel was built in this order; each step works without the next.
   imagery → cameras → Home Assistant → weather → safety (recommended: control off, yard must be clear, no resume
   after a guard pause) → notifications. Every step skippable.
 - **No household data in the repository:** no ids, addresses, serials or coordinates.
-- **Licence:** MIT (the Yarbo SDK is MIT). Not affiliated with Yarbo. Writes stay behind explicit opt-in and the
-  safeguards above.
+- **Licence:** the panel's code is MIT; the image includes Yarbo's SDK, which is PolyForm Noncommercial, so the
+  image as a whole is for noncommercial use ([ADR 0008](decisions/0008-sdk-noncommercial-licence.md),
+  `THIRD_PARTY_NOTICES.md`). Not affiliated with Yarbo. Writes stay behind explicit opt-in and the safeguards above.
 
 ---
 
 ## 22. Open questions
 
-- Not yet known: whether the robot has a spot or waypoint mow command usable for gap touch-ups (§12).
-- Not yet known: exactly who wins when the phone app and the panel command the robot at the same moment (§5.5).
-- Not yet known: how the app's remaining area settings map to the robot's numbers (mowing height scale, turning
-  mode, route pattern and others; see `map-writes.md`).
-- Of the robot's three headings (RTK heading, odometry `phi`, IMU yaw), the panel draws odometry `phi` (the 2D arrow
-  and the 3D model): it was checked against the direction actually driven and matched it (`telemetry.heading_deg`).
-  RTK heading and IMU yaw have not been compared.
+Open questions are GitHub issues labelled `research` or `capture needed`, so they can be answered and closed. The
+ones this document used to list: a spot or waypoint mow for touch-ups (#22), who wins when the app and the panel
+command at once (#21), and the remaining area settings (#14, #15). Of the robot's three headings, the panel draws
+odometry `phi` (`telemetry.heading_deg`), which was checked against the direction driven.

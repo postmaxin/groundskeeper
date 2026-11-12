@@ -1532,10 +1532,9 @@ class Recorder:
                          for e in res["events"]]
         return res
 
-    def deck_m(self, head_type) -> float:
-        override = self.store.setting("deck_m")
-        if isinstance(override, (int, float)) and override > 0:
-            return float(override)
+    @staticmethod
+    def deck_m(head_type) -> float:
+        """The head's width: every deck of a type is the same, so it is fixed, never a setting."""
         return coverage.DEFAULT_DECK_M.get(int(head_type) if head_type is not None else -1, 0.53)
 
     async def analyze_run(self, run_id: int, force: bool = False) -> dict | None:

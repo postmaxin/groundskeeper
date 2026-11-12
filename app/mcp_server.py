@@ -68,7 +68,7 @@ ROUTES = [(m, re.compile(p, re.ASCII)) for m, p in [
     ("POST", rf"/api/maintenance/{_ID}/done"),
     ("POST", r"/api/notify/test"),
     ("PUT", r"/api/imagery/(source|key)"),
-    ("PUT", r"/api/settings/(imagery_alignment|deck_m|gates|yard_cameras|ha_notify_service)"),
+    ("PUT", r"/api/settings/(imagery_alignment|gates|yard_cameras|ha_notify_service)"),
     ("PUT", r"/api/integrations/panel"),
     ("PUT", r"/api/(schedule/windows|maintenance/items)"),
 ]]
@@ -77,7 +77,7 @@ ROUTES = [(m, re.compile(p, re.ASCII)) for m, p in [
 # and the weather station (lawn, rain guard) feed the checks, so their connections stay with the user.
 INTEGRATION_FIELDS = {"panel": {"poll_idle_s", "poll_active_s", "map_refresh_s", "raw_every_s", "raw_keep_days",
                                 "run_idle_end_s"}}
-SETTING_KEYS = ("deck_m", "gates", "yard_cameras", "ha_notify_service")
+SETTING_KEYS = ("gates", "yard_cameras", "ha_notify_service")
 NOTIFY_SERVICE = re.compile(r"notify\.[a-z0-9_]{1,64}", re.ASCII)
 YARD_LABELS = {"person", "dog", "cat", "bird", "horse", "sheep", "cow", "bear", "deer", "fox", "rabbit", "raccoon",
                "squirrel", "goat", "bicycle", "motorcycle", "car"}
@@ -504,8 +504,8 @@ class PanelMCP:
 
         @t(annotations=SETUP)
         async def set_setting(key: str, value: Any, confirm: bool = False) -> dict:
-            """Change one panel setting: deck_m; gates (run rules: stricter only); yard_cameras (add cameras Frigate
-            has); ha_notify_service (a notify.* service). The safety switches, guard auto-resume, lawn rules, camera
+            """Change one panel setting: gates (run rules: stricter only); yard_cameras (add cameras Frigate has);
+            ha_notify_service (a notify.* service). The safety switches, guard auto-resume, lawn rules, camera
             coverage, presence and anything that loosens a check stay with the user."""
             if key not in SETTING_KEYS:
                 raise ToolError(f"{key!r} is set by the user in Settings; assistants may set: {', '.join(SETTING_KEYS)}")
@@ -524,9 +524,6 @@ class PanelMCP:
             elif key == "ha_notify_service":
                 if not isinstance(value, str) or not NOTIFY_SERVICE.fullmatch(value):
                     raise ToolError("a notify service like notify.mobile_app_phone")
-            elif key == "deck_m":
-                if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
-                    raise ToolError("deck width in metres")
             if not confirm:
                 return _needs_confirm(f"change the setting {key}", value=scrub(value))
             return await self.api("PUT", f"/api/settings/{key}", json=value)

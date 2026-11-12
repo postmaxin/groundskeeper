@@ -139,6 +139,20 @@ AREA_FIELDS = [
 EDITABLE = {f["key"]: f for f in AREA_FIELDS if f.get("editable")}
 LABELS = {f["key"]: f["label"] for f in AREA_FIELDS if f.get("key")}
 AREA_LABELS = {1: "Snow Blower", 2: "Blower", 3: "Lawn Mower", 4: "SAM"}     # the area record's labels, in the app's order
+MOWER_LABEL = 3
+
+
+def other_head_block(labels) -> str | None:
+    """Why the mower's settings must not be saved to this area, or None (ADR 0009, #128). An area labelled only for
+    other heads (a snow blower's driveway) keeps its settings in a record that is not captured yet, so the mower's
+    would be the wrong ones. No labels at all (new areas, the demo) stays editable: it is not tied to another head.
+    Labels that could not be read fail closed."""
+    if not isinstance(labels, list) or not all(isinstance(x, int) and not isinstance(x, bool) for x in labels):
+        return "the robot's record of this area has no labels this panel can read, so it may not be a mowing area"
+    if not labels or MOWER_LABEL in labels:
+        return None
+    names = ", ".join(AREA_LABELS.get(x, f"label {x}") for x in labels)
+    return f"this area is labelled {names}, not Lawn Mower, and these are the mower's settings"
 
 
 def get(rec: dict, key: str):
@@ -258,7 +272,10 @@ async def write(writer, aid: int, changes: dict, read, gps_ref, check=None) -> d
             raise WriteRefused(f"could not read the area itself first ({exc})")
         if record is None:
             raise WriteRefused("the robot has no record of this area")
-        what = ", ".join(f"{k} {get(before, k)} -> {get(new, k)}" for k in changes)
+        why = other_head_block(record.get("labels"))                        # the labels as they are now, under the lock
+        if why:
+            raise WriteRefused(why)
+        what =", ".join(f"{k} {get(before, k)} -> {get(new, k)}" for k in changes)
         writer.store.save_version(f"area_params:{aid}", {"at": time.time(), "settings": before})   # kept before any send
         sent = await writer._send(SAVE, new)
         if not sent["sent"]:

@@ -10,8 +10,11 @@ CELL_M = 0.25
 FIXED = 4
 MAX_GAP_S = 5      # consecutive samples further apart than this are not joined
 MAX_STEP_M = 3     # nor are pose jumps larger than this
-DEFAULT_DECK_M = {1: 0.6, 3: 0.53, 5: 0.53}  # snow blower, mower, mower pro; placeholders until measured
-VERSION = 2        # a cached analysis of an older version is worked out again (2: earlier runs of the plan session)
+# Width of each head (snow blower, mower, mower pro). Every deck of a type is the same, so it is fixed, never a
+# setting; the snow blower's is still to be measured.
+DEFAULT_DECK_M = {1: 0.6, 3: 0.53, 5: 0.53}
+VERSION = 3        # a cached analysis of an older version is worked out again (2: earlier runs of the plan session;
+                   # 3: the deck width setting is gone)
 
 
 def polygon_cells(poly: list[tuple[float, float]], cell: float = CELL_M) -> set[tuple[int, int]]:

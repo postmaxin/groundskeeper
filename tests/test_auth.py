@@ -153,6 +153,18 @@ def test_a_person_can_still_change_settings(client):
     assert r.status_code == 200 and client.store.setting("control_enabled") is True
 
 
+def test_deck_width_is_fixed_per_head_not_a_setting(client):
+    signed_in(client)
+    client.store.set_setting("deck_m", 0.9)                # left behind by an older version
+    assert client.c.put("/api/settings/deck_m", json=0.5).status_code == 404
+    from app import coverage
+    from app.main import SETTINGS_DEFAULTS
+    assert "deck_m" not in SETTINGS_DEFAULTS                # so GET /api/settings no longer lists it
+    from app.recorder import Recorder
+    assert Recorder.deck_m(3) == Recorder.deck_m(5) == coverage.DEFAULT_DECK_M[3]
+    assert Recorder.deck_m(1) == coverage.DEFAULT_DECK_M[1] != 0.9
+
+
 def test_a_token_is_limited_even_beside_a_signed_in_cookie(client):
     token = _token(client)                               # client.c also holds the session cookie
     r = client.c.put("/api/settings/control_enabled", json=True, headers={"Authorization": f"Bearer {token}"})

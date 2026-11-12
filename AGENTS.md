@@ -19,6 +19,8 @@ A change is ready for review when all of these are true:
    page says how it works now. A feature that `docs/user/not-yet.md` lists loses its line there.
 4. If the UI changed visibly, `scripts/screenshots.py` was run and you looked at the result.
 5. The PR template is filled in, including the safety checklist and whether an AI assistant wrote the change.
+6. A change to a safety rule, to how the panel reaches the robot, or to something hard to reverse, or one that
+   overrides an earlier decision, comes with an ADR in `docs/dev/decisions/`.
 
 ## Commands
 
@@ -80,17 +82,22 @@ These come on top of the rules below, which apply to everyone.
 | `web/cameras.js` | Live's Cameras tile: the robot's own cameras |
 | `docs/user/` | In-app Help pages (served by the panel) |
 | `docs/dev/` | Design (`design.md`, cited from code as §N), protocol, map writes, robot states, UI rules |
+| `docs/dev/decisions/` | ADRs: why the safety rules and the larger choices are the way they are |
 | `tests/` | pytest; fakes for the robot, HTTP and stores; all synthetic. `tests/test_guards.py` checks the rules below |
 
 ## How to work
 
 1. Read the module's docstring and the `docs/dev/design.md` section it cites before changing it. Robot behaviour
    that looks odd is usually documented there, or in `docs/dev/protocol.md` / `docs/dev/robot-states.md`. Check
-   [Looks wrong, is deliberate](#looks-wrong-is-deliberate) before "fixing" something.
+   [Looks wrong, is deliberate](#looks-wrong-is-deliberate) and the ADRs in `docs/dev/decisions/` before "fixing"
+   something: a change that undoes an ADR needs a new ADR that supersedes it, agreed in the issue first.
 2. Write the test first, using synthetic data. `tests/` already has fakes for the recorder, store, HTTP and the
    robot's replies; reuse them.
 3. Keep the change small and in the style of the code around it.
-4. Finish the [definition of done](#definition-of-done).
+4. If the change alters how a subsystem works, update its `docs/dev/design.md` section in the same PR. If it changes
+   a safety rule, how the panel reaches the robot, or something hard to reverse, add an ADR
+   (`docs/dev/decisions/README.md` says when and how).
+5. Finish the [definition of done](#definition-of-done).
 
 ## Recipes
 

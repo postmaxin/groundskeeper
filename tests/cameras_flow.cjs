@@ -37,11 +37,11 @@ const joinMessage = (inner) =>
 const knobs = { beatFail: false, beatReply: { sent: true }, beatGate: null, joinMsg: "default", leaveGate: null,
                 roleGate: null, joinGate: null, joinEmit: false, refuseToken: false, remote: [],
                 subscribeFail: false, joinFail: null, tokenFail: null, tokenGate: null, writeOnLeave: false,
-                sdkPresent: true, fastSdk: false, videoOff: false, scripts: [] };
+                sdkPresent: true, fastSdk: false, videoOff: false, scripts: [], wrap: false };
 knobs.stats = { video: {}, rtc: {}, quality: {} };
 const storage = {};
 const AgoraRTC = {
-  checkSystemRequirements: () => true,
+  checkSystemRequirements: (...a) => { log("checkSystemRequirements", ...a); return true; },
   // The device id is random, so only its being set (and non-empty) is logged.
   setParameter: (k, v, force) => log("setParameter", k, k === "INSTALL_ID" ? String(v).length > 0 : v, !!force),
   setLogLevel: (n) => log("setLogLevel", n),
@@ -61,6 +61,12 @@ const AgoraRTC = {
       setEncryptionConfig: (mode, key, salt) => log("setEncryptionConfig", mode, key, Array.from(salt).join(",")),
       join: async (app, channel, token, uid) => {
         log("join", app, channel, token, uid);
+        if (knobs.wrap) {                            // as the real SDK wraps the (placeholder) secret first
+          const key = await sandbox.crypto.subtle.importKey("spki", new Uint8Array(4), { name: "RSA-OAEP",
+            hash: "SHA-256" }, true, ["encrypt"]);
+          const out = await sandbox.crypto.subtle.encrypt({ name: "RSA-OAEP" }, key, new Uint8Array(2));
+          log("wrapped", new Uint8Array(out).length);
+        }
         if (knobs.joinMsg !== "none") {              // what the real SDK sends while it joins
           const ws = agoraWs(), xhr = agoraXhr();
           ws.send("ping"); ws.send(new Uint8Array(2)); ws.send('{"x":1}');
@@ -107,7 +113,7 @@ const sandbox = {
   getJSON: async () => ({ robot_video_enabled: !knobs.videoOff, robot_video_configured: true }),
   setInterval: (fn, ms) => { const id = nextInterval++; intervals.set(id, fn); log("interval", ms); return id; },
   clearInterval: (id) => { if (intervals.delete(id)) log("clear-interval"); },
-  WebSocket: FakeWS, XMLHttpRequest: FakeXHR, location: { href: "https://panel.test/#live" }, URL,
+  crypto: {}, WebSocket: FakeWS, XMLHttpRequest: FakeXHR, location: { href: "https://panel.test/#live" }, URL,
   postJSON: async (url, body) => {
     if (url === "/api/video/keepalive") {
       beats++; log("beat", JSON.stringify(body));
@@ -128,6 +134,8 @@ const sandbox = {
   },
   // The script-load timeout (20 s) is shortened when a test wants to see it fire; no other timer is touched.
   setTimeout: (fn, ms) => {
+    // The rejoin gap (at most 3 s, the only timer this short) passes on the next tick, and is logged.
+    if (ms <= 3000) { log("rejoin-gap"); return setImmediate(fn); }
     const t = setTimeout(fn, (knobs.fastSdk && ms === 20000) || (knobs.fastJoin && ms === 30000) ? 5 : ms);
     if (ms === 30000) t.unref();
     return t;
@@ -443,7 +451,37 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   sandbox.camerasLeave();
   sends();                                                             // must go out as the SDK made it
   sandbox.WebSocket = FakeWS;
-  // 20. Video stats under the tile (step 1 of #53): the SDK's local counters, read every 2 s while the video plays.
+  // 20. Over plain http there is no crypto.subtle: the SDK's wrap of the placeholder gets the stand-in, only while the
+  // client lives, and every other call is refused. Over https the browser's own is used and never replaced.
+  // 21. Two camera changes in quick succession: the second still waits out the gap from the first one's leave.
+  mark("quick-picks-setup"); sandbox.camerasOpen(); await settle();
+  mark("quick-picks"); sandbox.camerasPick("left"); sandbox.camerasPick("right"); await settle();
+  sandbox.camerasStop(); await settle();
+  // Opening again soon after a Close waits out the gap too: the robot may still be shutting its video down.
+  mark("reopen-soon"); sandbox.camerasOpen(); await settle(); sandbox.camerasStop(); await settle();
+  // A first open long after the last leave does not wait.
+  sandbox.cams.leftAt = Date.now() - 60000;
+  mark("open-long-after"); sandbox.camerasOpen(); await settle(); sandbox.camerasStop(); await settle();
+  knobs.wrap = true;
+  const tryCall = async (name, fn) => {
+    try { await fn(); calls.push(["crypto-call", name, "ok"]); } catch (e) { calls.push(["crypto-call", name, e.message]); }
+  };
+  mark("http-join"); sandbox.camerasOpen(); await settle(); phase();
+  calls.push(["subtle-while-joined", typeof sandbox.crypto.subtle]);
+  await tryCall("digest", () => sandbox.crypto.subtle.digest("SHA-256", new Uint8Array(1)));
+  await tryCall("aes-import", () => sandbox.crypto.subtle.importKey("raw", new Uint8Array(16), "AES-GCM", true, []));
+  await tryCall("rsa-encrypt-other-key", () => sandbox.crypto.subtle.encrypt({ name: "RSA-OAEP" }, {}, new Uint8Array(1)));
+  mark("http-left"); sandbox.camerasStop(); await settle();
+  calls.push(["subtle-after-leave", typeof sandbox.crypto.subtle, "subtle" in sandbox.crypto]);
+  const own = { importKey: async () => { log("browser-importKey"); return {}; },
+                encrypt: async () => { log("browser-encrypt"); return new ArrayBuffer(128); } };
+  sandbox.crypto = { subtle: own };
+  mark("https-join"); sandbox.camerasOpen(); await settle(); phase();
+  calls.push(["subtle-is-browsers", sandbox.crypto.subtle === own]);
+  sandbox.camerasStop(); await settle();
+  calls.push(["subtle-is-browsers", sandbox.crypto.subtle === own]);
+  sandbox.crypto = {}; knobs.wrap = false;
+    // 22. Video stats under the tile (step 1 of #53): the SDK's local counters, read every 2 s while the video plays.
   // Field names as in the vendored SDK (4.24.9): ratios are 0..1, bitrate is bits per second, delay and RTT are ms.
   const ROBOT_KEY = String(1);
   const GOOD = { receiveResolutionWidth: 640, receiveResolutionHeight: 480, renderFrameRate: 15, receiveFrameRate: 15,

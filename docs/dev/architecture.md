@@ -1,13 +1,14 @@
 # Architecture
 
-How the panel is put together: modules, behaviour and API. Design rationale is in [design.md](design.md);
-user help is in [docs/user](../user/).
+How the panel is put together now: modules, features, configuration and API. Each subsystem's rules are in
+[design.md](design.md), the reasons for the larger decisions in [decisions/](decisions/), and user help in
+[docs/user](../user/).
 
 ## What it does
 
 - Listens to the robot through the Yarbo cloud broker (`snowbot/{SN}/#`) and keeps the latest full state.
 - Records telemetry (1/min idle, ~1 Hz during a run) and a raw snapshot every minute (kept 90 days) into SQLite.
-- Detects runs (provisional: wheels turning or an active plan) for any head, mower or snow, and stores each track.
+- Detects runs (one plan session each, design §6.4) for any head, mower or snow, and stores each track.
 - Reads the map, plans, GPS reference and low-confidence config on start and every 6 h, versioned on change.
 - Passively keeps the reply to **every** read request seen on the broker, including other clients' requests (this
   is how `read_schedules`, `get_all_map_backup`, `read_recharge_point` etc. show up without us sending them).
@@ -69,7 +70,7 @@ the method for finding the most detailed imagery (compare `native_m` in cm, look
 county or state service, hand the address back), and `catalog/FINDING.md` (help page `imagery-finding`) has the
 cm scale. User page: `docs/user/mcp.md`; the token and connect snippets live in Settings → AI assistant.
 
-## Phase 1b
+## Runs, analysis and health
 
 - **Runs:** the overview (`#runs`) is every run in one table (mows with coverage, gaps, pace and problems; short
   runs dimmed), then totals, trends and the problem spots that keep coming back (what used to be the Insights page;
@@ -139,7 +140,7 @@ cm scale. User page: `docs/user/mcp.md`; the token and connect snippets live in 
   headless Edge through Playwright (WebGL from SwiftShader for the 3D view) into `docs/screenshots/`, optimises the
   PNGs and stops the panel. Re-runnable; only the clock differs between runs.
 
-## Phase 2: control, schedule, cameras, alerts
+## Control, schedule, cameras and alerts
 
 - **Yarbo cloud** (`app/cloud.py`, Settings → Robot). You sign in in the panel; the password goes straight to
   Yarbo's SDK (which RSA-encrypts it) and is never stored or logged. Only the session tokens are kept, in
@@ -173,7 +174,7 @@ cm scale. User page: `docs/user/mcp.md`; the token and connect snippets live in 
 - **Presence**: an HA entity chosen in Settings (Alarmo `armed_away`/`armed_vacation` = nobody home). Needs the HA
   token.
 
-## Map Studio (spec §7)
+## Map Studio (design §7)
 
 The Map Studio view (`app/mapstudio.py`, `web/studio.js`) works on the robot's map without writing to it.
 
@@ -245,7 +246,7 @@ are tooltips: hover a button or an ⓘ.
 
 ## Map imagery
 
-`app/imagery.py` fetches one image of the yard (the map's bounds plus 60 m) on the server, at the chosen source's
+`app/imagery/` fetches one image of the yard (the map's bounds plus 60 m) on the server, at the chosen source's
 own resolution (at most 4096 px a side), and keeps it.
 - **The catalog is data**, not code: **one JSON file per source** under `catalog/sources/<country>/`, shared
   coverage outlines in `catalog/coverage/`, and the zoomed-out world layer in `catalog/context/world.json`.
@@ -343,13 +344,15 @@ own resolution (at most 4096 px a side), and keeps it.
 ## Repo layout
 
 - `app/`, `catalog/`, `web/`, `docs/user/`, `CHANGELOG.md` — the panel (the only paths that go into the image).
-- `docs/user/` — the in-app Help; `docs/dev/` — design, protocol, map writes, robot states, UI and imagery notes.
-- `scripts/` — deploy to a remote Docker host over SSH, the demo instance, the headless Map Studio check, and the
-  README screenshots (`screenshots.py`, from the demo).
+- `docs/user/` — the in-app Help; `docs/dev/` — design, protocol, map writes, robot states, UI and imagery notes;
+  `docs/dev/decisions/` — the ADRs.
+- `scripts/` — every check (`check.py`), deploy to a remote Docker host over SSH, the demo instance, the headless Map
+  Studio check, and the README screenshots (`screenshots.py`, from the demo).
+- `deploy/` — the Unraid template and Compose file, and the Helm chart.
 - `tools/` — standalone protocol tools from before the panel: `yarbo_cloud.py` and `yarbo_capture.py` (the cloud
-  broker; need `YARBO_SN` and `tools/requirements.txt`), and `design/gen.py`
-  (generates the design-canvas artboards into the ignored `tools/design/project/`). Cloud session and captures live
-  in `~/.yarbo/`, outside the repo, because they contain the yard's GPS position.
+  broker; need `tools/requirements.txt`), and `design/gen.py` (the design-canvas artboards, into the ignored
+  `tools/design/project/`). Their cloud session and captures live in `~/.yarbo/`, outside the repo, because they
+  contain the yard's GPS position.
 
 ## Configuration
 
@@ -399,7 +402,7 @@ Imagery: `GET /api/imagery` · `GET /api/imagery/sources` · `GET /api/imagery/s
 `GET /api/imagery/outlines` · `POST /api/imagery/sources/{id}/extent` · `POST /api/imagery/sources/{id}/export {country, region, place, landmark, coverage, worldwide?}` ·
 tiles: `/tiles/world/{z}/{x}/{y}.jpg`, `/tiles/src/{z}/{x}/{y}.jpg`
 
-Panel settings: `GET /api/settings`, `GET /api/about`, `PUT /api/integrations/{robot|frigate|home_assistant|weather|panel}` (partial object, `null` hands a field back to the environment, applied live), `POST /api/integrations/{group}/test`, `PUT /api/settings/{key}` (imagery_alignment, conditions, deck_m, control_enabled, map_write_enabled, gates,
+Panel settings: `GET /api/settings`, `GET /api/about`, `PUT /api/integrations/{robot|frigate|home_assistant|weather|panel}` (partial object, `null` hands a field back to the environment, applied live), `POST /api/integrations/{group}/test`, `PUT /api/settings/{key}` (imagery_alignment, conditions, control_enabled, map_write_enabled, gates,
 yard_cameras, camera_polygons, presence_entity, ha_notify_service, webhook_url) · `PUT /api/schedule/windows` ·
 `PUT /api/maintenance/items` · `POST /api/maintenance/{id}/done` · `POST /api/cloud/login` ·
 `POST /api/cloud/logout` · `POST /api/notify/test`

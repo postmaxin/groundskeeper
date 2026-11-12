@@ -505,8 +505,6 @@ function robotCards(d) {
     robot: scard("Robot",
       srow("Phone app", "The Yarbo app keeps the robot awake while it is open; the panel waits for it to go quiet before a start.",
         seen === null || seen === undefined ? "not seen" : `seen ${dur(seen)} ago`),
-      srow("Deck width", "Width of the cutting deck, used to draw coverage on the map. Blank uses the head's default.",
-        numCtl({ key: "deck_m", value: d.st.deck_m, min: 0.2, max: 1.5, step: 0.01, unit: "m", blank: "default", onsave: (v) => saveSetting("deck_m", v) })),
       srow("Wi-Fi survey", ["Which networks the robot hears where, for the ", slink("#live", "Signal"), " map (a scan every 30 s ",
         "during runs). Next run only: one run, a report in ", slink("#events", "Events"), ", then off."],
         selCtl({ key: "wifi_survey", value: d.st.wifi_survey || "off",
