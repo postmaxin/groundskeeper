@@ -30,10 +30,10 @@ from .ha import HAPublisher, entities_from
 from .imagery import Imagery
 from .runs import (ACTIVITY_LABELS, HELD, PAUSE_CAP_S, PROGRESSING, PlanStatus, RunDetector, RunStats, activity,
                    end_reason, is_moving, parse_plan_feedback, plan_flags_active, progressing)
+from .runtime import FOUND_SN, found_sn, valid_sn
 from .store import Store
 from .tempest import TempestListener
 from . import weather as weather_mod
-from .transport_local import LocalTransport, discover_sn
 
 log = logging.getLogger(__name__)
 
@@ -61,12 +61,15 @@ SESSION_MAX_BYTES = 200_000     # per message
 # the Cameras tile sends a keep-awake every 4 s, so any window longer than that would hide the phone app's own beats.
 COUNTED_OWN = frozenset({"set_working_state", "smart_vision_control"})
 OWN_ECHO_S = 5            # an echo of our own send is seen within this long of it (the other commands)
-# How long a credit for an echo of COUNTED_OWN lasts. A real echo should come within milliseconds; this is a guess to be
-# MEASURED on a real robot (the shorter, the fewer of the app's beats it can swallow).
+# How long a credit for an echo of COUNTED_OWN lasts before it counts as unmatched. Not measured yet: the panel logs
+# what it sees (Recorder.own_echo_stats), and these err towards "the phone app" until it is.
 OWN_ECHO_COUNTED_S = 1.5
-OWN_UNMATCHED_MAX = 3     # this many credits in a row expiring unmatched: the cloud is not echoing, stop trusting
-OWN_TRUST_AFTER = 3       # this many quick matched echoes in a row (also at the start) earn trust in the matching
-OWN_TRUST_LATENCY_S = 0.5 # only a match this quick is ours (a slower one is taken for the app's; to be measured)
+OWN_TRUST_LATENCY_S = 0.3   # only a match this quick can be ours; a slower one is the app's
+# Trusted only while EVERY one of the last OWN_TRUST_WINDOW credits was matched quickly: one miss withdraws it. With the
+# panel's beats jittered (control.KEEP_AWAKE_JITTER_S), the app's beats cannot keep landing just after each of ours.
+OWN_TRUST_WINDOW = 10
+OWN_FRESH_S = 15          # no send of these for this long: the next one starts afresh (trust is earned again)
+OWN_LOG_EVERY = 50        # log what the matching has seen every this many credits (for measuring the above)
 # Commands that mean a person (phone app, another client) is steering the robot: a guard gives up its pause.
 PEOPLE_COMMANDS = {"start_plan", "pause", "resume", "stop", "cmd_recharge", "cmd_vel"}
 # While doing one of these the robot should be getting somewhere; standing still for minutes means it is stuck
@@ -107,31 +110,30 @@ def waiting_for_fix(t: dict) -> bool:
     return not rpms or max(rpms) < BLADE_OFF_RPM
 
 
-def _log_failure(task: asyncio.Task) -> None:
-    if not task.cancelled() and task.exception():
-        log.warning("robot connection attempt failed: %s", task.exception())
-
-
 DEADEND_STALE_S = 60      # a timed-out dead-end settings read may still be answered this long after
 PLAN_JOIN_MAX_S = 36 * 3600   # a resume of the same plan session this long after the previous run still joins it
 FIRMWARE_SETTLE_S = 60    # a new firmware version counts once it has been reported this long without a break
 
 
 class Recorder:
+    sn: str | None = None            # the robot followed (set in __init__; a bare object made in a test has none)
+    received, last_message_at = 0, 0.0
+
     def __init__(self, cfg: Config, store: Store, imagery: Imagery, sn: str):
         self.cfg, self.store, self.imagery, self.sn = cfg, store, imagery, sn
         self.loop: asyncio.AbstractEventLoop | None = None
         self.queue: asyncio.Queue = asyncio.Queue()
-        self.transport: LocalTransport | None = None     # made by apply_robot() once there is an address
-        self.link = None             # app.link.RobotLink, set by Ops: reads fall back to the cloud through it
+        self.transport = None        # DEMO=1 only: the made-up robot (demo_robot.DemoTransport)
+        self.link = None             # app.link.RobotLink, set by Ops: every read goes through the Yarbo cloud
+        self.received = 0            # messages from the robot, and when the last one came
+        self.last_message_at = 0.0
+        self.reads_sent = 0
         self.foreign_cmds: dict[str, float] = {}   # PEOPLE_COMMANDS seen from other clients, by name
         self.app_stream_at = 0.0     # last unrequested DeviceMSG: the robot streams them only while the phone app is open
-        self.robot_error = ""                            # why there is no local connection
         self.on_sn: Callable[[str], None] | None = None  # told when the serial is found or changed (Ops follows)
         self._robot_lock = asyncio.Lock()
-        self._discover_at = 0.0
-        self._applied: tuple | None = None               # (host, port) the current serial was found on
-        self._robot_task: asyncio.Task | None = None
+        self._map_wake = asyncio.Event()                 # read the map now (another robot), not at the next refresh
+        self._state_sn = sn              # the robot the live state belongs to (what _restore loads is the kept one's)
         self.started_at = time.time()
 
         self.snapshot: dict = {}
@@ -189,8 +191,6 @@ class Recorder:
         self._preview_lock = asyncio.Lock()
         self._sent: dict[str, float] = {}
         self._own_lock = threading.Lock()         # own_echo is called from the cloud thread and the event loop
-        self._own_beats: dict[str, deque] = {}    # COUNTED_OWN command -> send times not yet matched to an echo
-        self._own_seen: dict[tuple, bool] = {}    # (name, arrival ts) -> was it ours: one message, one answer
 
         self.tempest: TempestListener | None = None      # made by apply_weather()
         self.conditions: dict | None = None
@@ -246,20 +246,45 @@ class Recorder:
 
     # -- plumbing ----------------------------------------------------------------------------------------------
     def _own(self) -> dict:
-        """The matching state of COUNTED_OWN (created on first use: some tests build a bare Recorder)."""
-        fresh = {"beats": {}, "trusted": False, "run": 0, "unmatched": 0, "note": None}
+        """The matching state of COUNTED_OWN (created on first use: some tests build a bare Recorder). `beats`: our
+        send times not yet matched, per command. `hist`: how each of our recent credits ended (True = matched quickly,
+        False = expired unmatched), counted separately from the messages, so the app's beats cannot stand in for them.
+        `lat`: the delays of recent quick matches, for measuring."""
+        fresh = {"beats": {}, "hist": deque(maxlen=OWN_TRUST_WINDOW), "lat": deque(maxlen=50),
+                 "slow": deque(maxlen=50), "trusted": False, "note": None, "was_lost": False, "last": 0.0, "n": 0}
         return self.__dict__.setdefault("_own_state", fresh)
 
+    def _own_judge(self, st: dict) -> None:
+        """Trusted only while every one of the last OWN_TRUST_WINDOW credits was matched quickly."""
+        now = len(st["hist"]) == OWN_TRUST_WINDOW and all(st["hist"])
+        if st["trusted"] and not now:
+            st["trusted"], st["note"], st["was_lost"] = False, "lost", True
+        elif now and not st["trusted"]:
+            st["trusted"] = True
+            if st["was_lost"]:
+                st["was_lost"], st["note"] = False, "back"
+
     def _own_expire(self, st: dict, name: str, before: float) -> None:
-        """Credits older than `before` were never matched by an echo. Several in a row (OWN_UNMATCHED_MAX) mean the
-        cloud is not echoing the panel's own commands: stop trusting the matching (see own_echo)."""
+        """Credits older than `before` were never matched by an echo: each one counts against the matching."""
         q = st["beats"].setdefault(name, deque(maxlen=16))
         while q and q[0] < before:
             q.popleft()
-            st["run"] = 0
-            st["unmatched"] += 1
-            if st["unmatched"] >= OWN_UNMATCHED_MAX and st["trusted"]:
-                st["trusted"], st["note"], st["was_lost"] = False, "lost", True
+            st["hist"].append(False)
+        self._own_judge(st)
+
+    def own_echo_stats(self) -> dict:
+        """What the matching has seen lately (logged when trust changes; for measuring the constants above)."""
+        st = self.__dict__.get("_own_state")
+        if not st:
+            return {"trusted": False, "recent": [], "latency_ms": None}
+        with self.__dict__.setdefault("_own_lock", threading.Lock()):
+            lat, slow = sorted(st["lat"]), sorted(st["slow"])
+            hist = list(st["hist"])
+
+        def ms(xs):
+            return None if not xs else {"n": len(xs), "median": round(statistics.median(xs) * 1000),
+                                        "max": round(xs[-1] * 1000)}
+        return {"trusted": st["trusted"], "recent": hist, "latency_ms": ms(lat), "slow_ms": ms(slow)}
 
     def _own_flush(self) -> None:
         """Say once that the matching was given up, or came back. Called on the event loop (never from the cloud thread:
@@ -269,25 +294,38 @@ class Recorder:
             return
         with self.__dict__.setdefault("_own_lock", threading.Lock()):
             note, st["note"] = st["note"], None
+        log.info("own-echo matching %s: %s", note, self.own_echo_stats())
         if note == "lost":
-            self.store.event("cloud_echo_missing", "the cloud is not echoing the panel's own commands back, so the "
+            self.store.event("cloud_echo_missing", "the panel's own commands are not all echoed back quickly, so the "
                              "panel's keep-awake and camera-on count as the phone app's while the cameras are open")
         elif note == "back":
             self.store.event("cloud_echo_seen", "the panel's own commands are echoed back again, so they no longer "
                              "count as the phone app's")
 
-    def mark_sent(self, cmd: str):
-        """The panel is sending `cmd` now (RobotLink calls this just BEFORE every send: the echo can reach the broker's
-        thread before publish() returns): its echo is ours. Returns an undo for a send that then fails."""
+    def mark_sent(self, cmd: str) -> Callable[[], None]:
+        """The panel is about to send `cmd` (RobotLink calls this before every send): its echo is ours. Returns an undo
+        for a send that fails: it puts back what this call changed, including the credit of a COUNTED_OWN command."""
         now = time.time()
         before = self._sent.get(cmd)
         self._sent[cmd] = now
-        counted = cmd in COUNTED_OWN
-        if counted:
+        was = after = None
+        if cmd in COUNTED_OWN:
             with self.__dict__.setdefault("_own_lock", threading.Lock()):
                 st = self._own()
                 self._own_expire(st, cmd, now - OWN_ECHO_COUNTED_S)
+                was = (st["last"], list(st["hist"]), st["trusted"])
+                if now - st["last"] > OWN_FRESH_S:
+                    # A new session: trust earned earlier says nothing about the cloud now, so it is earned again
+                    # (quietly: this is not the cloud failing).
+                    st["hist"].clear()
+                    st["trusted"] = False
+                    after = (list(st["hist"]), st["trusted"])
+                st["last"] = now
+                st["n"] += 1
                 st["beats"].setdefault(cmd, deque(maxlen=16)).append(now)
+                periodic = st["n"] % OWN_LOG_EVERY == 0
+            if periodic:
+                log.info("own-echo matching: %s", self.own_echo_stats())
             self._own_flush()
 
         def undo() -> None:
@@ -295,12 +333,20 @@ class Recorder:
                 self._sent.pop(cmd, None)
             else:
                 self._sent[cmd] = before
-            if counted:
-                with self.__dict__.setdefault("_own_lock", threading.Lock()):
-                    try:
-                        self._own()["beats"].get(cmd, deque()).remove(now)
-                    except ValueError:
-                        pass                      # already used by an echo, or aged out
+            if was is None:
+                return
+            with self._own_lock:
+                q = st["beats"].get(cmd)
+                if not q or now not in q:
+                    return                    # an echo (or expiry) already took the credit: nothing of ours is left
+                q.remove(now)
+                st["n"] -= 1
+                if st["last"] == now:         # no later send: the session clock goes back
+                    st["last"] = was[0]
+                if after is not None and (list(st["hist"]), st["trusted"]) == after:
+                    st["hist"].clear()        # nothing has judged since: the trust the reset threw away comes back
+                    st["hist"].extend(was[1])
+                    st["trusted"] = was[2]
         return undo
 
     def own_echo(self, name: str, ts: float, data) -> bool:
@@ -308,14 +354,14 @@ class Recorder:
         (ops decides for a cloud message and hands the verdict on; the recorder decides for the rest).
 
         Most commands: sent within the last OWN_ECHO_S. The keep-awake and camera-on (COUNTED_OWN): each of our sends is
-        a credit for ONE echo, good for OWN_ECHO_COUNTED_S, so the Yarbo app's own beats, arriving seconds after ours,
-        still count as the app's. What we send is always {"state": 1}: anything else is never ours and takes no credit.
+        a credit for ONE echo, so the Yarbo app's own beats, arriving seconds after ours, still count as the app's. What
+        we send is always {"state": 1}: anything else is never ours and takes no credit.
 
-        This assumes the cloud delivers our own publishes back. Nobody has verified that, and if it does not, credits
-        would be eaten by the real app's beats and the phone-app interlock would read quiet while the app is open. So
-        the matching is trusted only after OWN_TRUST_AFTER quick matched echoes in a row (until then, and after
-        OWN_UNMATCHED_MAX credits in a row expire unmatched, every such message counts as possibly the app's), and a
-        message that matches while untrusted is only a probe."""
+        It fails closed, towards "the phone app" (the interlock then reads "active"): a message is ours only while the
+        matching is trusted, and it is trusted only while every one of our last OWN_TRUST_WINDOW credits was matched
+        within OWN_TRUST_LATENCY_S. If the cloud stops echoing, our credits go unmatched (an app beat can take one only
+        by landing just after ours, and the panel's jitter keeps that from repeating), so trust goes at the first miss.
+        A quick match while untrusted is only a probe, and the message still counts as the app's."""
         if name not in COUNTED_OWN:
             return ts - self._sent.get(name, 0) < OWN_ECHO_S
         if not isinstance(data, dict) or not (type(data.get("state")) is int and data["state"] == 1):
@@ -326,20 +372,12 @@ class Recorder:
             q = st["beats"].setdefault(name, deque(maxlen=16))
             if not (q and q[0] <= ts):            # a credit recorded after the message arrived is not its echo
                 return False
-            # A real echo comes back at once; an app beat that lands in the window is slower. A slow one is ambiguous, so it
-            # is never ours (trusted or not) and leaves the credit to expire unmatched: the app's beats can neither earn
-            # trust nor keep it alive by eating credits. (An app beat that lands as quickly as an echo, for several beats
-            # in a row, still cannot be told apart: known, see docs/dev/design.md section 13.)
-            if ts - q[0] > OWN_TRUST_LATENCY_S:
-                st["run"] = 0
+            if ts - q[0] > OWN_TRUST_LATENCY_S:   # too slow to be an echo: the app's; the credit is left to expire
+                st["slow"].append(ts - q[0])      # (kept for measuring: a slow echo would show here)
                 return False
-            q.popleft()
-            st["unmatched"] = 0
-            st["run"] += 1
-            if not st["trusted"] and st["run"] >= OWN_TRUST_AFTER:
-                st["trusted"] = True
-                if st.pop("was_lost", False):
-                    st["note"] = "back"
+            st["lat"].append(ts - q.popleft())
+            st["hist"].append(True)
+            self._own_judge(st)
             return st["trusted"]
 
     def _from_thread(self, topic: str, data, ts: float, ours: bool | None = None) -> None:
@@ -366,38 +404,33 @@ class Recorder:
             await asyncio.sleep(300)
 
     def can_read(self) -> bool:
-        """Some route can carry a read: the local broker, or (through the link) the cloud."""
+        """A read can go out: the Yarbo cloud is connected (or the demo robot, in tests without Ops)."""
         if self.link is not None:
             return self.link.read_route() is not None
         return bool(self.transport and self.transport.connected)
 
     def _send_read(self, cmd: str, payload: dict | None = None) -> str | None:
-        """Publish a read request the way the link says (local first, the cloud as a fallback)."""
+        """Publish a read request through the link (the Yarbo cloud)."""
         if self.link is not None:
-            return self.link.read(cmd, payload)
-        self.transport.request(cmd, payload)
-        return "local"
+            route = self.link.read(cmd, payload)
+        else:
+            self.transport.request(cmd, payload)
+            route = "demo"
+        self.reads_sent += 1         # counted once it went
+        return route
 
     async def request(self, cmd: str, timeout: float = 15, payload: dict | None = None, replies: tuple = ()):
         """Send a read request and wait for its data_feedback reply (on `cmd` or any of `replies`)."""
-        if not self.transport and not self.can_read():
-            raise ConnectionError(self.robot_error or "the robot is not set up")
+        if not self.can_read():
+            raise ConnectionError(self.robot_status()["error"] or "the robot is not set up")
         fut = self.loop.create_future()
         names = (cmd, *replies)
         for n in names:
             self._pending.setdefault(n, []).append(fut)
         self._sent[cmd] = time.time()
-        route = None
         try:
-            route = self._send_read(cmd, payload)
-            reply = await asyncio.wait_for(fut, timeout)
-            if self.link is not None:
-                self.link.note_read(cmd, route, True)
-            return reply
-        except asyncio.TimeoutError:
-            if self.link is not None:
-                self.link.note_read(cmd, route, False)
-            raise
+            self._send_read(cmd, payload)
+            return await asyncio.wait_for(fut, timeout)
         finally:
             for n in names:
                 waiters = self._pending.get(n, [])
@@ -533,7 +566,12 @@ class Recorder:
         parts = topic.split("/", 3)
         if len(parts) < 4:
             return
+        if self.sn and parts[1] != self.sn:
+            return                       # another robot's (queued before a switch): never this one's state or reply
+        self.received += 1               # counted here, for the robot followed
         channel, name = parts[2], parts[3]
+        if channel == "device":
+            self.last_message_at = ts    # robot_status "heard": the robot itself, not an echo of a request on app/
         if channel == "app":
             if ours is None:
                 ours = self.own_echo(name, ts, data)          # decided here, once, for the session record and below
@@ -873,44 +911,97 @@ class Recorder:
                 self.run_stats.last_xy = last_xy
                 self._join_survey(prev["id"], merged_from)
 
-    # -- the robot connection (Settings → Robot, else the environment) -----------------------------------------
+    # -- the robot (Settings → Robot, else the environment) ---------------------------------------------------------
     async def apply_robot(self) -> dict:
-        """(Re)connect to the robot's local broker at the address in effect, finding the serial from heart_beat when
-        none is configured. Safe to call again: the previous connection is dropped first."""
+        """Follow the serial the panel found before, so the cloud subscribes to that robot. With none kept yet, the
+        cloud finds it on the Yarbo account (app/cloud.py). DEMO=1 starts the made-up robot instead."""
         async with self._robot_lock:
-            host, port, sn = self.cfg.yarbo_host, self.cfg.yarbo_port, self.cfg.yarbo_sn
-            old, self.transport = self.transport, None
-            if old:
-                await asyncio.to_thread(old.stop)        # joins paho's thread: not on the loop
-            self._discover_at = time.time()
             if getattr(self.cfg, "demo", False):
+                old, self.transport = self.transport, None
+                if old:
+                    await asyncio.to_thread(old.stop)    # joins the demo robot's thread: not on the loop
                 return self._apply_demo_robot()
-            if not host:
-                if sn and sn != self.sn:                 # cloud-only: the cloud client still needs the serial
-                    self.sn = sn
-                    if self.on_sn:
-                        self.on_sn(sn)
-                self.robot_error = "no robot address yet: set it in Settings → Robot"
-                return self.local_status()
-            if not sn and self.sn and self._applied == (host, port):
-                sn = self.sn                             # found earlier on this very broker
-            if not sn:
-                try:
-                    sn = await asyncio.to_thread(discover_sn, host, port, 20)
-                except Exception as exc:
-                    self.robot_error = f"no robot found at {host}:{port} ({exc})"
-                    log.warning(self.robot_error)
-                    return self.local_status()
-            self._applied = (host, port)
-            if sn != self.sn:
-                self.sn = sn
-                if self.on_sn:
-                    self.on_sn(sn)
-            self.transport = LocalTransport(host, port, sn, self._from_thread)
-            self.transport.start()
-            self.robot_error = ""
-            self.store.event("recorder_started", f"robot {sn} at {host}:{port}")
-            return self.local_status()
+            self._follow(found_sn(self.store).get("sn"))   # with none kept yet, the cloud finds it on the account
+            return self.robot_status()
+
+    def _follow(self, sn: str | None) -> None:
+        if sn and sn != self.sn:
+            # Another robot's state, or state of unknown origin (restored at start with no serial kept), never stands
+            # for this one.
+            if self._state_sn != sn and (self._state_sn or self.map_raw is not None or self.snapshot):
+                self._forget_robot_state()
+            self.sn, self._state_sn = sn, sn
+            if self.on_sn:
+                self.on_sn(sn)
+
+    def _forget_robot_state(self) -> None:
+        """Another robot from now on: nothing the last one reported may stand for it. Its open run is closed, the
+        checks before a command see no snapshot (unknown state blocks) until the new robot reports, and its map is
+        read at once."""
+        if self.run_id is not None:
+            finished, stats = self.run_id, self.run_stats or RunStats()
+            self.store.end_run(finished, max(self.detector.last_moving, self.run_started), "robot changed", stats)
+            self.store.event("run_ended", f"run {finished}: robot changed, {stats.distance_m:.0f} m")
+            self.run_id, self.run_stats, self.run_plan = None, None, None
+            try:
+                self._finish_wifi_survey(finished)
+            except Exception:
+                log.exception("Wi-Fi survey wrap-up failed")
+        self.wifi_survey, self._wifi_waiting = None, None
+        self.replies = {}                # its map backups and Wi-Fi lists are not the next robot's
+        self.snapshot, self.snapshot_at, self.update_at, self.t = {}, 0.0, 0.0, {}
+        self.heartbeat, self.heartbeat_at = {}, 0.0
+        self.poses.clear()
+        self._pose_rt, self._pose_at = None, 0.0
+        self.gps_ref, self.map_raw, self.map_geojson, self.map_fetched = None, None, None, 0.0
+        self.plans, self.cfd, self.robot_schedules = [], None, None
+        self.activity, self.activity_at = "idle", 0.0
+        self.plan, self.plan_at, self.run_plan = None, 0.0, None
+        self.detector = RunDetector(self.cfg.run_idle_end_s)
+        self.app_stream_at, self._stall_anchor = 0.0, None
+        self.received, self.last_message_at = 0, 0.0     # nothing heard from the next robot yet
+        self._map_wake.set()
+
+    def forget_account_sn(self, sn: str) -> None:
+        """The signed-in Yarbo account has no robot with serial `sn`: forget it and its state; the cloud finds the
+        robot on this account again. A serial kept since (another robot chosen meanwhile) is left alone."""
+        if self.sn == sn and (self.run_id or self.plan_active() is True):
+            # It started mowing after the cloud's check: keep it (the guards must go on watching) and send the
+            # cloud back to it.
+            if self.on_sn:
+                self.on_sn(sn)
+            return
+        kept = found_sn(self.store)
+        if kept.get("sn") == sn:
+            self.store.delete_setting(FOUND_SN)
+            self.store.event("robot_found", "robot serial forgotten: not on the signed-in Yarbo account")
+        if self.sn == sn:
+            self._forget_robot_state()
+            self.sn, self._state_sn = None, None
+
+    def keep_sn(self, sn: str, source: str = "account") -> bool:
+        """Keep a found serial so a restart knows the robot without asking the account again. The Yarbo account is the
+        only source now, so it replaces whatever was kept (an older install may have one from the robot's heart_beat,
+        or typed in Settings). Returns whether `sn` is now the kept serial."""
+        if getattr(self.cfg, "demo", False) or not valid_sn(sn):
+            return False
+        if found_sn(self.store) == {"sn": sn, "from": source}:
+            return True
+        self.store.set_setting(FOUND_SN, {"sn": sn, "from": source})
+        self.store.event("robot_found", f"robot serial kept (from the {source.replace('_', ' ')})")   # no value
+        return True
+
+    def use_found_sn(self, sn: str, chosen: bool = True) -> bool:
+        """The Yarbo account gave the serial: the one a person chose in Settings → Robot (`chosen`), or the account's
+        only robot, found by the cloud's own lookup. A lookup never replaces a robot already followed: a choice made
+        while it ran wins. Never while a run is open: the new robot's telemetry would be recorded into the old
+        robot's run."""
+        if self.sn and self.sn != sn and (not chosen or self.run_id):
+            return False
+        if not self.keep_sn(sn, "account"):
+            return False
+        self._follow(sn)
+        return True
 
     def _apply_demo_robot(self) -> dict:
         """DEMO=1: the made-up robot (app/demo_robot.py) instead of any broker. It carries on the mow the demo history
@@ -927,21 +1018,32 @@ class Recorder:
                 self.on_sn(self.sn)
         self.transport = demo_robot.DemoTransport(self.sn, self._from_thread, robot)
         self.transport.start()
-        self.robot_error = ""
         self.store.event("recorder_started", f"demo robot {self.sn} (synthetic yard)")
-        return self.local_status()
+        return self.robot_status()
 
-    def local_status(self) -> dict:
-        t, now = self.transport, time.time()
-        host = self.cfg.yarbo_host
+    def robot_status(self) -> dict:
+        """The way to the robot (the Yarbo cloud, or the demo robot): connected, what came in, and why not."""
+        now, demo = time.time(), getattr(self.cfg, "demo", False)
+        if self.link is not None:
+            connected = self.link.read_route() is not None
+            error = "" if connected else f"Yarbo cloud {getattr(self.link.cloud, 'state', 'not set up')}"
+        else:
+            connected = bool(self.transport and self.transport.connected)
+            error = "" if connected else "not set up"
+        if not self.sn and not demo:
+            error = error or "waiting for the robot's serial"
+        # The cloud can be up while the robot is not: "heard" needs a message from the robot itself lately (the panel
+        # asks for its state every poll_idle_s, so twice that, and at least two minutes).
+        window = max(120.0, 2 * float(getattr(self.cfg, "poll_idle_s", 60) or 60))
+        heard = bool(connected and self.last_message_at and now - self.last_message_at < window)
         return {
-            "connected": bool(t and t.connected),
-            "host": "demo robot" if getattr(self.cfg, "demo", False) else f"{host}:{self.cfg.yarbo_port}" if host else None,
-            "last_message_age_s": round(now - t.last_message_at, 1) if t and t.last_message_at else None,
-            "received": t.received if t else 0,
-            "read_requests_sent": t.published if t else 0,
-            "commands_sent": getattr(t, "commands_sent", 0) if t else 0,
-            "error": self.robot_error or (t.last_error if t else "") or ("connecting" if t and not t.connected else ""),
+            "connected": connected,      # a route to the robot is up (reads can go out)
+            "heard": heard,              # and the robot itself has answered lately
+            "via": "demo robot" if demo else "Yarbo cloud",
+            "last_message_age_s": round(now - self.last_message_at, 1) if self.last_message_at else None,
+            "received": self.received,
+            "read_requests_sent": self.reads_sent,
+            "error": error,
         }
 
     async def apply_weather(self) -> None:
@@ -1017,11 +1119,11 @@ class Recorder:
             s["unanswered"] += 1
             self._wifi_waiting = w = None
         # never within WIFI_DUP_S of the last answer: anything arriving then is that answer's repeat, not ours
-        if (w is None and self.transport and self.transport.connected and now - self._wifi_asked >= WIFI_POLL_S
+        if (w is None and self.can_read() and now - self._wifi_asked >= WIFI_POLL_S
                 and now - self._wifi_answer_at >= WIFI_DUP_S):
             try:
                 self._sent["get_wifi_list"] = self._wifi_asked = now
-                self.transport.request("get_wifi_list")
+                self._send_read("get_wifi_list")
                 self._wifi_waiting = (now, self.t.get("x"), self.t.get("y"))
                 s["asked"] += 1
             except Exception as exc:
@@ -1141,14 +1243,9 @@ class Recorder:
         while True:
             await asyncio.sleep(1)
             now = time.time()
-            if not self.transport:
-                # The robot was off or unset at start: look for it again every minute until it answers.
-                if self.cfg.yarbo_host and now - self._discover_at > 60 and not self._robot_lock.locked():
-                    self._robot_task = asyncio.create_task(self.apply_robot())
-                    self._robot_task.add_done_callback(_log_failure)
-                if not self.can_read():
-                    continue
             readable = self.can_read()
+            if not readable:
+                continue
             if readable and (self.run_id or self._plan_due or plan_flags_active(self.t)):
                 if now - self._plan_asked > (5 if self._plan_due else PLAN_POLL_S):
                     self._plan_asked, self._plan_due = now, False
@@ -1183,7 +1280,11 @@ class Recorder:
             if self.can_read():
                 try:
                     await self.refresh_map()
-                    await asyncio.sleep(self.cfg.map_refresh_s)
+                    try:
+                        await asyncio.wait_for(self._map_wake.wait(), self.cfg.map_refresh_s)
+                    except asyncio.TimeoutError:
+                        pass
+                    self._map_wake.clear()
                     continue
                 except Exception as exc:
                     log.warning("map refresh failed: %s", exc)
@@ -1504,9 +1605,7 @@ class Recorder:
             "snapshot_age_s": round(now - self.snapshot_at, 1) if self.snapshot_at else None,
             "heartbeat_age_s": round(now - self.heartbeat_at, 1) if self.heartbeat_at else None,
             "transport": {
-                "local": {
-                    **self.local_status(),
-                },
+                "robot": self.robot_status(),
                 "cloud": {"note": "see ops.cloud in /api/status"},
             },
             "robot": {

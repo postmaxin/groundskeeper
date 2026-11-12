@@ -1,9 +1,9 @@
 """DEMO=1: a made-up Yarbo in a made-up yard, for screenshots, for trying the panel without a robot, and for tests.
 
-`DemoTransport` stands in for `LocalTransport` (same interface: start, stop, connected, request and the counters
-`Recorder.local_status` reads). It answers the read requests the recorder makes and publishes what the robot does on
-its own (heart_beat, and DeviceMSG as when the phone app is open), in the shapes the recorder parses. It refuses
-anything outside READ_ONLY_COMMANDS exactly like the real transport, and it never opens a socket.
+`DemoTransport` is the made-up robot's side: it answers the read requests the recorder makes and publishes what the
+robot does on its own (heart_beat, and DeviceMSG as when the phone app is open), in the shapes the recorder parses.
+`DemoCloud` stands in for `CloudTransport` (app/cloud.py), so the link (app/link.py) works the same: it passes reads
+to the demo robot, refuses anything outside READ_ONLY_COMMANDS and takes no commands. Neither opens a socket.
 
 The yard: three lawns, two no-go zones (a flower bed and a tree), a no-vision zone, two pathways and a dock, laid
 out on the open lawn of Delta Park (East), a public city park in Portland, Oregon, just west of its softball fields
@@ -27,7 +27,7 @@ import zlib
 from collections.abc import Callable
 
 from . import geo
-from .transport_local import check_read_only
+from .commands import check_read_only
 
 log = logging.getLogger(__name__)
 
@@ -530,7 +530,7 @@ class DemoRobot:
 
 # -- the transport ------------------------------------------------------------------------------------------------
 class DemoTransport:
-    """LocalTransport's interface over a DemoRobot. A thread advances the robot, publishes heart_beat and DeviceMSG,
+    """The made-up robot's side, for DemoCloud. A thread advances the robot, publishes heart_beat and DeviceMSG,
     and answers the read requests queued by request(). Nothing here opens a socket."""
 
     def __init__(self, sn: str, on_message: Callable[[str, object, float], None], robot: DemoRobot,
@@ -654,3 +654,67 @@ class DemoTransport:
             p = r.preview(payload)
             return p["state"], p["msg"], p["data"]
         return -1, f"{cmd} is not simulated", None
+
+
+class DemoCloud:
+    """CloudTransport's interface for DEMO=1: reads go to the demo robot (`rec.transport`, a DemoTransport), commands
+    are refused (`takes_commands`), and there is no account, session or network. The demo never signs in to Yarbo."""
+
+    takes_commands = False
+    _thread = None               # no worker thread (Ops.robot_changed looks for one)
+
+    def __init__(self, rec):
+        self.rec = rec
+        self.sn = DEMO_SN
+        self.username = None
+        self.broker = "demo robot"
+        self.error = ""
+        self.published = 0
+        self.connected_since = time.time()
+        self.devices: list[dict] = []
+        self.on_sn = None
+
+    @property
+    def connected(self) -> bool:
+        t = getattr(self.rec, "transport", None)
+        return bool(t and t.connected)
+
+    @property
+    def state(self) -> str:
+        return "connected" if self.connected else "connecting"
+
+    def publish(self, cmd: str, payload: dict) -> None:
+        check_read_only(cmd)                       # the demo robot only answers reads
+        t = getattr(self.rec, "transport", None)
+        if not (t and t.connected):
+            raise ConnectionError("the demo robot is not running")
+        t.request(cmd, payload)
+        self.published += 1
+
+    def restore(self) -> bool:
+        return False
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+    def restart(self) -> None:
+        pass
+
+    def login(self, email: str, password: str) -> None:
+        raise PermissionError("this is a demo instance (DEMO=1): it never signs in to the Yarbo cloud")
+
+    def logout(self) -> None:
+        pass
+
+    def session_jwt(self) -> None:
+        return None
+
+    def refresh_session(self, stale_jwt: str | None = None) -> str:
+        return "expired"
+
+    def status(self) -> dict:
+        return {"state": self.state, "username": None, "broker": self.broker, "error": "", "commands_sent": 0,
+                "devices": [], "demo": True}

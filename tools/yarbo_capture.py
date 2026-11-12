@@ -1,12 +1,12 @@
-"""Listen-only protocol capture on BOTH Yarbo brokers at once. Never publishes.
+"""Listen-only protocol capture on Yarbo's cloud broker. Never publishes.
 
-    YARBO_SN=<serial> YARBO_HOST=<robot ip> tools/.venv/Scripts/python tools/yarbo_capture.py LABEL [MINUTES]
+    YARBO_SN=<serial> tools/.venv/Scripts/python tools/yarbo_capture.py LABEL [MINUTES]
 
-YARBO_SN (the robot's serial, as in its MQTT topics) and YARBO_HOST (the robot's LAN address) are required;
-YARBO_PORT defaults to 1883.
+YARBO_SN (the robot's serial, as in its MQTT topics) is required. The robot's own broker on the home network is
+closed by current firmware, so only the cloud is captured.
 
-Subscribes to snowbot/{SN}/# on the robot's local broker (anonymous) and on Yarbo's NEW cloud broker (saved
-session from yarbo_cloud.py), decodes zlib/JSON, and appends every message to
+Subscribes to snowbot/{SN}/# on Yarbo's NEW cloud broker (saved session from yarbo_cloud.py), decodes zlib/JSON,
+and appends every message to
 ~/.yarbo/captures/<date>_<LABEL>.jsonl (outside the workspace: payloads include the home GPS position).
 Binary payloads that are not JSON are also saved as separate files (in case images ride MQTT).
 Prints app/* commands and data_feedback replies in full; the DeviceMSG/heart_beat chatter is only counted.
@@ -25,10 +25,8 @@ import paho.mqtt.client as mqtt
 from yarbo_robot_sdk import YarboClient
 
 SN = os.environ.get("YARBO_SN", "").strip()
-_HOST = os.environ.get("YARBO_HOST", "").strip()
-if not SN or not _HOST:
-    sys.exit("set YARBO_SN (the robot's serial) and YARBO_HOST (its LAN address) first")
-LOCAL = (_HOST, int(os.environ.get("YARBO_PORT", "1883")))
+if not SN:
+    sys.exit("set YARBO_SN (the robot's serial) first")
 SESSION = Path.home() / ".yarbo" / "session.json"
 OUTDIR = Path.home() / ".yarbo" / "captures"
 NOISY = ("/device/DeviceMSG", "/device/heart_beat")
@@ -106,9 +104,6 @@ def make(broker, client_id):
 
 
 clients = []
-loc = make("local", f"ro-capture-{secrets.randbelow(10000):04d}")
-loc.connect(*LOCAL, 60)
-clients.append(loc)
 
 sess = json.loads(SESSION.read_text())
 yc = YarboClient()

@@ -3,6 +3,8 @@ every value can also be set, and overrides this, in Settings (see runtime.py).""
 import os
 from dataclasses import dataclass
 
+from .video import DEFAULT_SERVICE_URL
+
 
 def _num(name: str, default: float) -> float:
     value = os.environ.get(name, "").strip()
@@ -11,9 +13,6 @@ def _num(name: str, default: float) -> float:
 
 @dataclass(frozen=True)
 class Config:
-    yarbo_host: str | None
-    yarbo_port: int
-    yarbo_sn: str | None
     data_dir: str
     port: int
     poll_idle_s: float
@@ -29,15 +28,12 @@ class Config:
     frigate_url: str | None
     panel_url: str | None
     demo_speed: float = 1.0
-    robot_service_url: str | None = None   # YARBO_ROBOT_SERVICE_URL: the robot service (§13); no default
+    robot_service_url: str | None = None   # the robot service (§13); YARBO_ROBOT_SERVICE_URL replaces the default
 
 
 def load() -> Config:
     demo = os.environ.get("DEMO", "").strip() == "1" or os.environ.get("DEMO_SEED", "").strip() == "1"
     return Config(
-        yarbo_host=None if demo else os.environ.get("YARBO_HOST", "").strip() or None,
-        yarbo_port=int(_num("YARBO_PORT", 1883)),
-        yarbo_sn=None if demo else os.environ.get("YARBO_SN", "").strip() or None,
         data_dir=os.environ.get("DATA_DIR", "./data"),
         port=int(_num("PORT", 8425)),
         poll_idle_s=_num("POLL_IDLE_S", 60),
@@ -54,8 +50,9 @@ def load() -> Config:
         demo=demo,
         frigate_url=None if demo else os.environ.get("FRIGATE_URL", "").strip() or None,
         panel_url=os.environ.get("PANEL_URL", "").strip() or None,
-        # Environment only, on purpose: the video route sends the Yarbo session JWT to this address, so no signed-in
-        # person may change it from Settings. Not in this repository either (design.md §13).
-        robot_service_url=None if demo else os.environ.get("YARBO_ROBOT_SERVICE_URL", "").strip() or None,
+        # The built-in address, or the environment's. Never Settings, on purpose: the video route sends the Yarbo
+        # session JWT to this address, so no signed-in person may change it (design.md §13). Never in the demo.
+        robot_service_url=None if demo else (os.environ.get("YARBO_ROBOT_SERVICE_URL", "").strip()
+                                             or DEFAULT_SERVICE_URL),
         demo_speed=max(0.1, min(50.0, _num("DEMO_SPEED", 1.0))),
     )

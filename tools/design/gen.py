@@ -249,7 +249,7 @@ CV = """<svg viewBox="0 0 640 360" style="display:block;width:100%;height:auto;b
 
 page("Main", "Live", AERIAL_CSS,
      '<h1 class="h1">Live</h1>' + chip("Docked · charging", "#8BD49A") + chip('Battery <b class="mono">95%</b>')
-     + chip("RTK no fix", "#F0B955") + chip("Lawn: wet", "#79B8F0") + chip("Local broker", "#8BD49A") + chip("Cloud session", "#8BD49A"),
+     + chip("RTK no fix", "#F0B955") + chip("Lawn: wet", "#79B8F0") + chip("Cloud session", "#8BD49A"),
      f"""<div style="display:flex;flex-wrap:wrap;gap:16px;padding:20px 24px;align-items:flex-start">
 <div style="flex:1 1 600px;min-width:0;display:flex;flex-direction:column;gap:16px">
 <section class="card" style="padding:0;overflow:hidden" aria-label="Yard map">
@@ -804,7 +804,7 @@ page("Health", "Health", "",
 <div class="kv"><span class="muted">Advanced fusion</span><span class="mono">on</span></div></section>
 <section class="card"><p class="label">Link</p><div class="big">-57 dBm</div><div class="muted" style="font-size:12.5px;margin-bottom:8px">HaLow to the Data Center, connected</div>
 <div class="kv"><span class="muted">Route in use</span><span class="mono">HaLow</span></div><div class="kv"><span class="muted">Wi-Fi / 4G</span><span class="mono">standby</span></div>
-<div class="kv"><span class="muted">Cloud session</span><span class="mono">valid · renews itself</span></div><div class="kv"><span class="muted">Local broker</span><span class="mono">reachable</span></div></section>
+<div class="kv"><span class="muted">Cloud session</span><span class="mono">valid · renews itself</span></div></section>
 <section class="card"><p class="label">Battery</p><div style="display:flex;align-items:baseline;gap:10px"><span class="big">95%</span><span class="muted">health 100% · 41.8 V</span></div>
 <div style="display:flex;align-items:flex-end;gap:8px;height:84px;margin:14px 0 6px" role="img" aria-label="Six battery cell temperatures, 24 to 25 degrees Celsius">
 <sc-for list="{{cells}}" as="c" hint-placeholder-count="6"><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:100%;height: {{c.h}};border-radius:5px 5px 2px 2px;background:#2F5A3B;border:1px solid #8BD49A;box-sizing:border-box"></div><span class="mono muted" style="font-size:11.5px">{{c.t}}°</span></div></sc-for>
@@ -934,11 +934,9 @@ page("Settings", "Settings", SET_CSS,
 </div>
 <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;padding:16px 24px 24px;align-items:start">
 <section class="card"><div style="display:flex;align-items:center;gap:8px"><p class="label" style="margin:0 auto 0 0">Robot</p><span class="tag" style="background:#1F3A28;color:#B6E6C0">connected</span></div>
-<div class="kv" style="margin-top:8px"><span class="muted">Local broker</span><span class="mono">192.0.2.41:1883</span></div>
-<div class="kv"><span class="muted">Found by</span><span class="mono">LAN scan</span></div>
-<div class="kv"><span class="muted">Cloud account</span><span class="mono">signed in · owner</span></div>
+<div class="kv" style="margin-top:8px"><span class="muted">Cloud account</span><span class="mono">signed in · owner</span></div>
 <div class="kv"><span class="muted">Session</span><span class="mono">renews itself</span></div>
-<p class="muted" style="margin:10px 0 0;font-size:12.5px">The local broker accepts anyone on the LAN. Recommended: a firewall rule allowing only this server and HA.</p></section>
+</section>
 <section class="card"><div style="display:flex;align-items:center;gap:8px"><p class="label" style="margin:0 auto 0 0">Home Assistant</p><span class="tag" style="background:#1F3A28;color:#B6E6C0">connected</span></div>
 <label for="ha" class="muted" style="font-size:12.5px;display:block;margin-top:8px">URL</label><input id="ha" class="field mono" type="text" defaultValue="http://192.0.2.20:8123">
 <div class="kv" style="margin-top:10px"><span class="muted">Token</span><span class="mono">from .env</span></div>

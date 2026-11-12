@@ -1,6 +1,6 @@
-"""DEMO=1 (app/demo_robot.py, app/demo.py): the made-up robot is read-only like the real transport, its replies parse
-through the recorder, a short mow records a run inside the lawns and outside the no-go zones, and demo mode never
-builds a LocalTransport (so it can never reach a real robot)."""
+"""DEMO=1 (app/demo_robot.py, app/demo.py): the made-up robot answers reads only, its replies parse through the
+recorder, a short mow records a run inside the lawns and outside the no-go zones, and demo mode never builds a
+CloudTransport (so it can never reach a real robot or the Yarbo cloud)."""
 import asyncio
 import time
 from types import SimpleNamespace
@@ -13,11 +13,11 @@ from app.config import Config
 from app.recorder import Recorder
 from app.runtime import Runtime
 from app.store import Store
-from app.transport_local import READ_ONLY_COMMANDS, ReadOnlyViolation
+from app.commands import READ_ONLY_COMMANDS, ReadOnlyViolation
 
 
 def _cfg(tmp_path, **over) -> Config:
-    base = dict(yarbo_host=None, yarbo_port=1883, yarbo_sn=None, data_dir=str(tmp_path), port=8425, poll_idle_s=60,
+    base = dict(data_dir=str(tmp_path), port=8425, poll_idle_s=60,
                 poll_active_s=2, map_refresh_s=21600, raw_every_s=60, raw_keep_days=90, run_idle_end_s=300,
                 tempest_port=0, ha_url=None, ha_token=None, demo=True, frigate_url=None, panel_url=None)
     return Config(**{**base, **over})
@@ -169,35 +169,74 @@ def test_the_recorder_carries_on_the_seeded_mow(tmp_path):
 
 
 # -- never the real robot ----------------------------------------------------------------------------------------
-def test_demo_mode_never_builds_a_local_transport(tmp_path, monkeypatch):
+def test_demo_mode_never_builds_a_cloud_transport(tmp_path, monkeypatch):
+    from app import ops as ops_mod
+
     def boom(*a, **k):
-        raise AssertionError("DEMO=1 must never contact a robot")
-    monkeypatch.setattr(recmod, "LocalTransport", boom)
-    monkeypatch.setattr(recmod, "discover_sn", boom)
-    r = _recorder(tmp_path, yarbo_host="192.0.2.10", yarbo_sn="YB0000DEMO0009")    # even with an address given
+        raise AssertionError("DEMO=1 must never contact a robot or the Yarbo cloud")
+    monkeypatch.setattr(ops_mod, "CloudTransport", boom)
+    r = _recorder(tmp_path)
+    o = ops_mod.Ops(r.cfg, r)
     status = asyncio.run(r.apply_robot())
     try:
-        assert isinstance(r.transport, dr.DemoTransport) and status["connected"] and r.sn == dr.DEMO_SN
+        assert isinstance(o.cloud, dr.DemoCloud) and isinstance(r.transport, dr.DemoTransport)
+        assert status["connected"] and r.sn == dr.DEMO_SN
+        assert o.link.command_route() is None                             # the demo robot takes no commands
     finally:
         r.transport.stop()
 
 
+@pytest.mark.parametrize("cmd", ["start_plan", "pause", "cmd_vel", "save_plan", "set_working_state"])
+def test_the_demo_cloud_passes_on_reads_only(cmd):
+    t = dr.DemoTransport(dr.DEMO_SN, lambda *a: None, dr.DemoRobot(time.time(), plan_id=0))
+    t.connected = True
+    cloud = dr.DemoCloud(SimpleNamespace(transport=t))
+    with pytest.raises(ReadOnlyViolation):
+        cloud.publish(cmd, {})
+    cloud.publish("get_device_msg", {})
+    assert cloud.published == 1 and cloud.state == "connected"
+
+
+def test_demo_never_gets_the_robot_service_address(monkeypatch):
+    monkeypatch.setenv("YARBO_ROBOT_SERVICE_URL", "https://robot-service.invalid")
+    monkeypatch.setenv("DEMO", "1")
+    assert config.load().robot_service_url is None
+    monkeypatch.delenv("DEMO")
+    monkeypatch.delenv("DEMO_SEED", raising=False)
+    assert config.load().robot_service_url == "https://robot-service.invalid"     # the control: it is read outside demo
+
+
+def test_the_robot_service_address_is_built_in_and_the_environment_replaces_it(monkeypatch):
+    from app import video
+    for name in ("DEMO", "DEMO_SEED", "YARBO_ROBOT_SERVICE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    assert video.DEFAULT_SERVICE_URL.startswith("https://") and not video.DEFAULT_SERVICE_URL.endswith("/")
+    assert config.load().robot_service_url == video.DEFAULT_SERVICE_URL
+    monkeypatch.setenv("YARBO_ROBOT_SERVICE_URL", "  ")                 # blank is unset, not "off"
+    assert config.load().robot_service_url == video.DEFAULT_SERVICE_URL
+    monkeypatch.setenv("YARBO_ROBOT_SERVICE_URL", "https://robot-service.invalid")
+    assert config.load().robot_service_url == "https://robot-service.invalid"
+    monkeypatch.setenv("DEMO", "1")
+    assert config.load().robot_service_url is None
+
+
 def test_demo_config_drops_the_real_robot_and_integrations(tmp_path, monkeypatch):
-    for k, v in {"DEMO": "1", "YARBO_HOST": "192.0.2.10", "YARBO_SN": "YB0000DEMO0009", "HA_URL": "http://ha.local",
+    for k, v in {"DEMO": "1", "YARBO_SN": "YB0000DEMO0009", "HA_URL": "http://ha.local",
                  "HA_TOKEN": "x", "FRIGATE_URL": "http://frigate.local", "TEMPEST_PORT": "50222"}.items():
         monkeypatch.setenv(k, v)
     c = config.load()
-    assert c.demo and c.yarbo_host is None and c.yarbo_sn is None and c.ha_url is None and c.frigate_url is None
+    assert c.demo and c.ha_url is None and c.frigate_url is None
     assert c.tempest_port == 0
     monkeypatch.delenv("DEMO")
     monkeypatch.setenv("DEMO_SEED", "1")                                  # the older name
     assert config.load().demo
     st = Store(str(tmp_path))
-    st.set_setting("integrations", {"robot": {"host": "robot.local"}, "home_assistant": {"url": "http://ha.local"}})
+    st.set_setting("integrations", {"robot": {"sn": "YB0000DEMO0009"}, "home_assistant": {"url": "http://ha.local"}})
     rt = Runtime(c, st)
-    assert rt.yarbo_host is None and rt.ha_url is None
+    from app.runtime import found_sn
+    assert found_sn(st) == {} and rt.ha_url is None                   # a demo never keeps a serial
     with pytest.raises(ValueError):
-        rt.set("robot", {"host": "robot.local"})
+        rt.set("home_assistant", {"url": "http://ha.local"})
 
 
 def test_demo_refuses_a_data_dir_with_a_robots_data(tmp_path):

@@ -11,7 +11,7 @@ from app.store import Store
 def _recorder(tmp_path) -> Recorder:
     async def no_imagery(*a, **k):
         return None
-    cfg = Config(yarbo_host=None, yarbo_port=1883, yarbo_sn=None, data_dir=str(tmp_path), port=8425, poll_idle_s=60,
+    cfg = Config(data_dir=str(tmp_path), port=8425, poll_idle_s=60,
                  poll_active_s=2, map_refresh_s=21600, raw_every_s=60, raw_keep_days=90, run_idle_end_s=300,
                  tempest_port=0, ha_url=None, ha_token=None, demo=True, frigate_url=None, panel_url=None)
     r = Recorder(cfg, Store(str(tmp_path)), SimpleNamespace(yard_meta=None, ensure_yard=no_imagery), None)

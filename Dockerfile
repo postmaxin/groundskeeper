@@ -7,9 +7,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-# MapLibre GL, three.js and the Agora Web SDK, vendored at build time (checked against their hashes) so the UI needs no CDN at runtime.
-# three.js is only loaded by the 3D map (web/robot3d.js). The Agora SDK is MIT per its npm package: its licence text
-# (in THIRD_PARTY_NOTICES.md) ships beside it, and the SDK file is served unmodified.
+# MapLibre GL and three.js, vendored at build time (checked against their hashes) so the UI needs no CDN at runtime.
+# three.js is only loaded by the 3D map (web/robot3d.js).
+# The Agora Web SDK is vendored the same way. It is MIT per its npm package: its licence text (in
+# THIRD_PARTY_NOTICES.md) ships beside it, and the SDK file is served unmodified.
 # (The folder is made first: ADD --chmod would give the folders it creates mode 644, unreadable to a non-root user.)
 RUN mkdir -p /app/web/vendor
 ADD --chmod=644 --checksum=sha256:be9633c4d870e26fb37f1cfe5c5a77181667114003ea16207ac7850d8da8add1 \
@@ -19,8 +20,9 @@ ADD --chmod=644 --checksum=sha256:576b085fdd9487a65a19215328c1e086c07ce5bf6da09b
 ADD --chmod=644 --checksum=sha256:08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7 \
     https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js /app/web/vendor/three.module.min.js
 ADD --chmod=644 --checksum=sha256:63a04a823e6e589a6dd4384e2c175a8e6f70c313f6f58aa88fd92e436ced55fe \
-    https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.24.9/AgoraRTC_N-production.js /app/web/vendor/AgoraRTC_N-production.js
-COPY --chmod=644 THIRD_PARTY_NOTICES.md /app/web/vendor/THIRD_PARTY_NOTICES.md
+    https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.24.9/AgoraRTC_N-production.js \
+    /app/web/vendor/AgoraRTC_N-production.js
+COPY --chmod=644 THIRD_PARTY_NOTICES.md LICENSE /app/web/vendor/
 
 COPY app /app/app
 COPY catalog /app/catalog
@@ -33,6 +35,9 @@ RUN chmod -R a+rX /app                          # readable by PUID whatever the 
 # The git commit this image was built from (CI and scripts/deploy.sh pass it); shown next to the version.
 ARG PANEL_BUILD=
 ENV PANEL_BUILD=$PANEL_BUILD
+# "edge" or "nightly" on a pre-release image (.github/workflows/prerelease.yml), empty on a release; shown beside it.
+ARG PANEL_CHANNEL=
+ENV PANEL_CHANNEL=$PANEL_CHANNEL
 
 # The panel runs as PUID:PGID (default 1000:1000), not root; the entrypoint hands /data to that user once.
 ENV DATA_DIR=/data PORT=8425 PUID=1000 PGID=1000

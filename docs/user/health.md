@@ -12,7 +12,7 @@ to read the value at that time.
     (one that ends while the panel is restarting is listed here but has no event).
   - The **RTK** pill in the top bar reads *no corrections* in amber while they are more than 10 s old, docked too.
     None at all (-1) is normal on the dock and doesn't count.
-- **Link:** the local connection and HaLow over time.
+- **Link:** the connection through the Yarbo cloud (messages and read requests) and HaLow over time.
 - **Network:** each link's strength now, and the robot's Wi-Fi.
   - **HaLow** in dBm: amber below −77, red at −82 (where the robot switches to 4G).
   - **4G:** the values the robot reports, as it reports them; "not reported" when they are all zero.
@@ -22,7 +22,7 @@ to read the value at that time.
     from here yet. Both need
     map writing on (Settings → Safety) and the robot on its charger with no plan. The panel then asks the robot
     which network it is on, or scans again, and says whether it worked. A forgotten network needs its password to
-    join again. Changing Wi-Fi can drop the panel's local connection for a moment; the cloud carries on.
+    join again. Changing Wi-Fi can drop the robot's connection for a moment.
 
 The top bar's connections pill shows the same as **signal bars**: HaLow (4 bars from −60 dBm, none at the 4G
 level), Wi-Fi when the robot is on it (from the latest scan), and GPS (RTK fixed 4, or 3 with a high heading DOP;

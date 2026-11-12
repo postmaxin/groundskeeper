@@ -180,6 +180,8 @@ def _gate(**over):
                           plan_active=lambda: over.get("active", False))
     ops = SimpleNamespace(cloud=SimpleNamespace(state=over.get("cloud", "connected")),
                           controller=SimpleNamespace(start_settling=lambda: over.get("starting")))
+    from app.link import RobotLink
+    ops.link = RobotLink(rec, ops.cloud, rec.store)
     req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(rec=rec, ops=ops)))
     return main._pathway_write_block(req)
 

@@ -240,7 +240,8 @@ waits until `get_map` matches the backup, then puts settings back on same-id are
 
 `preview_snowbot_area_path {range, id, push_snow_dir, snowPiles, leaf_piles, ref, algorithm_type, slope_degrees}` →
 `{path: [{x, y, phi}], total_time}` (~48 KB for a large area). Computes the mowing route with the area's saved
-settings; it does not move the robot. Works over the local broker.
+settings; it does not move the robot. The panel sends it through the cloud (it also worked on the local broker
+before firmware V3.14.4x).
 
 ## Not yet known
 

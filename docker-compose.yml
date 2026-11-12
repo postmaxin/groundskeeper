@@ -1,5 +1,5 @@
 # Groundskeeper on any Docker host:  docker compose up -d   then open http://<this host>:8425
-# Everything site-specific (the robot's address, Frigate, Home Assistant, ...) is set in the panel (Settings), or
+# Everything site-specific (the Yarbo cloud sign-in, Frigate, Home Assistant, ...) is set in the panel (Settings), or
 # as defaults in .env next to this file (copy .env.example; chmod 600, it can hold the HA token).
 services:
   groundskeeper:

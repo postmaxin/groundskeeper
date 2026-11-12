@@ -1,0 +1,120 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit for Groundskeeper. It reviews each PR when it is opened or marked ready, and again on each push;
+# drafts wait. Ask again with `@coderabbitai review` (or `@coderabbitai full review`).
+# Its comments are advice; AGENTS.md is the authority, a maintainer decides.
+language: "en-US"
+tone_instructions: >-
+  Be brief. Only the changes in this PR. No style nits scripts/check.py already covers. Rank safety, privacy and
+  access problems first; quote the AGENTS.md rule a finding breaks.
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false   # a maintainer requests changes, not the bot
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+  sequence_diagrams: false
+  auto_review:
+    enabled: true
+    auto_incremental_review: true   # again on each push
+    auto_pause_after_reviewed_commits: 0   # never pause: the default stops after 5 reviewed commits
+    drafts: false                   # a draft waits until it is marked ready for review
+    # If it gets noisy, review only PRs a maintainer tags:
+    # labels: ["coderabbit"]
+  path_filters:
+    - "!web/vendor/**"
+    - "!docs/screenshots/**"
+    - "!catalog/schema.json"
+    - "!catalog/SOURCES.md"
+    - "!**/*.png"
+    - "!**/*.ico"
+  path_instructions:
+    - path: "**"
+      instructions: |
+        AGENTS.md (and the AGENTS.md in each folder the PR touches) is mandatory repository policy, not style advice.
+        Flag a change that breaks one of its rules even when the code works, and name the rule. In particular:
+        - One change per PR: flag unrelated refactors, renames, reformatting, or a second change bundled in.
+        - Real data stays out: flag anything that looks like a real serial (the example is YB0000DEMO0001), a
+          non-192.0.2.x IP address, coordinates other than the synthetic yards, an email other than
+          user@example.com, or a dated observation from a real robot or deployment, in code, tests, docs or commits.
+        - New lines over 120 characters; existing lines rewrapped.
+        - New behaviour without a synthetic test; a user-visible change without a CHANGELOG.md line under
+          Unreleased and its docs/user/ page; a version bump in app/version.py outside a release.
+        - A new dependency without a reason; anything loaded from a CDN at runtime.
+        Do not comment on code that was only moved or re-indented. Do not suggest weakening a check, an assertion
+        or an allowlist to make something pass.
+        Which findings to raise: bugs on a normal path, crashes, data loss, and privacy or access problems. Skip a
+        finding that only matters after two or more unlikely events in a row (a restart, a robot switch or a sign-in
+        landing inside a short window; a state change between two awaits): each fix adds code that raises the next
+        such finding, and the PR waits. Robot safety is the exception: anything that could send a command, move the
+        robot or pass an interlock it shouldn't is always raised. Label a finding Major only if it can happen in
+        normal use. Ask for regenerated screenshots only when an image that scripts/screenshots.py makes shows the
+        screen the PR changes.
+    - path: "app/{control,link,commands,cloud,mapwrite,areasettings}.py"
+      instructions: |
+        Robot safety (AGENTS.md -> Rules -> Safety). Flag:
+        - Anything that reaches CloudTransport.publish other than through
+          app.link.RobotLink, called from Controller.send() (run commands) or MapWriter (writes).
+        - A command sent without control.CATALOGUE and control.check, or without a log_control audit row.
+        - A new command or payload not documented in docs/dev/protocol.md or docs/dev/map-writes.md. A capture of the
+          official app is the rule; for a feature the official app does not have, a maintainer may accept an
+          "observed" basis, so flag it and ask, do not assume.
+        - A widened READ_ONLY_COMMANDS, COMPUTE_ONLY or check_command allowlist; cmd_vel reachable anywhere.
+        - A command sent more than once (no repeat or reroute); an interlock that passes on an unknown state (they
+          fail closed).
+        - A loosened default: control, map writing, guard auto-resume, assistant commands and MCP stay off.
+        - A map or settings write that is not serialised, read back, compared and put back on a mismatch.
+    - path: "app/{auth,main,runtime}.py"
+      instructions: |
+        Access (AGENTS.md -> Rules -> Access). Flag:
+        - A path added to OPEN_PATHS that returns data; a new route outside /api/, /tiles/ or /imagery/ that
+          returns data.
+        - A route that changes the password, tokens or sign-in without _person (a person's session).
+        - A write route added to TOKEN_WRITES, or a route that lets an API token do more than read and ask for
+          robot commands under the strict checks.
+        - A secret (token, password, key, session, stream key) logged, returned twice, or compared without a
+          constant-time compare.
+        - A new SETTINGS_DEFAULTS entry that is not off or the safest value.
+    - path: "app/mcp_server.py"
+      instructions: |
+        Any change to ROUTES or scrub needs its own review: flag a widened ROUTES allowlist, output that is not
+        scrubbed, or a rule that gets looser for an assistant.
+    - path: "app/{demo,demo_robot}.py"
+      instructions: |
+        Demo mode (DEMO=1) must never reach a real robot, the Yarbo cloud, Home Assistant, Frigate or Tempest.
+    - path: "app/imagery/**"
+      instructions: |
+        Never probe or fetch a source whose coverage outline does not contain the yard (that sends the yard's
+        location to it). Imagery URLs carry coordinates: flag any that reach a log.
+    - path: "web/**"
+      instructions: |
+        Follow web/AGENTS.md and docs/dev/ui-design.md. Flag: innerHTML or HTML strings (build DOM with h());
+        a hard-coded hex colour instead of the tokens (tok(), MAP, SERIES, var(--…)); a framework or build step;
+        full sentences on screen where a short label with a tooltip belongs; layouts that break at phone width.
+    - path: "tests/**"
+      instructions: |
+        Follow tests/AGENTS.md: offline and synthetic, reuse the fakes, one test per behaviour named for it.
+        Flag any edit to tests/test_guards.py, a loosened assertion, or an added skip.
+    - path: "catalog/**"
+      instructions: |
+        Follow catalog/AGENTS.md and catalog/README.md: one JSON file per source with its coverage outline; the
+        generated schema.json and SOURCES.md are rewritten by `python -m app.imagery`, never by hand.
+  tools:
+    ruff:
+      enabled: false        # scripts/check.py runs the project's own checks; ruff's defaults fight the house style
+    markdownlint:
+      enabled: false        # the docs wrap at 120 and use their own conventions
+    languagetool:
+      enabled: false
+    gitleaks:
+      enabled: true
+    shellcheck:
+      enabled: true
+    hadolint:
+      enabled: true
+    actionlint:
+      enabled: true
+
+chat:
+  auto_reply: true

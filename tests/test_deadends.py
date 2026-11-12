@@ -9,7 +9,7 @@ import pytest
 
 from app import mapstudio as ms, mapwrite as mw
 from app.store import Store
-from app.transport_local import READ_ONLY_COMMANDS
+from app.commands import READ_ONLY_COMMANDS
 from tests.test_mapstudio import REF, lonlat, sample_map
 
 DEFAULTS = {"blade_height": 0, "blade_speed": 80, "en_blade": True, "en_trimmer": False, "id": 0,

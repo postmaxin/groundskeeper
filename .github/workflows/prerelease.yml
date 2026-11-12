@@ -1,0 +1,113 @@
+name: Pre-release images
+
+# Images for testing what is on main before a release, in their own package so nothing here can touch a release:
+#   ghcr.io/<owner>/groundskeeper-dev:edge             every merge to main
+#   ghcr.io/<owner>/groundskeeper-dev:nightly          once a night, when main changed since the last nightly
+#   ghcr.io/<owner>/groundskeeper-dev:nightly-YYYYMMDD that night's
+#   ghcr.io/<owner>/groundskeeper-dev:sha-<commit>     the exact commit
+# Releases stay in ghcr.io/<owner>/groundskeeper (release.yml); this workflow never writes :latest or a version tag.
+# The panel shows the channel next to its version (PANEL_CHANNEL). Run it by hand for a nightly now.
+# Nothing is pruned automatically: storage for a public package is free, and an age- or count-based clean-up can
+# split a multi-arch build (keep its tagged index, delete one of its platform images). Prune by hand if ever needed.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 7 * * *"      # 07:17 UTC: off the hour, after the US evening and before Europe's morning
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: prerelease-${{ github.event_name == 'push' && 'edge' || 'nightly' }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}   # a newer merge replaces an edge build still running
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/groundskeeper-dev
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Which channel, and is there anything new
+        id: what
+        run: |
+          IMAGE="${IMAGE,,}"                     # ghcr wants a lower-case owner
+          SHA="$(git rev-parse HEAD)"
+          if [ "${{ github.event_name }}" = "push" ]; then CHANNEL=edge; else CHANNEL=nightly; fi
+          SKIP=false
+          if [ "$CHANNEL" = nightly ]; then
+            # The commit the current :nightly was built from (its OCI revision label); none on the first run.
+            FMT='{{ index (index .Image "linux/amd64").Config.Labels "org.opencontainers.image.revision" }}'
+            LAST="$(docker buildx imagetools inspect "$IMAGE:nightly" --format "$FMT" 2>/dev/null || true)"
+            if [ "$LAST" = "$SHA" ] && [ "${{ github.event_name }}" = "schedule" ]; then SKIP=true; fi
+          fi
+          {
+            echo "image=$IMAGE"
+            echo "channel=$CHANNEL"
+            echo "sha=$SHA"
+            echo "short=${SHA:0:7}"
+            echo "date=$(date -u +%Y%m%d)"
+            echo "skip=$SKIP"
+          } >> "$GITHUB_OUTPUT"
+          echo "$CHANNEL build of ${SHA:0:7}; skip=$SKIP"
+      # The same checks as CI: a main that fails them never becomes an image.
+      - if: steps.what.outputs.skip != 'true'
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - if: steps.what.outputs.skip != 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - if: steps.what.outputs.skip != 'true'
+        name: Every check (scripts/check.py)
+        run: |
+          pip install -r requirements.txt -r requirements-dev.txt
+          python scripts/check.py
+      - if: steps.what.outputs.skip != 'true'
+        uses: docker/setup-qemu-action@v4
+      - if: steps.what.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v4
+      - if: steps.what.outputs.skip != 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - if: steps.what.outputs.skip != 'true'
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.what.outputs.image }}
+          tags: |
+            type=raw,value=edge,enable=${{ steps.what.outputs.channel == 'edge' }}
+            type=raw,value=nightly,enable=${{ steps.what.outputs.channel == 'nightly' }}
+            type=raw,value=nightly-${{ steps.what.outputs.date }},enable=${{ steps.what.outputs.channel == 'nightly' }}
+            type=raw,value=sha-${{ steps.what.outputs.short }}
+          labels: |
+            org.opencontainers.image.title=Groundskeeper (${{ steps.what.outputs.channel }})
+            org.opencontainers.image.description=Pre-release build of Groundskeeper for testing; not a release
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.revision=${{ steps.what.outputs.sha }}
+      - if: steps.what.outputs.skip != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            PANEL_BUILD=${{ steps.what.outputs.sha }}
+            PANEL_CHANNEL=${{ steps.what.outputs.channel }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+

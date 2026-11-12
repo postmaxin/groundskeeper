@@ -4,14 +4,14 @@ What the robot exposes over MQTT, locally and through Yarbo's cloud, as observed
 in autumn 2026. Write commands are in [`map-writes.md`](map-writes.md); state and error codes in
 [`robot-states.md`](robot-states.md).
 
-Tools in `tools/`: `yarbo_local.py` (local broker, read-only, standard library only) and `yarbo_cloud.py` (a cloud
-diagnostic on Yarbo's SDK).
+Tools in `tools/`: `yarbo_cloud.py` (a cloud diagnostic on Yarbo's SDK) and `yarbo_capture.py` (records the cloud
+broker). Firmware V3.14.4x closes the local broker (see Access control).
 
 ## Brokers
 
 | Thing | Value |
 |---|---|
-| Robot (rover) | `<robot-ip>`, EMQX on **1883 plain, anonymous**. Open TCP ports: 22, 1883, 8083 (EMQX WebSocket), 8084 (TLS), 8088, 8089, 8090, 8883 |
+| Robot (rover) | `<robot-ip>`, EMQX on **1883 plain, anonymous** (closed from firmware V3.14.4x). Open TCP ports: 22, 1883, 8083 (EMQX WebSocket), 8084 (TLS), 8088, 8089, 8090, 8883 |
 | Data Center (base station) | No open ports. The rover talks to it over HaLow. |
 | Serial in topics | `{SN}`, the robot's serial, e.g. `YB0000DEMO0001` (uppercase works; lowercase is also granted) |
 
@@ -46,18 +46,21 @@ no manual drive.** Those are learned by watching the official app on `snowbot/{S
 
 ## Access control (after the September 2026 "cleaning up MQTT" firmware)
 
+Firmware V3.14.4x closes the local broker: connections to 1883 are refused. The panel is cloud only since then (#91).
+The local rows below are what earlier firmware showed.
+
 | Operation | Result |
 |---|---|
 | CONNECT, no credentials | **accepted** |
 | SUBSCRIBE `#`, `$SYS/#` | **refused** (128) |
 | SUBSCRIBE `snowbot/{SN}/device/#`, `snowbot/{SN}/app/#`, `snowbot/{SN}/#` | **granted** |
-| SUBSCRIBE `snowbot/+/device/heart_beat` (serial unknown) | **granted**; heartbeats arrive every few seconds with the serial in the topic (checked 2026-10-20). Robot discovery (`app/robotscan.py`) and `discover_sn` rely on it |
+| SUBSCRIBE `snowbot/+/device/heart_beat` (serial unknown) | **granted**; heartbeats arrive every few seconds with the serial in the topic (checked 2026-10-20). The panel's robot discovery relied on it before it went cloud only |
 | PUBLISH read requests (`get_device_msg`, `get_map`, `read_gps_ref`, `read_all_plan`, …) | **answered** |
 | Action commands, locally | **accepted** for `set_sound_param` (2026-10-21): published on the local broker with no cloud and no handshake, it answered "Sound settings updated successfully." (state 0) on `device/data_feedback` and `StateMSG.enable_sound` followed, both ways. **Run commands too** (2026-10-21, docked, plan "Mow Side"): `start_plan {"id": 2}`, `pause`, `stop` and `cmd_recharge {"cmd": 2}` on the local broker each showed in the robot's state within about 2 s (planning 2 and off the dock; `planning_paused` 1; planning 0 with "no plan working"; `on_going_recharging` 2, then docked and charging). Still no reply to run commands: confirm by state |
 | `light_ctrl` from the official app | **ignored** on the dock and when off it (2026-10-21): `LedInfoMSG` never showed the sent values; the lights seen while driving are the robot's own (head 50, sides 150) |
 | **Cloud broker** (account session): SUBSCRIBE `snowbot/{SN}/#`, `/app/#`, `/device/#` | **granted for the account's own robot**; `snowbot/#` and `#` refused. The phone app's commands are visible here. |
 
-Re-check after any firmware update: `python tools/yarbo_local.py acl '#' 'snowbot/<SN>/app/#'`.
+Re-check after any firmware update whether the local broker accepts a connection on 1883.
 
 **The phone app talks to the robot through the cloud broker, even on the home Wi-Fi.**
 
@@ -152,41 +155,50 @@ shows them as reported. Wi-Fi strength is not in the device message; only a scan
 
 | Command | Payload | Notes |
 |---|---|---|
-| `set_working_state` | `{"state":1}` | Keep-awake, every few seconds (4 s on a real robot, 2026-11-10) while the app is open. The robot streams its cameras only while someone sends it: with `smart_vision_control` on and no keep-awake it publishes nothing. The panel sends it for the Cameras tile only (`POST /api/video/keepalive`, one beat per request, state 1 only; not in the control catalogue). The app switches the cameras off when it goes to the background |
+| `set_working_state` | `{"state":1}` | Keep-awake while the app is open; see below the table |
 | `cmd_vel` | `{"vel":0.0,"rev":0.0}` | **Manual drive** (linear/angular velocity). The app zeroes it on opening and streams it from its joystick. Not in the SDK. **Never send it.** |
 | `cmd_roller` | `{"vel": 1000}` | A motor command sent in bursts around blade switches and on opening. Never send it |
-| `smart_vision_control` | `{"state":0}` / `{"state":1}` | Live view off/on. Reply: "Smart vision control command sent: N". No stream URL, SDP or token on MQTT. See [Robot video](#robot-video-agora) |
+| `smart_vision_control` | `{"state":0}` / `{"state":1}` | Live view off/on; see [Robot video](#robot-video-agora) |
 | `mower_head_sensor_switch` | `{"cmd": 0}` or `{"state": -99}` | A status query on opening; reply state 33, "status query feedback" |
 | `wireless_charging_cmd` | `{"cmd": 0}` | Sent by the app on opening and closing |
 | `cmd_recharge` | `{"cmd": 2}` | Return to dock |
 | `cmd_motor_protect` | `{"state": 15}` | Seen once after a boundary recording |
 | `correct_map` | `{}` | The app's map-drift correction. Refused with state −5 "yarbo rtk status is not 4" without a fixed RTK; never sent by the panel |
 
+`set_working_state {"state":1}` [observed]: the app sends it about every 4 s while it is open. The robot streams its
+cameras only while someone sends it: with `smart_vision_control` on and no keep-awake it publishes nothing. The app
+switches the cameras off when it goes to the background. The panel sends it only for the Cameras tile, state 1 only,
+through the controller like any command, at most 15 min per press of play (design.md §13).
+
 ## Robot video (Agora)
 
 The robot's cameras are not served on the LAN. The robot publishes each camera to Agora's real-time network, and the
-phone app joins as a viewer with a token it asks Yarbo's cloud for. Everything below is a **planned route** (`design.md`
-§13): the panel does not do it yet. Evidence is a recorder that has run daily against one robot and a live check of the
+phone app joins as a viewer with a token it asks Yarbo's cloud for. The panel uses this route (`design.md` §13)
+for the Cameras tile. Evidence is a recorder that has run daily against one robot and a live check of the
 token request, not a stored capture of the app, so each line is marked **[observed]** (seen working in that recorder or
 check, with no capture to link) or **[unconfirmed]**. Nothing here is **[captured]**; the maintainers' rule is that
 robot behaviour comes from a capture of the official app, so a capture is still wanted for the observed lines.
 No value here is real; serials, tokens, keys and salts are synthetic or shortened.
 
-**Switching the view on.** The app publishes `smart_vision_control {"state":1}` on `snowbot/{SN}/app/smart_vision_control`
-over the cloud broker (see the table above). **[observed]** that the robot publishes video after `{"state":1}`.
-`{"state":0}` is the app's "off". **[observed, real robot, 2026-11-10, firmware V3.14.41]**: `{"state":0}` sent from
-another cloud session switched off the official app's live view on the owner's phone, so it cuts the view for anyone
-else watching. **[unconfirmed, untested]**: whether it changes anything during a run besides the live view (obstacle
-detection in particular). That is why a client sends only `{"state":1}`: the panel's controller refuses any other
-state (`control.check`, "Cameras on only") and leaves switching off to the robot or the app. `{"state":1}` is allowed
-idle or during a run, with the same robot-online and route checks as pause, stop and dock. Only a person at the panel
-can send it (not tokens, the MCP server, the scheduler or the guards), and only through the cloud broker, the one
-route observed (`LOCAL_VISION_PROVED` in `app/link.py`, off until a local send is observed).
+**Switching the view on.** The app publishes `smart_vision_control {"state":1}` on
+`snowbot/{SN}/app/smart_vision_control` over the cloud broker (see the table above). The reply is "Smart vision
+control command sent: N". No stream URL, SDP or token goes over MQTT. **[observed]** that the robot publishes
+video after `{"state":1}`.
+`{"state":0}` is the app's "off". **[observed]**: `{"state":0}` sent from another cloud session switched off the
+official app's live view on the owner's phone, so it cuts the view for anyone else watching. **[unconfirmed,
+untested]**: whether it changes anything during a run besides the live view (obstacle detection in particular).
+That is why a client sends only `{"state":1}`: the panel's controller refuses any other state (`control.check`,
+"Cameras on only") and leaves switching off to the robot or the app. `{"state":1}` is allowed idle or during a run,
+with the same robot-online and route checks as pause, stop and dock. Only a person at the panel can send it (not
+tokens, the MCP server, the scheduler or the guards), and only through the cloud broker, the panel's only route
+(`ON_ONLY` in `app/link.py`).
 
 **Token request.** An authenticated POST to the cloud's *robot service*, a different host from the `data-api.yarbo.ai`
-used for sign-in and broker discovery (an AWS API Gateway stage; the host is not recorded in this document). The
-sign-in JWT, as `Authorization: Bearer <jwt>`, is accepted by it **[observed]**. How the app discovers the host is
-**[unconfirmed]**.
+used for sign-in and broker discovery: an AWS API Gateway stage,
+`https://4zx17x5q7l.execute-api.us-east-1.amazonaws.com/Stage` (`video.DEFAULT_SERVICE_URL`). The address is a fixed
+string in the official Android app's package **[observed]**; without a sign-in the route answers code `A0230`
+**[observed]**. The sign-in JWT, as `Authorization: Bearer <jwt>`, is accepted by it **[observed]**. Whether other
+regions or accounts use another address is **[unconfirmed]**.
 
 ```
 POST <robot-service>/yarbo/robot-service/robot/commonUser/getAgoraToken
@@ -209,7 +221,7 @@ Authorization: Bearer <jwt>
 - The token is minted for the `uid` in the request, so the viewer must join with exactly that `uid`.
 - **Lifetime is not known** **[unconfirmed]**: the recorder fetches once per session and has not seen one expire.
 - **Auth failures** **[observed]**: HTTP 401, and HTTP 200 with a body `code` of `A0230` (seen when every session was
-  invalidated at once on 2026-10-25). A client should refresh its sign-in once and retry once.
+  invalidated at once). A client should refresh its sign-in once and retry once.
 
 **Channels and uid.**
 

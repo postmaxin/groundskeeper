@@ -588,8 +588,8 @@ def _audit_args(cmd: str, payload: dict) -> str:
 
 
 class _WriteLock:
-    """The writer's lock. While it is held one route carries the whole write (local or cloud, picked at the first
-    send): a write is never split across the two brokers."""
+    """The writer's lock. While it is held the write keeps the route it started on (there is only the Yarbo cloud;
+    a write that loses it is refused rather than carried on some other way)."""
 
     def __init__(self, writer):
         self._lock, self._writer = asyncio.Lock(), writer

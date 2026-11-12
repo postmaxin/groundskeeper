@@ -13,7 +13,7 @@ import pytest
 
 from app import auth, control, mapwrite, mcp_server
 from app.main import SETTINGS_DEFAULTS
-from app.transport_local import COMPUTE_ONLY, READ_ONLY_COMMANDS
+from app.commands import COMPUTE_ONLY, READ_ONLY_COMMANDS
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = sorted((ROOT / "app").rglob("*.py"))
@@ -37,9 +37,9 @@ def js_code(text: str) -> str:
 
 # -- Safety ---------------------------------------------------------------------------------------------------------
 
-# The only modules that may call .publish(): the two transports, the link that picks between them, and the map
+# The only modules that may call .publish(): the cloud transport, the link (the one doorway to it), and the map
 # writer (WRITE_COMMANDS only, through the link's write_command, read back after). AGENTS.md → Rules → Safety.
-PUBLISHERS = {"app/transport_local.py", "app/cloud.py", "app/link.py", "app/mapwrite.py"}
+PUBLISHERS = {"app/cloud.py", "app/link.py", "app/mapwrite.py"}
 # Only the link reaches the cloud transport's publish.
 CLOUD_PUBLISH_USERS = {"app/link.py"}
 
@@ -54,7 +54,7 @@ def test_only_known_modules_publish_to_the_robot():
     found = {rel(p) for p in APP if _publish_calls(p)}
     extra = found - PUBLISHERS
     assert not extra, (f"{sorted(extra)} call .publish(). Robot commands go through app.control.Controller.send() "
-                       "(run commands) or app.mapwrite.MapWriter (map writes); reads through LocalTransport. "
+                       "(run commands) or app.mapwrite.MapWriter (map writes); reads through app.link.RobotLink.read. "
                        "See AGENTS.md → Rules → Safety.")
 
 
@@ -97,9 +97,9 @@ def _uses(p: Path, attr: str) -> list[tuple[str, int]]:
     return out
 
 
-# Where a run command may be sent through the link (Controller: a send, and the follow-up that may repeat a safe one),
-# and where the link's write door may be handed out (Ops wiring the map writer). Anywhere else is a bypass.
-COMMAND_USES = {"app/link.py": None, "app/control.py": {"Controller.send", "Controller._follow_up"}}
+# Where a run command may be sent through the link (Controller.send), and where the link's write door may be handed
+# out (Ops wiring the map writer). Anywhere else is a bypass.
+COMMAND_USES = {"app/link.py": None, "app/control.py": {"Controller.send"}}
 WRITE_DOOR = {"app/link.py": None, "app/ops.py": {"Ops.__init__"}}
 
 
@@ -107,7 +107,7 @@ def test_only_the_controller_sends_commands_through_the_link():
     for p in APP:
         allowed = COMMAND_USES.get(rel(p), set())
         bad = [(f, n) for f, n in _uses(p, "command") if allowed is not None and f not in allowed]
-        assert not bad, (f"{rel(p)} uses .command at {bad}: only Controller.send (and its follow-up) send run "
+        assert not bad, (f"{rel(p)} uses .command at {bad}: only Controller.send sends run "
                          "commands, through app.link.RobotLink (AGENTS.md → Safety)")
 
 
@@ -139,15 +139,15 @@ def test_the_guard_places_defaults_and_decorators_outside_the_function(tmp_path)
 
 
 @pytest.mark.parametrize("cmd", ["cmd_vel", "set_sound_param", "light_ctrl", "get_controller", "shutdown"])
-def test_the_local_broker_refuses_anything_but_run_commands_and_captured_writes(cmd):
-    from app.transport_local import ReadOnlyViolation, check_command
+def test_the_robot_is_sent_nothing_but_run_commands_and_captured_writes(cmd):
+    from app.commands import ReadOnlyViolation, check_command
     with pytest.raises(ReadOnlyViolation):
         check_command(cmd)
 
 
 @pytest.mark.parametrize("cmd", sorted(control.CATALOGUE))
-def test_the_local_broker_takes_the_run_commands(cmd):
-    from app.transport_local import check_command
+def test_the_run_commands_may_be_sent(cmd):
+    from app.commands import check_command
     check_command(cmd)
 
 
@@ -158,10 +158,10 @@ def test_manual_driving_stays_blocked():
         assert "cmd_vel" not in cmds, f"cmd_vel must never be in {name}"
 
 
-def test_local_broker_requests_are_reads_or_listed_compute_only():
+def test_read_requests_are_reads_or_listed_compute_only():
     for cmd in READ_ONLY_COMMANDS:
         assert cmd.startswith(("get_", "read_")) or cmd in COMPUTE_ONLY, (
-            f"{cmd} is not a read. The local broker is read-only; a request that only computes must be named in "
+            f"{cmd} is not a read. A read request changes nothing; a request that only computes must be named in "
             "COMPUTE_ONLY with a comment saying why nothing on the robot changes.")
 
 

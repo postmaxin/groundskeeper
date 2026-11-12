@@ -7,7 +7,7 @@
 
 const SECTIONS = [
   ["setup", "Set up", "A guided first run: each setting in order, with what it is for"],
-  ["robot", "Robot", "The connection to the robot and the Yarbo cloud"],
+  ["robot", "Robot", "The Yarbo cloud sign-in that connects the panel to the robot"],
   ["safety", "Safety", "The switches that let the panel act on the robot"],
   ["rules", "Run rules", "What must be true for a run to start, and what stops one"],
   ["lawn", "Lawn conditions", "How the weather station decides whether the grass is dry"],
@@ -188,17 +188,17 @@ async function renderSettings(section, auto = false) {
   drawSettings(d, true);
 }
 
-// While something the open page waits for is on its way (Robot / the guide's robot and cloud steps: the robot and
-// its serial, the cloud signing in; Map imagery and the guide's imagery step: the yard imagery; Lawn conditions and
+// While something the open page waits for is on its way (Robot / the guide's robot step: the cloud signing in and
+// the robot's serial; Map imagery and the guide's imagery step: the yard imagery; Lawn conditions and
 // the guide's weather step: the first Tempest reading), the page re-reads every 3 s so nobody has to reload, backing
-// off to 15 s after 2 minutes and 60 s after 10. Robot and the guide's robot and cloud steps also re-read every 15 s.
+// off to 15 s after 2 minutes and 60 s after 10. Robot and the guide's robot step also re-read every 15 s.
 // A field typed in and not saved, or an open Advanced fold, is never redrawn: refreshing waits for the next save
 // or navigation.
 function settingsWaitsFor(d) {
-  const t = d.s.transport?.local || {}, cloud = d.s.ops?.cloud || {}, tp = d.s.tempest || {};
+  const t = d.s.transport?.robot || {}, cloud = d.s.ops?.cloud || {}, tp = d.s.tempest || {};
   const sec = setUI.section, step = sec === "setup" ? setUI.step : null;
-  const robot = t.host && (!t.connected || !d.s.sn), signingIn = ["connecting", "reconnecting"].includes(cloud.state);
-  if (sec === "robot" || step === "robot" || step === "cloud") return Boolean(robot || signingIn);
+  const signingIn = ["connecting", "reconnecting"].includes(cloud.state);
+  if (sec === "robot" || step === "robot") return Boolean(signingIn || (cloud.state === "connected" && !d.s.sn));
   if (sec === "imagery" || step === "imagery") return Boolean(t.connected && d.imgs && !d.imgs.yard?.source);
   if (sec === "lawn" || step === "weather") return Boolean(tp.listening_port && (tp.last_obs_age_s === null || tp.last_obs_age_s === undefined));
   return false;
@@ -212,7 +212,7 @@ setInterval(() => {
   const waiting = settingsWaitsFor(setUI.data);
   if (!waiting) setUI.waitSince = null;
   else if (!setUI.waitSince) setUI.waitSince = Date.now();
-  const steady = setUI.section === "robot" || (setUI.section === "setup" && ["robot", "cloud"].includes(setUI.step));
+  const steady = setUI.section === "robot" || (setUI.section === "setup" && setUI.step === "robot");
   const waited = waiting ? Date.now() - setUI.waitSince : 0;
   const every = waiting ? (waited < 120000 ? 3000 : waited < 600000 ? 15000 : 60000) : steady ? 15000 : 0;
   if (every && Date.now() - (setUI.at || 0) >= every) renderSettings(undefined, true);
@@ -278,11 +278,11 @@ function sectionStatus(id, d) {
       return [su.required_done ? GREEN : AMBER, `${su.done} of ${su.steps.length} steps done${su.required_done ? "" : " · start here"}`];
     }
     case "robot": {
-      const local = s.transport?.local, cloud = o.cloud || {};
-      if (local && !local.host) return [CORAL, "No robot address yet"];
-      if (local && !local.connected) return [CORAL, local.error ? "Robot not found" : "Local broker down"];
-      if (cloud.state === "connected") return [GREEN, "Local · cloud signed in"];
-      return [cloud.state === "needs login" ? CORAL : MUTED, `Local · cloud ${cloud.state || "signed out"}`];
+      const cloud = o.cloud || {};
+      if (cloud.demo) return [GREEN, "Demo robot (no Yarbo account)"];
+      if (cloud.state === "connected") return s.sn ? [GREEN, "Connected through the Yarbo cloud"] : [AMBER, "Waiting for the robot's serial"];
+      if (["connecting", "reconnecting"].includes(cloud.state)) return [AMBER, `Yarbo cloud ${cloud.state}`];
+      return [CORAL, cloud.state === "needs login" ? "Sign in to Yarbo cloud again" : "Sign in to Yarbo cloud"];
     }
     case "assistant": {
       const m = st.mcp || {};
@@ -341,11 +341,9 @@ function sectionStatus(id, d) {
 /* ------------------------------------------------------------- set up (first-run wizard) */
 /* Every step is the same controls as its own section (so nothing is set up two ways), with a line on what it is for
    and Back / Next. Done comes from GET /api/setup/status, read from what the panel already knows; the wizard stores
-   nothing. It opens by itself on a fresh install (no robot address or no map yet), once per browser session. */
+   nothing. It opens by itself on a fresh install (not signed in to Yarbo cloud, or no map yet), once per browser session. */
 const SETUP_STEPS = {
-  robot: ["Connect to the robot", "The panel listens to the robot's own MQTT broker on your network. Let it find the robot, or type its address and press Connect. The serial and the map are read from the robot.",
-          (d) => robotCards(d).conn],
-  cloud: ["Sign in to Yarbo cloud (optional)", "The panel talks to the robot over your network. Signing in adds the Yarbo cloud as a fallback, for when the robot drops to 4G or local access is closed. Type your own Yarbo password; it goes straight to Yarbo's SDK and is never stored. Skip it to run on your network alone.",
+  robot: ["Connect to the robot", "The panel reaches the robot through the Yarbo cloud, as the Yarbo app does. Sign in with your Yarbo account; the password goes straight to Yarbo's SDK and is never stored. The robot's serial comes from your account, and the map is read from the robot.",
           (d) => robotCards(d).cloud],
   assistant: ["Connect an AI assistant (optional)", "An assistant over MCP can read the panel and help you with it by conversation: check on the robot, tighten the run rules, or hunt down a sharper aerial map of your yard. Skip it if you don't use one.",
               (d) => secAssistant(d)],
@@ -415,7 +413,7 @@ function setupImagery(d) {
   if (part === "pick") {
     return [tabs,
       scard(null, h("p", { class: "shelp top" },
-        d.s.transport?.local?.connected
+        d.s.transport?.robot?.connected
           ? `Your yard's location comes from the robot's own map${entry?.region ? ` (${entry.region})` : ""}, so only the sources that cover it are asked. They are tried and sorted sharpest first; Automatic keeps the sharpest free one.`
           : "Connect the robot first: its map says where your yard is, and only sources that cover it are asked."),
         h("div", { class: "row gap wrap", style: "margin:0 0 12px" }, sbtn("Next: line it up", () => go("align"), "btn pri"))),
@@ -479,105 +477,31 @@ async function maybeOpenSetup() {
 }
 
 /* ------------------------------------------------------------- robot */
-// Connecting to the robot: find it on the network, or type its address and Connect (tested, then saved). Port and
-// serial sit under Advanced: the serial is read from the robot's heartbeat. What is in progress (a search, a connect)
-// lives in setUI.robot so the page's own refresh can redraw around it.
-async function robotFind() {
-  setUI.robot = { finding: true };
-  drawSettings(setUI.data, false);
+// The robot's serial comes from the Yarbo account (one robot: used; several: each with Use this); it is never typed.
+async function robotFromAccount(sn) {
   try {
-    const got = await postJSON("/api/robot/discover", {});
-    setUI.robot = { found: got };
-  } catch (e) { setUI.robot = { error: e.message }; }
-  if (setUI.data) drawSettings(setUI.data, false);
+    await postJSON("/api/robot/account", { sn });
+    toast("Saved; connecting to that robot.");
+  } catch (e) { toast(e.message); }
+  await renderSettings();
 }
 
-async function robotUse(host, sn, port) {
-  setUI.robot = { connecting: host };
-  drawSettings(setUI.data, false);
-  const values = { host };
-  if (sn) values.sn = sn;
-  if (port) values.port = port;
-  const ok = await saveIntegration("robot", values, `Saved; connecting to ${host}.`);
-  setUI.robot = ok ? null : { error: `Could not save ${host}.` };
-  if (setUI.data) drawSettings(setUI.data, false);
-}
-
-async function robotConnect(host, port) {
-  if (!host) { toast("Type the robot's address first."); return; }
-  setUI.robot = { testing: host };
-  drawSettings(setUI.data, false);
-  let data;
-  try {
-    data = await postJSON("/api/integrations/robot/test", { host, port: port || undefined });
-    if (!data?.ok) throw new Error(data?.detail || "no answer");
-  } catch (e) {
-    const why = typeof e.message === "string" && e.message !== "[object Object]" ? e.message : "the address was not accepted";
-    setUI.robot = { error: `No robot at ${host}: ${why}` };
-    drawSettings(setUI.data, false);
-    return;
-  }
-  await robotUse(host, data.sn, port);
-}
-
-function robotConnection(d, ig, t, r) {
-  const s = d.s, ui = setUI.robot || {};
-  const head = t.connected && s.sn
-    ? sstate(GREEN, ["Connected to ", mono(s.sn), " at ", mono(t.host), r.head ? ` · ${r.head}` : ""])
-    : t.host ? sstate(AMBER, ["Looking for the robot at ", mono(t.host), "…", t.error ? h("span", { class: "muted" }, ` (${t.error})`) : null])
-      : sstate(MUTED, "Not connected yet");
-  const busy = ui.finding || ui.testing || ui.connecting;
-  const addr = h("input", { class: "field", name: "host", "data-key": "robot_host", value: ival(ig.host), placeholder: "192.0.2.50",
-                            autocomplete: "off", spellcheck: "false", "aria-label": "Robot address" });
-  const found = ui.found;
-  const results = ui.finding ? snote("Searching your network for the robot… this takes about 20 seconds.")
-    : ui.testing ? snote(["Checking ", mono(ui.testing), " for the robot's heartbeat…"])
-      : ui.connecting ? snote(["Saved. Connecting to ", mono(ui.connecting), "…"])
-        : ui.error ? h("p", { class: "shelp" }, colored(CORAL, ui.error))
-          : found ? (found.found.length
-            ? h("div", null, found.found.map((x) => srow(["Robot ", mono(x.sn)], ["at ", mono(x.host)],
-                x.sn === s.sn && t.connected ? sstate(GREEN, "connected") : sbtn("Use this", () => robotUse(x.host, x.sn, x.port), "btn pri"))))
-            : h("p", { class: "shelp" }, colored(AMBER, found.note || "No robot found."), " Type its address below instead."))
-            : null;
-  const adv = h("details", { class: "sadvanced" }, h("summary", null, "Advanced: port and serial"),
-    h("form", { class: "login", onsubmit: (e) => {
-        e.preventDefault();
-        const f = e.target, values = {};
-        const port = f.port.value ? Number(f.port.value) : null, sn = f.sn.value.trim();
-        if (port !== (ival(ig.port) === "" ? null : ival(ig.port))) values.port = port;
-        if (sn !== String(ival(ig.sn))) values.sn = sn || emptied(ig.sn);
-        if (!Object.keys(values).length) { toast("Nothing changed."); return; }
-        saveIntegration("robot", values, "Saved; reconnecting to the robot.");
-      } },
-      whence("robot", "host", ig.host),
-      h("div", { class: "formgrid" },
-        h("label", { class: "formrow" }, h("span", { class: "muted small" }, "MQTT port"),
-          h("input", { class: "field", name: "port", "data-key": "robot_port", type: "number", min: 1, max: 65535, value: ival(ig.port), placeholder: "1883" }),
-          whence("robot", "port", ig.port)),
-        h("label", { class: "formrow" }, h("span", { class: "muted small" }, "Serial (only if it can't be read)"),
-          h("input", { class: "field", name: "sn", "data-key": "robot_sn", value: ival(ig.sn), placeholder: "read from the robot", autocomplete: "off", spellcheck: "false" }),
-          whence("robot", "sn", ig.sn))),
-      h("div", { class: "row gap wrap" }, h("button", { type: "submit", class: "btn" }, "Save"))));
-  return scard("Connection",
-    h("div", { class: "robothead" }, head),
-    srow("Find it", "Looks on your network for a Yarbo announcing itself. Nothing is sent to anything it finds.",
-      disable(sbtn(ui.finding ? "Searching…" : "Find it on my network", robotFind, t.connected ? "btn" : "btn pri"), busy)),
-    results,
-    srow("Or type its address", "Its address on your network (your router's client list shows it).",
-      h("span", { class: "row gap" }, addr,
-        disable(sbtn(ui.testing ? "Checking…" : "Connect", () => robotConnect(addr.value.trim(), ival(ig.port) || null), "btn"), busy))),
-    adv,
-    sfoot("Finding and connecting only listen and read: nothing is sent to the robot from this card."));
+function serialRows(d, cloud) {
+  const sn = d.s.sn;
+  return [
+    srow("Robot", "The robot this panel follows, by serial. It comes from your Yarbo account once you sign in.",
+      sn ? sstate(GREEN, mono(sn)) : sstate(cloud.state === "connected" ? AMBER : MUTED, "waiting for the serial")),
+    ...(cloud.devices || []).map((x) => srow(["Robot ", mono(x.sn)],
+      [x.name || x.model || "On your Yarbo account", ". Your account has more than one robot: choose the one this panel follows."],
+      sbtn("Use this", () => robotFromAccount(x.sn), "btn pri")))];
 }
 
 function robotCards(d) {
-  const s = d.s, t = s.transport?.local || {}, cloud = s.ops?.cloud || {}, r = s.robot || {};
-  const ig = d.st.integrations?.robot || {};
+  const s = d.s, cloud = s.ops?.cloud || {};
   const signedIn = ["connected", "connecting", "reconnecting"].includes(cloud.state);
   const cloudColor = cloud.state === "connected" ? GREEN : cloud.state === "needs login" ? CORAL : signedIn ? AMBER : MUTED;
   const seen = s.ops?.phone_app_seen_s;
-  return { conn: robotConnection(d, ig, t, r),
-    route: routeCard(d),
+  return {
     robot: scard("Robot",
       srow("Phone app", "The Yarbo app keeps the robot awake while it is open; the panel waits for it to go quiet before a start.",
         seen === null || seen === undefined ? "not seen" : `seen ${dur(seen)} ago`),
@@ -588,59 +512,43 @@ function robotCards(d) {
         selCtl({ key: "wifi_survey", value: d.st.wifi_survey || "off",
                  options: [["off", "Off"], ["next", "Next run only"], ["on", "Every run"]], onsave: (v) => saveSetting("wifi_survey", v) }))),
     cloud: scard("Yarbo cloud",
-      snote("Optional: a fallback route for when the robot can't be reached on your network. The password goes straight to ",
+      snote("The panel reaches the robot through Yarbo's cloud, as the Yarbo app does. The password goes straight to ",
             "Yarbo's SDK and is never stored; only the session tokens are kept on the server."),
       srow("Session", ["connecting", "reconnecting"].includes(cloud.state)
           ? "Signing in to Yarbo's cloud broker usually takes under a minute; this page updates by itself." : null,
         sstate(cloudColor, cloud.state || "unknown")),
       cloud.username ? srow("Account", null, cloud.username) : null,
       cloud.broker ? srow("Broker", null, mono(cloud.broker)) : null,
-      cloud.commands_sent ? srow("Commands sent", "Through this session.", String(cloud.commands_sent)) : null,
+      cloud.commands_sent ? srow("Messages sent", "Reads and commands through this session.", String(cloud.commands_sent)) : null,
       cloud.error ? srow("Last error", null, colored(CORAL, cloud.error)) : null,
-      srow("Video service", "The address of the Yarbo cloud's robot service. It receives your Yarbo session, so it is set only by the YARBO_ROBOT_SERVICE_URL environment variable, never here.",
-        sstate(d.st.robot_video_configured ? GREEN : MUTED, d.st.robot_video_configured ? "configured" : "not configured")),
-      srow("Robot video", ["Lets a signed-in person watch the robot's cameras. The video goes from Agora's network to your browser, ",
-                           "so turning it on makes the browser connect to Agora. Off unless you switch it on; assistants and API tokens can't use it."],
+      ...serialRows(d, cloud),
+      srow("Video service", ["The Yarbo cloud's robot service. It receives your Yarbo session, so its address is ",
+                             "built in. Only the YARBO_ROBOT_SERVICE_URL environment variable can replace it, ",
+                             "never Settings."],
+        sstate(d.st.robot_video_configured ? GREEN : MUTED,
+               d.st.robot_video_configured ? "configured" : "not configured")),
+      srow("Robot video", ["Lets a signed-in person watch the robot's cameras. The video goes from Agora's network to ",
+                           "your browser, so turning it on makes the browser connect to Agora. Off unless you ",
+                           "switch it on; assistants and API tokens can't use it."],
         sstate(d.st.robot_video_enabled ? AMBER : MUTED, d.st.robot_video_enabled ? "ON" : "Off"),
         d.st.robot_video_enabled
-          ? sbtn("Switch robot video off", () => saveSetting("robot_video_enabled", false, "Robot video is off."), "btn")
+          ? sbtn("Switch robot video off",
+                 () => saveSetting("robot_video_enabled", false, "Robot video is off."), "btn")
           : sbtn("Switch robot video on…", () => {
-              if (confirm("Your browser will connect to Agora's network to show the robot's cameras. Switch robot video on?"))
+              if (confirm("Your browser will connect to Agora's network to show the robot's cameras. " +
+                          "Switch robot video on?"))
                 saveSetting("robot_video_enabled", true, "Robot video is on.");
             }, "btn pri")),
-      signedIn
-        ? srow("Sign out", "Ends the session on the server. Control stops working until you sign in again.",
+      cloud.demo ? srow("Account", "DEMO=1: a made-up robot, no Yarbo account and no sign-in.", "none (demo)")
+      : signedIn
+        ? srow("Sign out", "Ends the session on the server. The panel loses the robot until you sign in again.",
             sbtn("Sign out", async () => {
               try { await postJSON("/api/cloud/logout"); toast("Signed out."); } catch (e) { toast(e.message); }
               renderSettings();
             }, "btn"))
         : loginForm(cloud)) };
 }
-function secRobot(d) { const c = robotCards(d); return [c.conn, c.route, c.robot, c.cloud]; }
-
-// Which way reads and commands go: the robot's own broker on your network first, the Yarbo cloud as a fallback.
-function routeCard(d) {
-  const lk = d.s.ops?.link || {}, mode = d.st.robot_route || "auto";
-  const name = (r) => r === "local" ? "your network" : r === "cloud" ? "the Yarbo cloud" : "nothing";
-  const color = (r) => r === "local" ? GREEN : r === "cloud" ? AMBER : CORAL;
-  return scard("Route to the robot",
-    snote("Commands and reads go over your network to the robot first. When the robot can't be reached there (it drops ",
-          "to 4G where its HaLow link is weak, or a firmware update closes local access) they go through the Yarbo cloud ",
-          "instead, if you are signed in below. Either one alone is enough."),
-    srow("Reads", null, sstate(color(lk.reads), name(lk.reads)),
-      lk.local_reads_paused_s ? h("span", { class: "muted small" }, ` · your network not answering, trying again in ${dur(lk.local_reads_paused_s)}`) : null),
-    srow("Commands", null, sstate(color(lk.commands), name(lk.commands))),
-    srow("Cloud fallback", "Ready when both routes are up and the route is Automatic.",
-      sstate(lk.fallback_ready ? GREEN : lk.mode === "auto" && lk.cloud && !lk.local ? AMBER : MUTED,
-        lk.fallback_ready ? "ready" : lk.mode === "auto" && lk.cloud && !lk.local ? "in use: your network can't reach the robot"
-          : lk.cloud ? "not used (route set below)" : "not signed in")),
-    srow("Map writes", "Writes on your network aren't proved yet, so map, settings and plan writes go through the Yarbo cloud.",
-      sstate(lk.writes ? GREEN : AMBER, lk.writes ? name(lk.writes)
-        : lk.mode === "local" ? "off: the route is your network only" : "need the Yarbo cloud (sign in below)")),
-    srow("Route", "Automatic: your network first, the cloud as a fallback. The other two use one route only (for testing).",
-      selCtl({ key: "robot_route", value: mode, options: [["auto", "Automatic"], ["local", "Your network only"], ["cloud", "Yarbo cloud only"]],
-               onsave: (v) => saveSetting("robot_route", v) })));
-}
+function secRobot(d) { const c = robotCards(d); return [c.cloud, c.robot]; }
 
 function loginForm(cloud) {
   return h("form", { class: "login", onsubmit: async (e) => {
@@ -1107,7 +1015,7 @@ function secPanel(d) {
     scard("Running",
       a ? [
         srow("Version", "What changed in each version is in Help → Changelog.",
-          h("span", null, mono(a.build ? `${a.version} · ${a.build}` : a.version || "—"), " ",
+          h("span", null, mono(a.version ? versionLabel(a) : "—"), " ",
             h("a", { href: "#help/changelog" }, "Changelog"))),
         srow("Data directory", "Everything the panel knows lives here: the database, imagery, the cloud session.", mono(a.data_dir)),
         srow("Port", null, mono(String(a.port))),
@@ -1212,7 +1120,8 @@ function secAccess(d) {
     scard("API tokens",
       snote(h("span", null, "For programs that call the panel's API, such as a Home Assistant integration or a script: header ",
             mono("Authorization: Bearer <token>"), ". A token can read, and can ask for robot commands while control is on, under the strictest checks: anything unknown blocks a start or resume, and it cannot override. ",
-            "It cannot change settings, safety switches or the map. A metrics-only token reads /api/metrics and nothing else. AI assistants use their own token (", slink("#settings/assistant", "AI assistant"), ").")),
+            "It cannot change settings, safety switches or the map. AI assistants use their own token (", slink("#settings/assistant", "AI assistant"), ").",
+            " A metrics-only token reads /api/metrics and nothing else.")),
       ...tokens.map((t) => srow(t.scope === "metrics" ? `${t.name} (metrics only)` : t.name,
         `Created ${when(t.created)} · last used ${t.used ? when(t.used) : "never"}`,
         h("span", { class: "row gap" }, mono(`…${t.hint}`), sbtn("Revoke", () => revoke(t))))),

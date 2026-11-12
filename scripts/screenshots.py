@@ -70,7 +70,7 @@ def wait_for(what: str, check, timeout: float = 120, every: float = 1.0):
 
 def start_panel(data_dir: str, port: int) -> subprocess.Popen:
     env = {k: v for k, v in os.environ.items()
-           if k not in ("YARBO_HOST", "YARBO_SN", "HA_URL", "HA_TOKEN", "FRIGATE_URL", "PANEL_URL", "DEMO_SEED")}
+           if k not in ("YARBO_SN", "HA_URL", "HA_TOKEN", "FRIGATE_URL", "PANEL_URL", "DEMO_SEED")}
     env.update(DEMO="1", PANEL_AUTH="off", DATA_DIR=data_dir, TEMPEST_PORT="0", PORT=str(port), DEMO_SPEED="1")
     return subprocess.Popen([sys.executable, "-c", LAUNCH, str(port)], cwd=ROOT, env=env)
 

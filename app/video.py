@@ -8,8 +8,8 @@ encryption key and salt, which with the token give a live, decryptable view of t
 * nothing here logs them (or the JWT, or the robot-service address): a log line is an outcome and a camera name;
 * a failure's message is a fixed phrase and, at most, the service's short error code, never its free text.
 
-The wire format is in docs/dev/protocol.md, "Robot video (Agora)". The robot-service address is not recorded in this
-repository: the caller passes it in (nothing here has a default).
+The wire format is in docs/dev/protocol.md, "Robot video (Agora)". The caller passes the robot-service address in:
+`DEFAULT_SERVICE_URL` below unless the environment names another (`app/config.py`).
 """
 import asyncio
 import base64
@@ -21,6 +21,9 @@ from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
 
+# The address the official app uses (protocol.md). Built in so nobody has to find one and paste it: the session JWT
+# goes to it. `YARBO_ROBOT_SERVICE_URL` (environment only, never Settings) replaces it if Yarbo moves the service.
+DEFAULT_SERVICE_URL = "https://4zx17x5q7l.execute-api.us-east-1.amazonaws.com/Stage"
 PATH = "/yarbo/robot-service/robot/commonUser/getAgoraToken"
 CAMERAS = {"front": "middle", "left": "left", "right": "right", "back": "back"}   # shown name -> channel name
 OK_CODE = "00000"
@@ -39,7 +42,7 @@ class VideoTokenError(Exception):
 @dataclass(frozen=True)
 class VideoToken:
     camera: str
-    uid: int
+    uid: int = field(repr=False)           # the viewer's uid is kept out of repr too (design §13: never in a log)
     channel: str = field(repr=False)
     app_id: str = field(repr=False)
     token: str = field(repr=False)
@@ -102,8 +105,11 @@ async def fetch(cloud, http, base_url: str, camera: str, uid: int) -> VideoToken
         if resp.status_code == 401 or code in AUTH_CODES:
             if attempt == 1:
                 log.info("video token: session refused, refreshing once")
-                if not await asyncio.to_thread(cloud._refresh, jwt):
+                outcome = await asyncio.to_thread(cloud.refresh_session, jwt)
+                if outcome == "expired":
                     raise VideoTokenError("Yarbo cloud session expired; sign in again", auth=True)
+                if outcome == "unreachable":     # a network problem, not a refused session: say so (502, not 409)
+                    raise VideoTokenError("could not reach the Yarbo cloud to refresh the session")
                 continue
             log.warning("video token: refused after a refresh")
             raise VideoTokenError("Yarbo cloud refused the session", auth=True)

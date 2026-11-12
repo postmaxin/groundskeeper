@@ -1,7 +1,7 @@
 # Groundskeeper Helm chart
 
 Run [Groundskeeper](https://github.com/Groundskeeper-robot/groundskeeper) on Kubernetes: a StatefulSet of one pod, a
-Service, and a PersistentVolumeClaim for its `/data`. Everything site-specific (the robot's address, Home Assistant, Frigate,
+Service, and a PersistentVolumeClaim for its `/data`. Everything site-specific (the Yarbo cloud sign-in, Home Assistant, Frigate,
 imagery) is configured in the panel's **Settings** UI after it starts — not in `values.yaml`.
 
 > **Community-maintained.** This chart is kept up by community contributors who run the panel on Kubernetes. Open an
@@ -65,8 +65,8 @@ The entrypoint then skips the chown and runs directly as that user; `fsGroup` ma
 
 ## Notes
 
-- The panel needs network access to the robot's local broker (and/or the cloud); that is reached from the pod and
-  configured in the UI.
+- The panel needs outbound access to the Yarbo cloud (Yarbo's API and its MQTT broker); you sign in under
+  Settings → Robot.
 - `hostNetwork` is only for receiving a Tempest weather station's UDP broadcast. Leave it off otherwise; the panel
   is reachable through the Service regardless.
 - **One panel at a time.** The chart runs exactly one pod, as a StatefulSet, so a replacement (after an eviction, a

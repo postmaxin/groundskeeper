@@ -5,6 +5,7 @@ the name, logo, voice and palette in `brand/GUIDELINES.md` (tokens in `brand/tok
 
 - **Plain JS, no build step, no framework.** Files are served as they are. `web/vendor/` (MapLibre, three.js, Agora Web SDK) is
   git-ignored and vendored by the Dockerfile with checksums; never load from a CDN.
+  The Agora Web SDK is vendored there the same way.
 - **DOM through `h(tag, attrs, ...children)`** (`app.js`) or `createElement` + `textContent`. Never `innerHTML`,
   `outerHTML`, `insertAdjacentHTML` or `document.write`: robot and map names are user data.
 - **Colours through tokens.** Define them in `style.css` (`:root`, plus the light theme block) and read them with

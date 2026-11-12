@@ -16,7 +16,8 @@ needs_node = pytest.mark.skipif(not shutil.which("node"), reason="node is not in
 
 
 def run_flow() -> list:
-    out = subprocess.run([shutil.which("node"), str(ROOT / "tests" / "cameras_flow.cjs"), str(ROOT / "web" / "cameras.js")],
+    flow, page = ROOT / "tests" / "cameras_flow.cjs", ROOT / "web" / "cameras.js"
+    out = subprocess.run([shutil.which("node"), str(flow), str(page)],
                          capture_output=True, encoding="utf-8", timeout=60, check=True).stdout
     return json.loads(out)
 
@@ -55,7 +56,7 @@ def test_opening_switches_on_then_joins_with_the_sdk_quietened_and_encryption_se
     last_param = max(i for i, n in enumerate(names) if n == "setParameter")
     assert last_param < names.index("setLogLevel") < names.index("createClient")   # all before the client exists
     enc = next(c for c in seg if c[0] == "setEncryptionConfig")
-    assert enc[1:] == ["aes-128-gcm2", "groundskeeper-placeholder", "1,2,3"]   # the placeholder; the salt is decoded to bytes
+    assert enc[1:] == ["aes-128-gcm2", "groundskeeper-placeholder", "1,2,3"]   # the placeholder; the salt as bytes
     assert ["setClientRole", "audience"] in seg
     assert "enableLogUpload" not in names
 
@@ -128,7 +129,7 @@ def test_a_failed_join_says_which_step_failed_and_why_without_secrets():
     seg = segment(calls, "join-sdk-code")                               # an SDK error shows its code, never its message
     assert ["phase", "error", "Joining failed: INVALID_OPERATION"] in seg
     assert "007tok" not in json.dumps([c for c in seg if c[0] == "phase"])
-    seg = segment(calls, "join-abort-error")                            # a numeric DOMException code is not an Agora code
+    seg = segment(calls, "join-abort-error")                  # a numeric DOMException code is not an Agora code
     assert ["phase", "error", "Joining failed: AbortError"] in seg
     long = next(c for c in segment(calls, "join-long") if c[0] == "phase")
     assert long[2].startswith("Joining failed: xxx") and len(long[2]) <= 100
@@ -179,7 +180,8 @@ def test_only_the_robots_video_is_played():
 def test_the_robot_stopping_its_video_goes_back_to_waiting_and_a_republish_plays_again():
     calls = run_flow()
     phases = [c[1:] for c in segment(calls, "unpublished") if c[0] == "phase"]
-    assert phases == [["playing", ""], ["playing", ""], ["playing", ""], ["waiting", "The robot stopped sending video."]]
+    assert phases == [["playing", ""], ["playing", ""], ["playing", ""],
+                      ["waiting", "The robot stopped sending video."]]
     again = segment(calls, "republished")
     assert ["subscribe", 1, "video"] in again and ["phase", "playing", ""] in again
 
@@ -232,7 +234,8 @@ def test_closing_while_waiting_on_a_leave_a_token_or_the_script_goes_no_further(
 @needs_node
 def test_a_lost_connection_leaves_and_says_so_but_our_own_leave_is_not_an_error():
     calls = run_flow()
-    assert [c[1:] for c in segment(calls, "own-leave") if c[0] == "phase"] == [["waiting", "Waiting for the robot's video…"]]
+    own = [c[1:] for c in segment(calls, "own-leave") if c[0] == "phase"]
+    assert own == [["waiting", "Waiting for the robot's video…"]]
     lost = segment(calls, "connection-lost")
     assert "leave" in [c[0] for c in lost] and ["phase", "error", "The connection was lost."] in lost
 
@@ -284,17 +287,45 @@ def test_the_sdk_comes_from_this_panel_only():
 @needs_node
 def test_the_first_beat_goes_before_camera_on_and_then_one_every_four_seconds():
     seg = segment(run_flow(), "beats-open", beats=True)
-    assert seg[0] == ["interval", 4000] and seg[1] == ["beat", "{}"]            # at once, on the start's own timer
+    assert seg[0] == ["interval", 4000] and seg[1] == ["beat", '{"start":true}']    # at once: a press opens the window
     assert seg[2][:2] == ["post", "/api/control/send"]                           # ... before camera-on
     assert [c[0] for c in seg].count("beat") == 3                                # 1 at the start, then one per tick
     assert ["intervals", 1] in seg
-    assert [c for c in seg if c[0] == "beat"] == [["beat", "{}"]] * 3            # nothing in the request body
+    assert [c for c in seg if c[0] == "beat"][1:] == [["beat", "{}"]] * 2        # then nothing in the request body
+
+
+@needs_node
+def test_a_token_renewal_does_not_open_a_new_window():
+    seg = segment(run_flow(), "beat-renew", beats=True)
+    assert [c for c in seg if c[0] == "beat"][0] == ["beat", "{}"]
+
+
+@needs_node
+def test_a_start_beat_that_fails_asks_for_the_window_again():
+    seg = segment(run_flow(), "beat-start-fails", beats=True)
+    assert [c for c in seg if c[0] == "beat"] == [["beat", '{"start":true}'], ["beat", '{"start":true}']]
+
+
+@needs_node
+def test_a_beat_in_flight_is_not_asked_again_on_top():
+    seg = segment(run_flow(), "beat-in-flight", beats=True)
+    held = [c[0] for c in seg][:[c[0] for c in seg].index("clear-interval")]   # until the tile is closed
+    assert held.count("beat") == 1
+
+
+@needs_node
+def test_when_the_panel_ends_the_window_the_tile_closes_says_so_and_beats_no_more():
+    calls = run_flow()
+    assert next(c for c in calls if c[0] == "after-ended") == ["after-ended", False, "closed",
+                                                               "Stopped. Open to watch again.", 0]
+    assert next(c for c in calls if c[0] == "beats-after-ended") == ["beats-after-ended", 0]
 
 
 @needs_node
 def test_changing_camera_restarts_the_beats_without_a_second_timer():
     seg = segment(run_flow(), "beats-pick", beats=True)
     assert [c[0] for c in seg if c[0] in BEAT_CALLS] == ["clear-interval", "clear-interval", "interval", "beat"]   # the second clear is the stats timer (#53), playing before the pick
+    assert ["beat", '{"start":true}'] in seg                                    # picking a camera is a press too
     assert ["intervals", 1] in seg
 
 
@@ -334,14 +365,15 @@ def test_control_off_from_the_server_shows_the_existing_hint_even_after_the_vide
     assert ["hint-unrelated", "something else"] in seg                 # ... and only that one
 
 
-# -- the scoped secret swap (a stopgap, #46) -----------------------------------------------------------------------
+# -- the scoped secret swap (a stopgap, AgoraIO/agora-rtc-web#15) ---------------------------------------------------
 @needs_node
 def test_the_real_secret_goes_into_the_join_frame_and_into_a_rejoin_while_the_client_lives_and_is_removed_on_leave():
     seg = segment(run_flow(), "swap")
     n = next(i for i, c in enumerate(seg) if c[0] == "join")
     ws = [c for c in seg[n:] if c[0] == "ws-send"]
     during, after = ws[:4], ws[4:]
-    assert during[:3] == [["ws-send", "ping"], ["ws-send", "<binary>"], ["ws-send", '{"x":1}']]      # anything else untouched
+    # anything else untouched
+    assert during[:3] == [["ws-send", "ping"], ["ws-send", "<binary>"], ["ws-send", '{"x":1}']]
     message = json.loads(during[3][1])["_message"]
     assert re.fullmatch(r"SYNTHETICSECRET0+\d+", message["aes_secret"]) and len(message["aes_secret"]) == 64
     assert "aes_encrypt" not in message
@@ -352,11 +384,21 @@ def test_the_real_secret_goes_into_the_join_frame_and_into_a_rejoin_while_the_cl
     # Still installed after join (the SDK sends join_v3 again when its signalling reconnects): that frame, as the SDK
     # makes it (wrapped, with its flag), gets the real secret; a frame with no secret field (rejoin_v3) is left alone.
     restored = [c for c in seg if c[0] == "restored"]
-    assert restored == [["restored", False, False], ["restored", True, True]]                       # in place, then gone on leave
+    assert restored == [["restored", False, False], ["restored", True, True]]       # in place, then gone on leave
     again = json.loads(after[0][1])["_message"]
     assert again["aes_secret"] == message["aes_secret"] and "aes_encrypt" not in again
     assert after[1] == ["ws-send", '{"_id":9,"_type":"rejoin_v3","_message":{"cid":1,"uid":2}}']
     assert json.loads(xhr[1][1]) == {"aesSecret": message["aes_secret"]}
+
+
+@needs_node
+def test_only_agoras_own_connections_are_touched():
+    seg = segment(run_flow(), "swap-scope")
+    sends = [c for c in seg if c[0] in ("ws-send", "xhr-send")]
+    assert "SYNTHETICSECRET" in sends[3][1] and "SYNTHETICSECRET" in sends[4][1]   # the SDK's join and access point
+    others = sends[5:]
+    assert len(others) == 9 and not any("SYNTHETICSECRET" in c[1] for c in others)
+    assert all("WRAPPED-BY-THE-SDK" in c[1] for c in others if c[0] == "ws-send")    # as written, flag and all
 
 
 @needs_node
@@ -393,11 +435,12 @@ def test_overlapping_starts_never_share_a_wrapper_or_a_secret():
     first, held = segment(calls, "swap-overlap"), segment(calls, "swap-overlap-held")
     assert [c[0] for c in first].count("join") == 1                              # A joins and is held there
     assert [c[0] for c in held][:2] == ["intervals", "join"]                    # B's join waited until A let go
-    used = [re.search(r"SYNTHETICSECRET0+\d+", c[1]).group(0) for c in first + held if c[0] == "ws-send" and "aes_secret" in c[1]]
-    assert used == [key(1), key(2), key(2)]                                              # each join carried its own start's secret
+    used = [re.search(r"SYNTHETICSECRET0+\d+", c[1]).group(0) for c in first + held
+            if c[0] == "ws-send" and "aes_secret" in c[1]]
+    assert used == [key(1), key(2), key(2)]                        # each join carried its own start's secret
     assert ["restored", False, False] in held and ["restored", True, True] in held       # one wrapper, gone on leave
     again = [json.loads(c[1])["_message"]["aes_secret"] for c in held if c[0] == "ws-send" and "_type\":\"join" in c[1]]
-    assert again == [key(2), key(2)]                                                       # B's reconnect carries B's secret
+    assert again == [key(2), key(2)]                               # B's reconnect carries B's secret
 
 
 @needs_node
@@ -409,18 +452,22 @@ def test_the_source_gives_the_sdk_only_the_placeholder_and_uses_the_secret_in_on
     assert 'CAM_PLACEHOLDER_SECRET = "groundskeeper-placeholder"' in CODE
     assert re.search(r'setEncryptionConfig\("aes-128-gcm2", CAM_PLACEHOLDER_SECRET,', CODE)
     assert CODE.count("join.key") == 1 and "camerasJoin(client, [join.app_id" in CODE
-    assert not re.search(r"join\.key[^;]*(cams|localStorage|sessionStorage|console|location|document|textContent)", CODE)
+    assert not re.search(r"join\.key[^;]*(cams|localStorage|sessionStorage|console|location|document|textContent)",
+                         CODE)
     assert not re.search(r"\bsecret\b[^;]*(cams\.|localStorage|sessionStorage|console|location\.)", CODE)
 
 
-def test_the_swap_is_one_wrapper_removed_on_leave_and_when_the_join_fails():
+def test_the_swap_is_one_wrapper_scoped_to_agora_and_removed_on_leave_and_when_the_join_fails():
     body = CODE[CODE.index("function camerasSwapInstall"):]
     body = body[:body.index("let camJoinTail")]
-    assert body.count("WebSocket.prototype.send =") == 3 and body.count("XMLHttpRequest.prototype.send =") == 3
+    assert ".prototype" not in CODE                                            # no prototype is ever patched
+    assert body.count("globalThis.WebSocket = ") == 2 and body.count("globalThis.XMLHttpRequest = ") == 2
+    assert "if (!camerasAgoraUrl(url)) return;" in body and "this.#agora = camerasAgoraUrl(url);" in body
+    assert 'CAM_AGORA_HOSTS = [".agora.io", ".sd-rtn.com"]' in CODE
+    assert re.search(r'u\.protocol === "wss:" \|\| u\.protocol === "https:"', CODE)
     assert body.startswith("function camerasSwapInstall(secret) {\n  if (camSwapRemove) camSwapRemove();")   # never two
     assert re.search(r"function camerasLeave\(\) \{[^}]*camSwapRemove\(\)", CODE, re.S)
     assert "Promise.race([client.join(" in CODE
-    assert CODE.count("WebSocket.prototype.send =") == 3                       # nowhere else is a prototype touched
 
 
 def test_the_beat_has_one_route_and_is_cleared_when_leaving():

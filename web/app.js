@@ -931,6 +931,9 @@ function farNote(far) {
     h("b", null, "Left out, far from the yard: "), what, ". ", h("a", { href: "#studio" }, "Map Studio"));
 }
 
+// "0.19.7 · nightly · 1a756d0": the version, the pre-release channel if this is one, and the build (GET /api/about).
+const versionLabel = (v) => [v.version, v.channel, v.build].filter(Boolean).join(" · ");
+
 const copyToast = async (text) =>
   toast(await copyText(text) ? "Copied." : "Copy did not work here: select it by hand.");
 
@@ -1235,12 +1238,10 @@ STACKED.addEventListener("change", () => { if (state.status) renderChips(state.s
 const GREEN_CSS = dot(GREEN).style.backgroundColor;
 const isGreen = (el) => { const m = el.querySelector(".dot, .sigbars"); return !!m && (m.style.backgroundColor || m.style.color) === GREEN_CSS; };
 function renderChips(s, streamOk = true) {
-  const r = s.robot, local = s.transport.local;
+  const r = s.robot;
   const docked = s.activity === "docked", rtk = gpsChip(r.rtk, s.activity);
   const links = [
     cloudChip(s),
-    titled(chipLink("#settings/robot", local.connected ? GREEN : CORAL, connLabel("Broker", local.connected ? "" : " down")),
-           local.connected ? "Local broker: connected" : "Local broker: not connected"),
     halowChip(r.halow_dbm),
     wifiChip(s.wifi),
     rtk,
@@ -1250,7 +1251,7 @@ function renderChips(s, streamOk = true) {
   // corrections that stopped are amber there too and keep it spelled out.
   const linksOk = STACKED.matches && links.every((c) => isGreen(c) || (c === rtk && docked && !correctionsLate(r.rtk)));
   /* Left to right: what needs you (tinted), the switches; then, pushed right, the connections as one pill
-     (cloud, local broker, RTK: short words while all is well, the problem spelled out when not), and at the far right
+     (cloud, HaLow, Wi-Fi, RTK: short words while all is well, the problem spelled out when not), and at the far right
      the robot itself, its state and battery, in the slot that stays in view on a phone. */
   const st = s.pause_reason ? `paused: ${s.pause_reason}` : s.state;
   fill($("#chips"),
@@ -2144,8 +2145,8 @@ async function renderHealth() {
       card("Link",
         s ? kv("HaLow now", `${num(s.robot.halow_dbm)} dBm`) : null,
         chart("HaLow signal", [{ points: halow, color: SERIES[0] }], "dBm", 0),
-        s ? kv("Local broker", s.transport.local.host ? `${s.transport.local.host} · ${s.transport.local.connected ? "connected" : "down"}` : "not set up") : null,
-        s ? kv("Messages · read requests", `${s.transport.local.received} · ${s.transport.local.read_requests_sent}`) : null,
+        s ? kv("Robot", `${s.transport.robot.via} · ${s.transport.robot.connected ? "connected" : s.transport.robot.error || "down"}`) : null,
+        s ? kv("Messages · read requests", `${s.transport.robot.received} · ${s.transport.robot.read_requests_sent}`) : null,
         hv ? kv("Home Assistant", hv.ha.enabled ? (hv.ha.error ? colored(CORAL, hv.ha.error) : "publishing") : "not configured") : null),
       networkCard(),
       card("Power",

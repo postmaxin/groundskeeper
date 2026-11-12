@@ -97,11 +97,9 @@ def test_only_a_person_switches_the_cameras_on(tmp_path, actor):
 
 def test_every_catalogue_command_is_confirmed_by_state_or_run_neutral():
     from app import recorder
-    # The keep-awake is run-neutral too but deliberately not in the catalogue (tests/test_video_keepalive.py).
-    assert set(control.CATALOGUE) == (set(control.CONFIRM) | control.RUN_NEUTRAL) - {control.KEEP_AWAKE}
-    assert control.KEEP_AWAKE in control.RUN_NEUTRAL and control.KEEP_AWAKE not in control.CATALOGUE
+    assert set(control.CATALOGUE) == set(control.CONFIRM) | control.RUN_NEUTRAL
+    assert control.KEEP_AWAKE in control.RUN_NEUTRAL and control.KEEP_AWAKE in control.CATALOGUE
     assert not set(control.CONFIRM) & control.RUN_NEUTRAL
-    assert not control.RUN_NEUTRAL & set(control.SAFE_TO_REPEAT)
     assert not control.RUN_NEUTRAL & recorder.PEOPLE_COMMANDS
 
 
@@ -372,7 +370,7 @@ def test_the_robots_own_schedules_are_read_from_either_reply_shape():
 
 def test_the_panel_never_writes_robot_schedules():
     from app import mapwrite
-    from app.transport_local import READ_ONLY_COMMANDS
+    from app.commands import READ_ONLY_COMMANDS
     assert "read_schedules" in READ_ONLY_COMMANDS
     assert not {"save_schedule", "enable_schedule", "del_schedule"} & (set(mapwrite.WRITE_COMMANDS) | set(control.CATALOGUE))
 
@@ -556,9 +554,10 @@ def test_the_writer_asks_the_plan_state_again_before_it_sends(tmp_path, monkeypa
 
 
 def test_a_saved_serial_reaches_the_cloud_client_with_no_robot_address(tmp_path, monkeypatch):
-    """Cloud-only: no local broker address, so apply_robot must still hand the configured serial to Ops."""
+    """apply_robot hands the kept serial to Ops, which tells the cloud client."""
+    from app.runtime import FOUND_SN
     o = _ops(tmp_path, monkeypatch)
-    o.cfg.set("robot", {"sn": "YB0000DEMO0001"})
-    assert not o.cfg.yarbo_host and o.cloud.sn is None
+    o.rec.store.set_setting(FOUND_SN, {"sn": "YB0000DEMO0001", "from": "account"})
+    assert o.cloud.sn is None
     run(o.rec.apply_robot())
     assert o.rec.sn == "YB0000DEMO0001" and o.cloud.sn == "YB0000DEMO0001"

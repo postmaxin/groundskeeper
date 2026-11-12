@@ -7,7 +7,9 @@ from datetime import datetime
 
 from . import conditions, control, maintenance, telemetry
 from . import why as reasons
+from . import demo_robot
 from .cloud import CloudTransport
+from .runtime import found_sn
 from .link import RobotLink
 from .control import Controller
 from .backups import Backups
@@ -54,18 +56,20 @@ def point_in_ring(lon: float, lat: float, ring: list) -> bool:
 class Ops:
     def __init__(self, cfg, rec):
         self.cfg, self.rec, self.store = cfg, rec, rec.store
-        self.cloud = CloudTransport(cfg.data_dir, rec.sn, self._from_cloud)
-        # Local first, the cloud as a fallback, for reads and commands alike (app/link.py).
+        # The Yarbo cloud is the only route to the robot (app/link.py); the demo has a stand-in that opens no socket.
+        self.cloud = (demo_robot.DemoCloud(rec) if getattr(cfg, "demo", False)
+                      else CloudTransport(cfg.data_dir, rec.sn, self._from_cloud, on_sn=self._cloud_found_sn))
+        self._loop: asyncio.AbstractEventLoop | None = None
+        # After a sign-in the cloud checks a serial kept from the account against the new account (never mid-run).
+        self.cloud.sn_source = self._kept_sn_source
+        self.cloud.on_forget = self._cloud_forgot_sn
         self.link = RobotLink(rec, self.cloud, self.store, mark_sent=rec.mark_sent)
-        self.link.on_change = self._route_changed
         rec.link = self.link
         self.frigate = Frigate(cfg.frigate_url)
         self.notifier = Notifier(self.store, cfg.ha_url, cfg.ha_token)
         rec.on_sn = self.robot_changed
         self.controller = Controller(self.store, self.link, self.context, self.expect_reply, lambda: self.rec.t)
-        # Another client's command, other than the one being watched (whose late echo may look like someone else's).
-        self.controller.others_at = lambda cmd: max(
-            (t for name, t in (getattr(self.rec, "foreign_cmds", None) or {}).items() if name != cmd), default=0.0)
+        self.controller.light_context = self.beat_context
         self.scheduler = Scheduler(self.store)
         self.map_writer = MapWriter(self.store, self.link.write_command,
                                     self.expect_reply, rec.reload_map,
@@ -111,10 +115,6 @@ class Ops:
                 self.phone_app_at = ts
         self.rec._from_thread(topic, data, ts, ours)
 
-    def _route_changed(self, what: str, before: str, after: str) -> None:
-        """A route to the robot changed (local <-> cloud): say so once, so a firmware lockout or a 4G spell shows."""
-        self.store.event("route_changed", f"{what} now go through the {after} (were {before})")
-
     def phone_app_active(self, quiet: float) -> bool | None:
         """Is the Yarbo app open on someone's phone? The robot streams DeviceMSG about once a second while the app is
         connected (seen on the local broker, 2026-10-21; the panel's own reads come back on data_feedback), and the app's
@@ -124,12 +124,14 @@ class Ops:
         quiet is unknown until the route has been up for the quiet window."""
         now = time.time()
         streaming = now - self.rec.app_stream_at < quiet
-        if self.cloud.state == "connected" and now - getattr(self.cloud, "connected_since", 0.0) >= quiet:
+        # The demo's stand-in sees no phone app at all, so it can't say the app is closed.
+        sees_app = self.cloud.state == "connected" and getattr(self.cloud, "takes_commands", True)
+        if sees_app and now - getattr(self.cloud, "connected_since", 0.0) >= quiet:
             return streaming or now - self.phone_app_at < quiet
         return True if streaming else None
 
     def phone_app_seen_at(self) -> float:
-        """The last sign of the phone app on either route (its keep-awake on the cloud, its stream locally)."""
+        """The last sign of the phone app: its keep-awake, or the robot streaming DeviceMSG while it is open."""
         return max(self.phone_app_at, self.rec.app_stream_at)
 
     def expect_reply(self, cmd: str) -> asyncio.Future:
@@ -141,6 +143,7 @@ class Ops:
         return fut
 
     async def start(self) -> None:
+        self._loop = asyncio.get_running_loop()
         if getattr(self.cfg, "demo", False):
             pass                                     # DEMO=1 never uses a cloud session, even one left in DATA_DIR
         elif await asyncio.to_thread(self.cloud.restore):
@@ -166,6 +169,23 @@ class Ops:
         self.cloud.sn = sn
         if self.cloud._thread and self.cloud._thread.is_alive():
             asyncio.get_running_loop().run_in_executor(None, self.cloud.restart)
+
+    def _kept_sn_source(self) -> str | None:
+        """Where the kept serial came from, for the cloud's check after a sign-in; None defers the check while the
+        robot is mowing (a run is open or its flags say a plan is going): the guards must keep watching it."""
+        if self.rec.run_id or self.rec.plan_active() is True:
+            return None
+        return found_sn(self.store).get("from")
+
+    def _cloud_forgot_sn(self, sn: str) -> None:
+        """From the cloud worker thread: the signed-in account has no robot with serial `sn`."""
+        if self._loop:
+            self._loop.call_soon_threadsafe(self.rec.forget_account_sn, sn)
+
+    def _cloud_found_sn(self, sn: str) -> None:
+        """From the cloud worker thread: the account's only robot gave the serial. Kept on the event loop."""
+        if self._loop:
+            self._loop.call_soon_threadsafe(self.rec.use_found_sn, sn, False)
 
     async def apply_frigate(self) -> None:
         await self.frigate.configure(self.cfg.frigate_url)
@@ -224,6 +244,13 @@ class Ops:
         if active is None:
             return "the robot's plan state is unknown; nothing was sent"
         return None
+
+    def beat_context(self) -> dict:
+        """What a keep-awake beat's checks read (control.check): no awaits, so a beat never holds the controller's
+        lock across a Frigate or Home Assistant timeout."""
+        r = self.rec
+        return {"snapshot_age_s": round(time.time() - r.snapshot_at, 1) if r.snapshot_at else None,
+                "route_state": self.link.state}
 
     async def context(self, args: dict) -> dict:
         r = self.rec
@@ -765,7 +792,7 @@ class Ops:
             self._lost_since = r.update_at
             await self.notifier.send("lost_contact", "No data from Yarbo",
                                      f"the panel has had nothing from the robot for {tr['data_age_s'] / 60:.0f} min "
-                                     "during a run (weak network, out of range, or the local link is down)", url=url)
+                                     "during a run (weak network, out of range, or the Yarbo cloud is down)", url=url)
         elif not tr["lost_contact"] and self._lost_since is not None:
             gap = max(0.0, r.update_at - self._lost_since)
             self._lost_since = None

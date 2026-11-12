@@ -142,7 +142,7 @@ async function renderHelp(sub) {
   el.replaceChildren(h("div", { class: "helpwrap" }, nav, body));
   if (!pageId) {
     body.append(h("h2", null, "Help"),
-      h("p", { class: "muted" }, `Groundskeeper ${idx.version}${idx.build ? ` · build ${idx.build}` : ""}`),
+      h("p", { class: "muted" }, `Groundskeeper ${versionLabel(idx)}`),
       h("ul", { class: "helplist" }, ...idx.pages.map((p) => h("li", null, h("a", { href: `#help/${p.id}` }, p.title)))));
     return;
   }
@@ -169,5 +169,5 @@ function syncHelpLink(view) {
 }
 
 // The version under the robot card, linking to the changelog.
-helpIndex().then((idx) => { const a = $("#navver"); if (a) a.textContent = `v${idx.version}${idx.build ? ` · ${idx.build}` : ""}`; })
+helpIndex().then((idx) => { const a = $("#navver"); if (a) a.textContent = `v${versionLabel(idx)}`; })
   .catch(() => {});
