@@ -15,6 +15,10 @@ the name, logo, voice and palette in `brand/GUIDELINES.md` (tokens in `brand/tok
   (`docs/user/`). A paragraph on screen won't be read.
 - **Settings rows** are `srow(name, help, control)` inside the right `sec*` function in `settings.js`; every
   "Settings → X" in copy is a deep link (`#settings/<section>`).
+- **Redraws keep keyboard focus.** Draw through `fill()`; it hands focus back to the control with the same
+  `data-key`, so give a control that a redraw rebuilds a stable `data-key`. A two-tap control (the emergency buttons)
+  is marked `data-nofocus` while armed, so focus is never given back to it: a stray Space or Enter would be its
+  second tap.
 - **Robot-moving buttons** never act on one click: the server's interlocks decide, and the UI shows the reason it
   returns. Don't duplicate interlock logic in JS.
 - **Works on a phone.** Check at 375 px wide: no horizontal scroll, tap targets at least 32 px.

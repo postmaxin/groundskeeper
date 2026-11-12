@@ -1,4 +1,4 @@
-"""Keyboard focus survives a redraw (#36, #37): the Live panel replaces every card on each refresh and the Cameras
+"""Keyboard focus survives a redraw (#141): the Live panel replaces every card on each refresh and the Cameras
 tile rebuilds itself on every phase change, which would drop focus to the page. Run in node against a small fake DOM
 that loses focus when the focused element is removed, as a browser does (no browser, no robot, no Agora)."""
 import json
@@ -15,8 +15,14 @@ needs_node = pytest.mark.skipif(not shutil.which("node"), reason="node is not in
 
 def run_flow() -> dict:
     out = subprocess.run([shutil.which("node"), str(ROOT / "tests" / "focus_flow.cjs"), str(ROOT / "web" / "app.js"),
-                          str(ROOT / "web" / "cameras.js")], capture_output=True, encoding="utf-8", timeout=60, check=True).stdout
+                          str(ROOT / "web" / "cameras.js")],
+                         capture_output=True, encoding="utf-8", timeout=60, check=True).stdout
     return {row[0]: row[1:] for row in json.loads(out)}
+
+
+def run_emerg() -> dict:
+    out = subprocess.run(["node", str(ROOT / "tests" / "emerg_flow.cjs")], capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
 
 
 @needs_node
@@ -57,7 +63,8 @@ def test_any_fill_keeps_focus_with_no_wrapper_at_the_call_site():
     r = run_flow()
     assert r["any-fill"] == ["BUTTON", "yardcam-b"]                    # the Camera layout's chips, redrawn by fill()
     assert r["readiness-summary"] == ["SUMMARY", "ready-summary"]      # refreshReadiness -> drawReadiness -> fill()
-    assert r["readiness-again"] == ["BUTTON", None]                    # "check again" has no key: kind and text single it out
+    # "check again" has no key: kind and text single it out
+    assert r["readiness-again"] == ["BUTTON", None]
 
 
 @needs_node
@@ -76,18 +83,21 @@ def test_deleting_one_of_two_items_never_moves_focus_to_the_other_items_delete()
 def test_an_armed_emergency_button_never_gets_focus_back_so_a_stray_key_cannot_send():
     r = run_flow()
     assert r["emerg-unarmed"] == ["BUTTON", "emerg-resume"]            # unarmed: kept, like any keyed control
-    assert r["emerg-armed"] == ["BODY", None]                          # the arming redraw drops focus, as before #51
+    # the arming redraw drops focus, as it did before focus was kept
+    assert r["emerg-armed"] == ["BODY", None]
     assert r["emerg-armed-refresh"] == ["BODY", None]                  # and no later refresh while armed puts it back
 
 
-def test_the_emergency_card_marks_the_armed_button():
-    assert '"data-nofocus": armed ? "" : null' in (ROOT / "web" / "ops.js").read_text(encoding="utf-8")
+@needs_node
+def test_the_emergency_card_marks_only_the_armed_button():
+    r = run_emerg()
+    assert r["cardUnarmed"] == []                                      # the real card from web/ops.js, nothing armed
+    assert r["cardArmed"] == ["stop"]                                  # armed: that button alone is data-nofocus
 
 
 @needs_node
 def test_emergency_tap_ignores_a_too_quick_second_tap_sends_once_after_the_gap_and_expires():
-    out = subprocess.run(["node", str(ROOT / "tests" / "emerg_flow.cjs")], capture_output=True, text=True, check=True)
-    r = json.loads(out.stdout)
+    r = run_emerg()
     assert r["armed"] is True                                          # the first tap arms and sends nothing
     assert r["tooQuick"] == {"sent": 0, "stillArmed": True}            # 500 ms on: a double-click, ignored
     assert r["afterGap"]["sent"] == [["/api/control/send", "resume", True]]   # 1.05 s after arming: sent once
@@ -111,7 +121,8 @@ def test_focus_elsewhere_is_never_taken():
 
 def test_the_camera_layout_chips_have_stable_keys():
     code = (ROOT / "web" / "ops.js").read_text(encoding="utf-8")
-    assert '"data-key": "yardcam-auto"' in code and '"data-key": `yardcam-cam-${c}`' in code   # cameras in their own namespace
+    # cameras in their own namespace
+    assert '"data-key": "yardcam-auto"' in code and '"data-key": `yardcam-cam-${c}`' in code
 
 
 @needs_node
@@ -121,7 +132,8 @@ def test_a_camera_named_auto_keeps_focus_and_is_not_taken_for_the_auto_chip():
 
 def test_live_control_buttons_and_readiness_summaries_have_stable_keys():
     code = (ROOT / "web" / "ops.js").read_text(encoding="utf-8")
-    for k in ("ctl-${cmd}", "ctl-start_plan", "ctl-plan", "pending-start", "pending-dismiss", "ready-summary", "ready-checks", "emerg-${cmd}"):
+    for k in ("ctl-${cmd}", "ctl-start_plan", "ctl-plan", "pending-start", "pending-dismiss", "ready-summary",
+              "ready-checks", "emerg-${cmd}"):
         assert f'"data-key": "{k}"' in code or f'"data-key": `{k}`' in code, k
 
 

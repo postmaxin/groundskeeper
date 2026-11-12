@@ -32,6 +32,7 @@ from . import backups as backups_mod
 from . import corrections
 from . import config, control, coverage, geo, insights, mapstudio, mapwrite, telemetry
 from . import ha as ha_mod
+from . import metrics as metrics_mod
 from . import help as help_mod
 from . import video as video_mod
 from . import weather as weather_mod
@@ -433,6 +434,19 @@ async def ha_summary(request: Request):
         start = None
     last = next((x for x in r.store.runs(5) if x.get("ended")), None)      # the last finished run, not one going now
     return ha_mod.summary(r.status(), o.status(), last, upcoming, r.plans, start, version_info())
+
+
+@app.get("/api/metrics")
+async def metrics(request: Request):
+    """Prometheus text format (#95, app/metrics.py). Off until Settings → Access switches it on; then it answers a
+    session, a full API token or a metrics-only one. A scrape builds the text from what the panel holds in memory:
+    nothing is asked of the robot, Home Assistant or Frigate, and no position, serial or robot label is in it."""
+    r, o = rec(request), ops(request)
+    if not r.store.setting("metrics_enabled", SETTINGS_DEFAULTS["metrics_enabled"]):
+        raise HTTPException(403, "the metrics endpoint is off (Settings → Access)")
+    body = metrics_mod.render(r.status(), r.t, o.cloud.state, o.guard_status(), o.controller.last, time.time(),
+                              version_info().get("version"))
+    return Response(body, media_type=metrics_mod.CONTENT_TYPE, headers={"Cache-Control": "no-store"})
 
 
 HA_START_CHECK_S = 30   # how long a summary's start check is reused: it asks Frigate and presence, and HA polls often
@@ -1324,6 +1338,7 @@ SETTINGS_DEFAULTS = {
     "webhook_url": None,
     "wifi_survey": "off",
     "robot_video_enabled": False,    # §13: the viewer's browser joins Agora; people only (POST /api/video/token)
+    "metrics_enabled": False,        # #95: GET /api/metrics (Prometheus); people switch it on, tokens can't
 }
 
 
@@ -1552,6 +1567,13 @@ async def put_setting(request: Request, key: str, value: Any = Body(None)):
             raise HTTPException(400, "true or false")
         r.store.set_setting(key, value)
         r.store.event("robot_video_switched", "robot video switched ON" if value else "robot video switched off")
+        return {key: value}
+    if key == "metrics_enabled":
+        _person(request)                  # a person's session: a scrape token must not be able to open its own door
+        if not isinstance(value, bool):
+            raise HTTPException(400, "true or false")
+        r.store.set_setting(key, value)
+        r.store.event("metrics_switched", "metrics endpoint switched ON" if value else "metrics endpoint switched off")
         return {key: value}
     if key == "wifi_survey":
         from .recorder import WIFI_MODES

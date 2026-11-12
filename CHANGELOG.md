@@ -7,11 +7,23 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 
 ### Added
 
-- **A stats line under the Cameras tile's video** (#53), refreshed every 2 seconds while it plays, for example
-  `640×480 · 15 fps · 1.2 Mbps · 2% loss · RTT 180 ms`. It comes from the video library's own counters in your browser
-  and nothing is sent anywhere. It says **weak link** when loss is 5% or more, the picture froze for 10% of the time
-  or the library rates the robot's upload poor, and **slow to draw** when this browser shows far fewer frames than
-  arrive. The demo shows a made-up line. Sending samples to the panel to map weak spots is not part of this.
+- **A stats line under the Cameras tile's video** (#142), refreshed every 2 seconds while it plays, for example
+  `640×480 · 15 fps · 1.2 Mbps · 2% loss · RTT 180 ms`. It comes from the video library's own counters in your
+  browser and nothing is sent anywhere. It says **weak link** when loss is 5% or more, the picture froze for 10% of
+  the time or the library rates the robot's upload poor, and **slow to draw** when this browser shows far fewer
+  frames than arrive. The demo shows a made-up line.
+- **Prometheus metrics** (3 of 3 for #95): the robot's computer, as `yarbo_cpu_usage_ratio`,
+  `yarbo_memory_available_bytes`, `_memory_free_bytes`, `_memory_cached_bytes`, `yarbo_disk_available_bytes` and
+  `_disk_used_bytes`, dropped with the other `yarbo_*` values when the snapshot is old. The robot's process list
+  is not read. The panel now also reads the robot's flat `system_info` keys, so the CPU temperature shows on a
+  real robot too. See Integrations.
+- **Prometheus metrics** (2 of 3 for #95): `GET /api/metrics` in the Prometheus text format, **off** until
+  Settings → Access → **Metrics** is switched on, scraped with a metrics-only API token. `yarbo_*` for the robot's
+  values (battery, RTK, wheels, signal, plan progress, errors) and `groundskeeper_*` for the panel's own state (cloud
+  and route connected, run active, guards, last command). It has no position (no latitude, longitude, local x/y or
+  RTK height), no serial and no robot label; a scrape asks nothing of the robot, Home Assistant or Frigate; robot
+  values are dropped once the snapshot is over 5 minutes old, with `yarbo_snapshot_age_seconds` left to alert on.
+  See Integrations. Not on the MCP server.
 - **Pre-release images for testing** (`ghcr.io/groundskeeper-robot/groundskeeper-dev`): `:edge` after every merge
   and `:nightly` once a night, in their own package so they never replace `:latest` or a release. Settings → This
   panel shows the channel beside the version, for example `0.19.7 · nightly · 1a756d0`. See the README.
@@ -98,13 +110,13 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 
 ### Fixed
 
-- **An armed emergency button no longer keeps keyboard focus** (#57). Keeping focus across Live refreshes (#36) had
-  left Pause, Resume, Stop or Return to dock focused for its whole 4 s armed window. A click to arm it, followed by
-  Space to scroll, sent the command. Every tap now drops focus from the card, the armed button never gets it back, and a
-  second tap within 0.6 s is ignored as a bounce, a held key or a double-click.
-- **Keyboard focus stays put when Live refreshes** (#36, #37). Live redraws its cards every few seconds and the Cameras
+- **Keyboard focus stays put when Live refreshes** (#141). Live redraws its cards every few seconds and the Cameras
   tile redraws on each change, which dropped focus to the page. Focus now stays on the same control (a camera chip,
   Close) or, when it goes away, moves to the one that replaces it (Open to Close, Close to Open).
+- **An armed emergency button never keeps keyboard focus** (#141). With focus kept across refreshes, Pause, Resume,
+  Stop or Return to dock would stay focused for its whole 4 s armed window, and a stray Space or Enter would have sent
+  it. Every tap now drops focus from the card, the armed button never gets it back, and a second tap within 0.6 s is
+  ignored as a bounce, a held key or a double-click.
 - **A snow blower's area can no longer be given mower settings** (#128). Map Studio's area settings are the mower's
   record, so on an area labelled only for another head (a driveway labelled Snow Blower) they show read-only and a
   save is refused, as it is when the area's labels cannot be read. Unlabelled areas stay editable.

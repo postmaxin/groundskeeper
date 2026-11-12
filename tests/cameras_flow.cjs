@@ -481,12 +481,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   sandbox.camerasStop(); await settle();
   calls.push(["subtle-is-browsers", sandbox.crypto.subtle === own]);
   sandbox.crypto = {}; knobs.wrap = false;
-    // 22. Video stats under the tile (step 1 of #53): the SDK's local counters, read every 2 s while the video plays.
+  // 22. Video stats under the tile (#142): the SDK's local counters, read every 2 s while the video plays.
   // Field names as in the vendored SDK (4.24.9): ratios are 0..1, bitrate is bits per second, delay and RTT are ms.
   const ROBOT_KEY = String(1);
   const GOOD = { receiveResolutionWidth: 640, receiveResolutionHeight: 480, renderFrameRate: 15, receiveFrameRate: 15,
                  receiveBitrate: 1234000, packetLossRate: 0.02, freezeRate: 0, totalFreezeTime: 0, end2EndDelay: 0 };
-  const statsWith = (video, rtc, quality) => { knobs.stats = { video: video && { [ROBOT_KEY]: video }, rtc: rtc || { RTT: 180 }, quality: { [ROBOT_KEY]: quality || { uplinkNetworkQuality: 2, downlinkNetworkQuality: 2 } } }; };
+  const statsWith = (video, rtc, quality) => {
+    knobs.stats = { video: video && { [ROBOT_KEY]: video }, rtc: rtc || { RTT: 180 },
+                    quality: { [ROBOT_KEY]: quality || { uplinkNetworkQuality: 2, downlinkNetworkQuality: 2 } } };
+  };
   const sample = async (name, video, rtc, quality) => {
     statsWith(video, rtc, quality); await fire();
     calls.push(["stats", name, sandbox.cams.stats, sandbox.cams.statsWeak]);
@@ -500,16 +503,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sample("loss", { ...GOOD, packetLossRate: 0.08 });
   await sample("freeze", { ...GOOD, freezeRate: 0.2, totalFreezeTime: 6 });
   await sample("quality", GOOD, { RTT: 180 }, { uplinkNetworkQuality: 5, downlinkNetworkQuality: 1 });
-  await sample("downlink-ignored", GOOD, { RTT: 180 }, { uplinkNetworkQuality: 2, downlinkNetworkQuality: 5 });   // the robot's download is not the video's link
+  // the robot's download is not the video's link
+  await sample("downlink-ignored", GOOD, { RTT: 180 }, { uplinkNetworkQuality: 2, downlinkNetworkQuality: 5 });
   await sample("quality-unknown", GOOD, { RTT: 180 }, { uplinkNetworkQuality: 0, downlinkNetworkQuality: 0 });
   await sample("slow-browser", { ...GOOD, receiveFrameRate: 15, renderFrameRate: 6 });
-  await sample("render-stalled", { ...GOOD, receiveFrameRate: 15, renderFrameRate: 0 });      // a real 0 is kept, not replaced by the receive rate
-  await sample("render-missing", { ...GOOD, renderFrameRate: undefined, receiveFrameRate: 12 });   // only a missing one falls back
+  // a real 0 is kept, not replaced by the receive rate
+  await sample("render-stalled", { ...GOOD, receiveFrameRate: 15, renderFrameRate: 0 });
+  // only a missing one falls back
+  await sample("render-missing", { ...GOOD, renderFrameRate: undefined, receiveFrameRate: 12 });
   await sample("no-rtt", GOOD, { RTT: 0 });
   await sample("nothing-yet", {});                                    // a user with no numbers yet: no line, not "NaN"
   await sample("no-user", null);                                      // the SDK has nothing for the robot
   await sample("bad-numbers", { receiveResolutionWidth: "x", receiveBitrate: NaN, packetLossRate: undefined });
-  calls.push(["stats-line-secret-free", JSON.stringify(calls.filter((c) => c[0] === "stats")).match(/YB0000DEMO0001|007tok|SYNTHETICSECRET|888881|middle_image/) === null]);
+  const shownLines = JSON.stringify(calls.filter((c) => c[0] === "stats"));
+  calls.push(["stats-line-secret-free",
+              shownLines.match(/YB0000DEMO0001|007tok|SYNTHETICSECRET|888881|middle_image/) === null]);
   // A SDK that throws while reading shows nothing and says nothing.
   const readOk = client.getRemoteVideoStats; client.getRemoteVideoStats = () => { throw new Error("boom"); };
   await sample("throws", GOOD); client.getRemoteVideoStats = readOk;
@@ -521,7 +529,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const shown = sandbox.cams.stats, before = calls.filter((c) => c[0] === "stats-read").length;
     await stop(); await settle(); statsWith(GOOD);
     await fire(); await sleep(15); await fire();
-    calls.push(["stats-stopped", name, shown, sandbox.cams.stats, calls.filter((c) => c[0] === "stats-read").length - before, intervals.size]);
+    const reads = calls.filter((c) => c[0] === "stats-read").length - before;
+    calls.push(["stats-stopped", name, shown, sandbox.cams.stats, reads, intervals.size]);
   };
   sandbox.camerasStop(); await settle();
   await stopsStats("close", () => sandbox.camerasStop());
@@ -530,14 +539,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await stopsStats("pagehide", () => listeners.pagehide());
   await stopsStats("leave-live", async () => { sandbox.state.view = "runs"; listeners.hashchange(); await sleep(10); });
   sandbox.state.view = "live";
-  await stopsStats("connection-lost", () => client.handlers["connection-state-change"]("DISCONNECTED", "CONNECTED", "NETWORK_ERROR"));
+  await stopsStats("connection-lost",
+                   () => client.handlers["connection-state-change"]("DISCONNECTED", "CONNECTED", "NETWORK_ERROR"));
   await stopsStats("robot-stops-video", () => client.handlers["user-unpublished"](SDK_USER, "video"));
   // A camera change clears the line and the timer; the new camera's own video starts them again, one timer only.
   sandbox.camerasOpen(); await settle();
   await client.handlers["user-published"](SDK_USER, "video"); await settle(); statsWith(GOOD); await fire();
   mark("stats-pick"); sandbox.camerasPick("left"); await settle();
   calls.push(["stats-after-pick", sandbox.cams.stats, intervals.size]);
-  await client.handlers["user-published"](SDK_USER, "video"); await settle(); calls.push(["stats-timers", intervals.size]);
+  await client.handlers["user-published"](SDK_USER, "video"); await settle();
+  calls.push(["stats-timers", intervals.size]);
   sandbox.camerasStop(); await settle();
   console.log(JSON.stringify(calls));
 })();

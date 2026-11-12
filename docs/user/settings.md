@@ -50,8 +50,12 @@ someone else on your network cannot claim the panel before you do. Sessions last
     every other locked path (`/api/`, `/tiles/`, `/imagery/`, including the live stream and the command routes)
     answers 403. Open paths such as `/health` and the sign-in page answer as they do for anyone. Use
     this kind for Prometheus: the token sits in a config file or a secret, and a leak shows no more than the
-    metrics. Until the metrics endpoint is added to the panel, such a token can read nothing at all. Tokens made
+    metrics. It works once the **Metrics** switch below is on; until then `/api/metrics` answers 403. Tokens made
     before this option stay full.
+  - **Metrics** (Settings → Access → API tokens) is **off** on a new install. Switching it on (only you, signed in,
+    can) serves `GET /api/metrics` in Prometheus's text format; see
+    [Integrations](#help/integrations). The output has no position (no latitude, longitude, local x/y or RTK
+    height), no serial number and no robot label.
 - **Forgot the password?** Run `docker exec groundskeeper python -m app.auth reset` and restart the container.
   This also removes every session and API token. The log then shows a new setup code.
 - **Behind a reverse proxy** (for https or a hostname): set `PANEL_URL` to the address people open, so changes

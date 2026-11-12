@@ -41,9 +41,9 @@ const CAM_JOIN_TIMEOUT_MS = 30000;                 // a join that never settles 
 // its video a moment after the last viewer leaves, and a camera-on sent straight away was lost to that (a camera
 // change then waited for video for good; with 3 s it played within seconds).
 const CAM_REJOIN_GAP_MS = 3000;
-// "Weak link" thresholds, on the SDK's own numbers (4.24.9): packetLossRate and freezeRate are ratios 0..1, and the network
-// quality is 0 (unknown) to 6 (down), where 4 is "poor". getRemoteNetworkQuality()[uid] describes that remote user's own
-// connection, so for the robot its uplink is the video's source link; its downlink is irrelevant to viewing.
+// "Weak link" thresholds, on the SDK's own numbers (4.24.9): packetLossRate and freezeRate are ratios 0..1, and the
+// network quality is 0 (unknown) to 6 (down), where 4 is "poor". getRemoteNetworkQuality()[uid] describes that remote
+// user's own connection, so for the robot its uplink is the video's source link; its downlink is irrelevant to viewing.
 const CAM_WEAK_LOSS = 0.05;                        // 5% of the robot's packets lost
 const CAM_WEAK_FREEZE = 0.1;                       // frozen for 10% of the time
 const CAM_WEAK_QUALITY = 4;                        // the robot's uplink network quality "poor" or worse
@@ -68,7 +68,8 @@ const CAM_SDK_OFF = [
 ];
 
 const cams = { open: false, camera: savedCamera(), phase: "closed", message: "", hint: "", client: null, ticket: 0,
-               slowTimer: null, beatTimer: null, statsTimer: null, stats: "", statsWeak: false, statsEl: null, controlOff: false, leaving: Promise.resolve(), settings: null,
+               slowTimer: null, beatTimer: null, statsTimer: null, stats: "", statsWeak: false, statsEl: null,
+               controlOff: false, leaving: Promise.resolve(), settings: null,
                settingsAt: 0, card: null, stage: null, sdk: null, subscribed: 0, leftAt: 0 };
 
 // The hints on screen are short; what each one means is its tooltip (and docs/user/live.md).
@@ -112,8 +113,10 @@ async function camerasCard(s) {
   if (!cams.card) {
     cams.stage = h("div", { class: "camsstage", role: "img", "aria-label": "Live view from the robot's camera" });
     cams.card = h("div", { class: "card camscard" });
-    cams.statsEl = h("p", { class: "small muted camstats", style: "margin:6px 0 0", title: "Measured in this browser from the video library's own counters. Nothing is sent anywhere." });
-    camerasStatsShow(cams.demo ? camerasStatsLine(CAM_DEMO_STATS.video, CAM_DEMO_STATS.rtc, CAM_DEMO_STATS.quality) : { text: "", weak: false });
+    cams.statsEl = h("p", { class: "small muted camstats", style: "margin:6px 0 0",
+      title: "Measured in this browser from the video library's own counters. Nothing is sent anywhere." });
+    const demo = CAM_DEMO_STATS;
+    camerasStatsShow(cams.demo ? camerasStatsLine(demo.video, demo.rtc, demo.quality) : { text: "", weak: false });
   }
   camerasDraw();
   return cams.card;
@@ -127,11 +130,13 @@ function camerasDraw() {
   const label = { connecting: "Connecting…", waiting: "Waiting for the robot", playing: "Live", error: "Error",
                   closed: "Closed" }[cams.phase] || "Closed";
   // Open, Close and Try again come and go, so each names where focus goes when it disappears (keepFocus, app.js).
-  const after = { "cam-open": "cam-close", "cam-retry": "cam-close", "cam-close": "cam-open" }[document.activeElement?.dataset?.key];
+  const after = { "cam-open": "cam-close", "cam-retry": "cam-close", "cam-close": "cam-open" }[
+    document.activeElement?.dataset?.key];
   keepFocus(cams.card, () => fill(cams.card,
     h("div", { class: "row gap", style: "justify-content:space-between" },
       h("p", { class: "label", style: "margin:0" }, "Cameras ",
-        h("span", { class: "tip", tabindex: "0", "data-key": "cam-tip", title: "The robot's own cameras, not the yard cameras. They come " +
+        h("span", { class: "tip", tabindex: "0", "data-key": "cam-tip",
+          title: "The robot's own cameras, not the yard cameras. They come " +
           "through Yarbo's cloud and Agora's network, one at a time, and only while this is open." }, "ⓘ")),
       cams.demo ? h("span", { class: "small muted" }, "Demo")
                 : h("span", { class: "small", style: `color:${colour}` }, dot(colour), " ", label)),
@@ -141,10 +146,12 @@ function camerasDraw() {
                  cams.statsEl]
     : cams.open ? [
       h("div", { class: "camchips", role: "group", "aria-label": "Robot camera" },
-        CAM_CHOICES.map(([k, name]) => h("button", { type: "button", class: `btn slim${cams.camera === k ? " on" : ""}`, "data-key": `cam-${k}`,
+        CAM_CHOICES.map(([k, name]) => h("button", { type: "button", class: `btn slim${cams.camera === k ? " on" : ""}`,
+          "data-key": `cam-${k}`,
           "aria-pressed": String(cams.camera === k), title: `The robot's ${name.toLowerCase()} camera`,
           onclick: () => camerasPick(k) }, name)),
-        h("button", { type: "button", class: "btn slim", "data-key": "cam-close", title: "Stop the video and leave the channel",
+        h("button", { type: "button", class: "btn slim", "data-key": "cam-close",
+          title: "Stop the video and leave the channel",
           onclick: () => camerasStop() }, "Close")),
       cams.stage,
       cams.statsEl,
@@ -152,31 +159,39 @@ function camerasDraw() {
                        cams.message) : null,
       cams.hint ? h("p", { class: "muted small", style: "margin:4px 0 0", title: CAM_HELP[cams.hint] || null },
                     cams.hint) : null,
-      cams.phase === "error" ? h("button", { type: "button", class: "btn slim", "data-key": "cam-retry", style: "margin-top:6px",
+      cams.phase === "error" ? h("button", { type: "button", class: "btn slim", "data-key": "cam-retry",
+                                             style: "margin-top:6px",
                                              onclick: () => camerasStart({ on: true }) }, "Try again") : null]
     : [
       h("div", { class: "row gap", style: "margin-top:6px" },
         h("button", { type: "button", class: "btn slim", "data-key": "cam-open", onclick: () => camerasOpen(),
           title: "Switch the robot's cameras on and show one here. Needs Control on." }, "Open")),
-      cams.message ? h("p", { class: "muted small", style: "margin:6px 0 0", role: "status" }, cams.message) : null]), after);
+      cams.message ? h("p", { class: "muted small", style: "margin:6px 0 0", role: "status" }, cams.message) : null]),
+    after);
 }
 
 // Made-up numbers for the demo, which never loads the SDK: it shows what the line looks like on a real robot.
-const CAM_DEMO_STATS = { video: { receiveResolutionWidth: 640, receiveResolutionHeight: 480, renderFrameRate: 15, receiveFrameRate: 15,
-                                  receiveBitrate: 1234000, packetLossRate: 0.02, freezeRate: 0, totalFreezeTime: 0, end2EndDelay: 0 },
+const CAM_DEMO_STATS = { video: { receiveResolutionWidth: 640, receiveResolutionHeight: 480, renderFrameRate: 15,
+                                  receiveFrameRate: 15, receiveBitrate: 1234000, packetLossRate: 0.02, freezeRate: 0,
+                                  totalFreezeTime: 0, end2EndDelay: 0 },
                          rtc: { RTT: 180 }, quality: { uplinkNetworkQuality: 2 } };
 
-// The line under the video, from the SDK's local counters (read by camerasStatsStart). Returns { text, weak }; text is ""
-// when there are no numbers yet. Only numbers are used: no ids, names, tokens or addresses can get in.
+// The line under the video, from the SDK's local counters (read by camerasStatsStart). Returns { text, weak }; text
+// is "" when there are no numbers yet. Only numbers are used: no ids, names, tokens or addresses can get in.
 function camerasStatsLine(video, rtc, quality) {
   const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
   const v = video || {};
   const w = num(v.receiveResolutionWidth), ht = num(v.receiveResolutionHeight);
-  const bps = num(v.receiveBitrate), loss = num(v.packetLossRate), freezeRate = num(v.freezeRate), froze = num(v.totalFreezeTime);
-  const received = num(v.receiveFrameRate), drawn = typeof v.renderFrameRate === "number" && Number.isFinite(v.renderFrameRate) ? v.renderFrameRate : received;   // a real 0 stays 0
+  const bps = num(v.receiveBitrate), loss = num(v.packetLossRate);
+  const freezeRate = num(v.freezeRate), froze = num(v.totalFreezeTime);
+  const received = num(v.receiveFrameRate);
+  // A real 0 stays 0: a stalled renderer is not masked by the receive rate. Only a missing counter falls back.
+  const drawn = typeof v.renderFrameRate === "number" && Number.isFinite(v.renderFrameRate)
+    ? v.renderFrameRate : received;
   const rtt = num(rtc && rtc.RTT), delay = num(v.end2EndDelay);
   if (!w && !bps && !drawn) return { text: "", weak: false };      // nothing received yet
-  const weak = loss >= CAM_WEAK_LOSS || freezeRate >= CAM_WEAK_FREEZE || num(quality && quality.uplinkNetworkQuality) >= CAM_WEAK_QUALITY;
+  const weak = loss >= CAM_WEAK_LOSS || freezeRate >= CAM_WEAK_FREEZE
+    || num(quality && quality.uplinkNetworkQuality) >= CAM_WEAK_QUALITY;
   const slow = !weak && received >= 5 && drawn < received * CAM_SLOW_DRAW;
   const pct = loss * 100;
   const parts = [
@@ -187,7 +202,8 @@ function camerasStatsLine(video, rtc, quality) {
     rtt > 0 ? `RTT ${Math.round(rtt)} ms` : "",
     delay > 0 ? `delay ${Math.round(delay)} ms` : "",
     froze >= 1 ? `froze ${Math.round(froze)} s` : "",
-    weak ? "weak link" : slow ? "slow to draw" : ""];               // weak link: the robot's side or the network; slow to draw: this browser
+    // weak link: the robot's side or the network; slow to draw: this browser
+    weak ? "weak link" : slow ? "slow to draw" : ""];
   return { text: parts.filter(Boolean).join(" · "), weak };
 }
 

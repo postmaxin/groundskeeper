@@ -478,7 +478,13 @@ class DemoRobot:
             "mower_head_info04": {"right_blade_motor_rpm": 3100 + r.randint(-60, 60) if mowing else 0,
                                   "right_blade_motor_current": round(2.4 + 1.6 * r.random(), 2) if mowing else 0.0,
                                   "right_blade_motor_temp": round(37 + 12 * frac, 1)},
-            "system_info": {"cpu": {"Temperature": f"{48 + 6 * frac:.3f} °C"}},
+            "system_info": {            # flat dotted keys, as the robot sends them
+                "cpu.Temperature": f"{48 + 6 * frac:.3f} °C", "cpu.Usage": round(25 + 30 * frac + 5 * r.random(), 1),
+                "mem.MemAvailable": 5800000 + r.randint(-20000, 20000),
+                "mem.MemFree": 700000 + r.randint(-20000, 20000), "mem.Cached": 4700000 + r.randint(-20000, 20000),
+                "userdata.disk.availableSize": 17000000000, "userdata.disk.usedSize": 22000000000,
+                "topProc": [{"command": "demo_proc", "cpuUsage": 120.0, "pid": 1001}],
+            },
         }
         if full:
             snap.update(FIRMWARE)
