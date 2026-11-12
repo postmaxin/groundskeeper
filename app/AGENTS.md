@@ -21,5 +21,6 @@ Local rules for the Python side. The top-level `AGENTS.md` comes first.
 - **Location is private.** Don't log coordinates, imagery URLs (they carry coordinates), the serial or tokens. The
   MCP server `scrub`s what it returns; keep it that way.
 - **Docstrings cite the design** (`§7.4` = `docs/dev/design.md` section 7.4). Keep the citation when you change the
-  code, and update the section if the behaviour changes.
+  code, and update the section if the behaviour changes. Larger rules have an ADR with the reason
+  (`docs/dev/decisions/`).
 - `imagery/` has its own conventions: see `docs/dev/imagery-catalog.md` and `catalog/AGENTS.md`.

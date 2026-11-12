@@ -371,7 +371,18 @@ async function loadImagery() {
 // Which imagery is under the map, how sharp it is, and the credit its terms ask for.
 function imageryCredit(yard) {
   let el = $("#imgcredit");
-  if (!el) { el = h("div", { id: "imgcredit", class: "imgcredit" }); $(".mapwrap").append(el); }
+  if (!el) {
+    el = h("div", { id: "imgcredit", class: "imgcredit" });
+    const wrap = $(".mapwrap"), legend = $(".legend");
+    wrap.append(el);
+    // The legend grows a row when Signal or Problems is on, and wraps on narrow maps: keep the credit just above it.
+    const place = new ResizeObserver(() => {
+      const r = legend.getBoundingClientRect();
+      wrap.style.setProperty("--legend-top", r.height ? `${Math.round(wrap.getBoundingClientRect().bottom - r.top)}px` : "28px");
+    });
+    place.observe(legend);
+    place.observe(wrap);                    // the phone layout moves the legend without always resizing it
+  }
   const src = yard && yard.source;
   if (!src) { el.textContent = yard?.attribution || ""; return; }
   const cm = src.m_per_px * 100;

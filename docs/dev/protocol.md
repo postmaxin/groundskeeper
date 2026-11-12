@@ -237,8 +237,14 @@ Authorization: Bearer <jwt>
 
 - The stream is encrypted. The recorder uses AES-128-GCM2 (Agora mode 7), with `key` as received and `salt`
   **base64-decoded to bytes** (the response carries it as base64 text).
-- The recorder joins as a broadcaster but publishes nothing; a browser viewer would join as audience.
-  **[unconfirmed]**
+- **A viewer must join as a broadcaster (host) to get video; it need not publish anything.** **[observed]** with
+  the browser SDK: joined as audience, the tile saw the robot in the channel but no video, as an audience member is
+  invisible to the other users; joined as host with nothing published, video arrived within seconds with the app
+  closed. The official app joins as a broadcaster too (it has a talk-back microphone), and so does the recorder.
+- **The robot stops publishing when the last broadcaster leaves.** **[observed]** After the only viewer left one
+  camera's channel, it sent no video on the next camera's channel until `{"state":1}` was sent again, and a
+  `{"state":1}` sent straight after the leave was lost (the robot stops a moment later); about 3 s after the leave it
+  worked. A viewer that changes camera or rejoins for a new token waits that long, then sends it again.
 - Frames arrive as H.264. The recorder also maps a codec id for HEVC, which has **[unconfirmed]** never been seen.
 - With no publisher (robot asleep or the view not switched on) the join still succeeds and no video arrives. The
   recorder allows a couple of seconds after `{"state":1}` before expecting frames.

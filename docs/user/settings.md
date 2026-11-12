@@ -10,7 +10,7 @@ It is open when you go to Settings and closes once you choose a section.
 | Section | What it holds |
 |---|---|
 | [Set up](#settings/setup) | The first-run guide: every step below in order, with what each is for ([more](#help/setup)) |
-| [Robot](#settings/robot) | The Yarbo cloud sign-in and the robot's serial; deck width; the Wi-Fi survey |
+| [Robot](#settings/robot) | The Yarbo cloud sign-in and the robot's serial; the Wi-Fi survey |
 | [Safety](#settings/safety) | The control and map writing switches ([more](#help/safety)) |
 | [Run rules](#settings/rules) | What must be true to start, and what each guard does during a run |
 | [Lawn conditions](#settings/lawn) | Weather from the Tempest and/or Home Assistant, soil moisture, units, the dry / damp / wet rules and the last 24 h |

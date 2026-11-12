@@ -25,6 +25,11 @@ def run_flow() -> list:
 BEAT_CALLS = ("beat", "interval", "clear-interval")      # the keep-awake timer's calls: asked for by name (beats=True)
 
 
+def no_gap(seg):
+    """A segment without the rejoin-gap waits, for tests about something else that open soon after a Close."""
+    return [c for c in seg if c[0] != "rejoin-gap"]
+
+
 def segment(calls, name, beats=False):
     start = next(i for i, c in enumerate(calls) if c == ["--", name])
     end = next((i for i, c in enumerate(calls[start + 1:], start + 1) if c[0] == "--"), len(calls))
@@ -57,8 +62,15 @@ def test_opening_switches_on_then_joins_with_the_sdk_quietened_and_encryption_se
     assert last_param < names.index("setLogLevel") < names.index("createClient")   # all before the client exists
     enc = next(c for c in seg if c[0] == "setEncryptionConfig")
     assert enc[1:] == ["aes-128-gcm2", "groundskeeper-placeholder", "1,2,3"]   # the placeholder; the salt as bytes
-    assert ["setClientRole", "audience"] in seg
+    assert ["setClientRole", "host"] in seg
     assert "enableLogUpload" not in names
+
+
+@needs_node
+def test_the_system_check_skips_the_camera_and_microphone_check():
+    # Over plain http (not a secure context) the browser hides navigator.mediaDevices, so the SDK's full check fails
+    # though watching works. The tile asks without the device check.
+    assert ["checkSystemRequirements", False] in segment(run_flow(), "open")
 
 
 @needs_node
@@ -67,11 +79,43 @@ def test_the_robots_video_is_subscribed_to():
 
 
 @needs_node
-def test_changing_camera_leaves_the_channel_and_does_not_send_a_command_again():
+def test_changing_camera_leaves_the_channel_and_switches_the_cameras_on_again():
+    # The robot stops publishing when the last broadcaster leaves, so the new channel needs camera-on again.
     seg = segment(run_flow(), "pick-left")
     assert "leave" in [c[0] for c in seg]
     posts = [c for c in seg if c[0] == "post"]
-    assert [p[1] for p in posts] == ["/api/video/token"] and json.loads(posts[0][2]) == {"camera": "left"}
+    assert [p[1] for p in posts] == ["/api/control/send", "/api/video/token"]
+    assert json.loads(posts[0][2]) == {"cmd": "smart_vision_control", "args": {}, "confirm": True}
+    assert json.loads(posts[1][2]) == {"camera": "left"}
+    names = [c[0] for c in seg]
+    # The robot stops a moment after the last viewer leaves: camera-on waits out a gap after the leave, or it is lost.
+    assert names.index("leave") < names.index("rejoin-gap") < names.index("post")
+
+
+@needs_node
+def test_a_first_open_does_not_wait_for_the_rejoin_gap():
+    calls = run_flow()
+    assert "rejoin-gap" not in [c[0] for c in segment(calls, "open")]
+    assert "rejoin-gap" not in [c[0] for c in segment(calls, "open-long-after")]
+
+
+@needs_node
+def test_opening_again_soon_after_a_close_waits_out_the_gap():
+    # Close left the channel; the robot may still be shutting its video down, so camera-on waits like a change does.
+    names = [c[0] for c in segment(run_flow(), "reopen-soon")]
+    assert names.count("rejoin-gap") == 1 and names.index("rejoin-gap") < names.index("post")
+
+
+@needs_node
+def test_a_second_quick_camera_change_still_waits_out_the_gap():
+    # Left then Right at once: the Right start finds no client (Left's start already left it) but still waits out the
+    # gap from that leave. The Left start is superseded before its gap, so one gap, and it is Right's.
+    seg = segment(run_flow(), "quick-picks")
+    names = [c[0] for c in seg]
+    assert names.count("rejoin-gap") == 1 and names.index("leave") < names.index("rejoin-gap")
+    posts = [json.loads(c[2]) for c in seg if c[0] == "post" and c[1] == "/api/video/token"]
+    assert posts == [{"camera": "right"}]                      # the Left start was superseded before it asked
+    assert names.index("rejoin-gap") < names.index("post")
 
 
 @needs_node
@@ -155,16 +199,17 @@ def test_a_failed_subscribe_leaves_and_shows_a_sanitized_error():
 
 @needs_node
 def test_control_switched_on_after_the_last_render_still_sends_the_command():
-    seg = segment(run_flow(), "control-just-on")
+    seg = no_gap(segment(run_flow(), "control-just-on"))
     assert seg[0][:2] == ["post", "/api/control/send"]
 
 
 @needs_node
-def test_renewing_the_token_never_sends_camera_on_even_with_control_on():
+def test_renewing_the_token_rejoins_with_camera_on_again():
+    # The rejoin leaves the channel, which stops the robot's video, so camera-on goes with it (Control on).
     calls = run_flow()
     for name in ("renew-will-expire", "renew-did-expire"):                # both events rejoin with a new token
         seg = segment(calls, name)
-        assert [c[1] for c in seg if c[0] == "post"] == ["/api/video/token"], name
+        assert [c[1] for c in seg if c[0] == "post"] == ["/api/control/send", "/api/video/token"], name
         assert [c[0] for c in seg].count("createClient") == 1, name
 
 
@@ -286,7 +331,7 @@ def test_the_sdk_comes_from_this_panel_only():
 # -- the keep-awake (the robot streams only while someone sends it) ------------------------------------------------
 @needs_node
 def test_the_first_beat_goes_before_camera_on_and_then_one_every_four_seconds():
-    seg = segment(run_flow(), "beats-open", beats=True)
+    seg = no_gap(segment(run_flow(), "beats-open", beats=True))
     assert seg[0] == ["interval", 4000] and seg[1] == ["beat", '{"start":true}']    # at once: a press opens the window
     assert seg[2][:2] == ["post", "/api/control/send"]                           # ... before camera-on
     assert [c[0] for c in seg].count("beat") == 3                                # 1 at the start, then one per tick
@@ -339,7 +384,7 @@ def test_every_way_of_stopping_stops_the_beats(how):
 
 @needs_node
 def test_try_again_beats_again_and_close_stops_it():
-    seg = segment(run_flow(), "try-again", beats=True)
+    seg = no_gap(segment(run_flow(), "try-again", beats=True))
     assert [c[0] for c in seg][:2] == ["interval", "beat"]
     assert [c for c in seg if c[0] == "intervals"] == [["intervals", 1], ["intervals", 0]]
 
@@ -493,6 +538,34 @@ def test_a_wrapper_that_cannot_be_restored_goes_quiet_once_removed():
     seg = segment(calls, "direct-wrapped-over")
     frames = [c for c in seg if c[0] == "ws-send"]
     assert len(frames) == 1 and "WRAPPED-BY-THE-SDK" in frames[0][1] and "OVERSECRET" not in frames[0][1]
+
+
+@needs_node
+def test_over_plain_http_the_sdks_wrap_gets_a_stand_in_only_while_the_client_lives():
+    calls = run_flow()
+    seg = segment(calls, "http-join")
+    assert ["wrapped", 128] in seg                                       # the join got past the wrap
+    assert ["subtle-while-joined", "object"] in seg
+    refused = [c for c in seg if c[0] == "crypto-call"]
+    assert refused == [["crypto-call", n, "This needs the panel over https."]
+                       for n in ("digest", "aes-import", "rsa-encrypt-other-key")]   # nothing but the wrap
+    assert ["subtle-after-leave", "undefined", False] in segment(calls, "http-left")
+
+
+@needs_node
+def test_over_https_the_browsers_own_web_crypto_is_used_and_never_replaced():
+    seg = segment(run_flow(), "https-join")
+    names = [c[0] for c in seg]
+    assert "browser-importKey" in names and "browser-encrypt" in names
+    assert seg.count(["subtle-is-browsers", True]) == 2                  # while joined, and after leaving
+
+
+def test_the_tile_joins_as_host_but_never_publishes_anything():
+    # Host so the robot sees a viewer; nothing from this browser ever goes into the channel.
+    assert 'setClientRole("host")' in CODE and 'setClientRole("audience")' not in CODE
+    for call in ("publish(", "createMicrophoneAudioTrack", "createCameraVideoTrack", "createScreenVideoTrack",
+                 "createCustomAudioTrack", "createCustomVideoTrack", "createBufferSourceAudioTrack", "getUserMedia"):
+        assert call not in CODE, call
 
 
 # --- Video stats under the tile (#53, step 1): the SDK's own local counters, read here, sent nowhere. ---

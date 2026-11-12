@@ -316,7 +316,7 @@ input[type=checkbox] { accent-color: var(--ok); width: 16px; height: 16px; }
 .imgrow { padding: 8px 0; border-top: 1px solid var(--rule); }
 .imgrow.on b { color: var(--ok); }
 .imgrow .field { flex: 1; min-width: 0; }
-.imgcredit { position: absolute; left: 10px; bottom: 52px; z-index: 2; padding: 3px 8px; border-radius: 6px; background: color-mix(in srgb, var(--bg) 78%, transparent); color: var(--text3); font-size: 11px; pointer-events: none; max-width: calc(100% - 20px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.imgcredit { position: absolute; left: 10px; bottom: calc(var(--legend-top, 62px) + 6px); z-index: 2; padding: 3px 8px; border-radius: 6px; background: color-mix(in srgb, var(--bg) 78%, transparent); color: var(--text3); font-size: 11px; pointer-events: none; max-width: calc(100% - 20px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .imgcredit button { pointer-events: auto; font-size: 11px; color: var(--link); }
 .alignmark { width: 12px; height: 12px; border-radius: 50%; pointer-events: none; }
 .alignmark.robot { background: var(--robot); border: 2px solid var(--bg); }
@@ -502,12 +502,11 @@ textarea.field { min-height: 80px; padding: 8px 10px; font: 12px/1.4 var(--mono)
   .layout { grid-template-columns: 1fr; }
   .mapwrap { height: 46vh; border-right: 0; border-bottom: 1px solid var(--line); }
   .shell[data-view="studio"] .mapwrap { height: 62vh; }      /* editing needs the room */
-  /* the legend is one scrolling row clear of the scale bar; the imagery credit lives in Settings and the attribution
-     folds into its (i) button, so nothing at the foot of the map overlaps */
+  /* the legend is one scrolling row clear of the scale bar; the imagery credit sits above it (app.js keeps
+     --legend-top in step with the legend's height), so nothing at the foot of the map overlaps */
   .legend { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; bottom: 8px; max-width: calc(100% - 118px); gap: 10px; padding: 6px 10px; }
   .legend span { flex: none; white-space: nowrap; }
-  .legend .signalbox { flex-basis: auto; padding-bottom: 0; border-bottom: 0; }
-  .imgcredit { display: none; }
+  .imgcredit { left: 8px; max-width: calc(100% - 16px); padding: 2px 6px; }
   .studiobar { left: 52px; max-width: none; }    /* clear of the zoom buttons at the top left */
   .settings { grid-template-columns: 1fr; gap: 8px; padding: 8px 12px 24px; }
   .sfold { position: static; }
@@ -607,6 +606,10 @@ textarea.field { min-height: 80px; padding: 8px 10px; font: 12px/1.4 var(--mono)
 .sw.fill { background: var(--trk-fixed); height: 5px; }
 .legend .signalbox { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 .legend .signalbox[hidden] { display: none; }
+/* phones: each box is one line in the legend's scrolling row (after the rule above, which it overrides) */
+@media (max-width: 900px), (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
+  .legend .signalbox { flex: none; flex-wrap: nowrap; padding-bottom: 0; border-bottom: 0; }
+}
 .signalbox .field.slim { padding: 3px 6px; font-size: 12px; width: auto; }
 .signalscale { display: inline-flex; align-items: center; gap: 6px; }
 .ramp.sig { display: inline-block; width: 90px; height: 8px; border-radius: 4px;

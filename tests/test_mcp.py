@@ -165,7 +165,7 @@ def test_yard_cameras_only_grow_and_only_with_cameras_frigate_has(env):
 
 @pytest.mark.parametrize("key,value", [("presence_entity", "sun.sun"), ("camera_polygons", {"x": [[0, 0]]}),
                                        ("ha_notify_service", "script.open_garage"),
-                                       ("ha_notify_service", "shell_command.x"), ("deck_m", float("nan"))])
+                                       ("ha_notify_service", "shell_command.x"), ("deck_m", 0.5)])
 def test_settings_that_could_blind_a_check_or_call_anything_are_refused(env, key, value):
     with pytest.raises(ToolError):
         call(env, "set_setting", key=key, value=value, confirm=True)

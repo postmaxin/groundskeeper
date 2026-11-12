@@ -190,5 +190,5 @@ def test_old_database_gains_new_columns(tmp_path):
     cols = {r["name"] for r in st.db.execute("PRAGMA table_info(telemetry)")}
     assert {"odo_l", "odo_r", "battery"} <= cols
     st.add_weather({"ts": 1.0, "temp_c": 10.0})
-    st.set_setting("deck_m", 0.5)
-    assert st.setting("deck_m") == 0.5 and st.weather_since(0)[0]["temp_c"] == 10.0
+    st.set_setting("wifi_survey", "next")
+    assert st.setting("wifi_survey") == "next" and st.weather_since(0)[0]["temp_c"] == 10.0

@@ -4,10 +4,14 @@ had its settings saved (as this robot does), and re-links pathways on every area
 import asyncio
 import copy
 import tempfile
+import time
+from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
-from app import areasettings as aset, mapwrite as mw
+from app import areasettings as aset, main, mapwrite as mw
+from app.store import Store
 from tests.test_area_writes import AreaRobot, writer
 from tests.test_mapstudio import REF, sample_map
 
@@ -172,3 +176,113 @@ def test_the_preview_payload_is_the_apps_and_the_route_comes_back_as_a_line():
                               "total_time": 123.4}, record["ref"])
     assert out["length_m"] == 11.0 and out["points"] == 3 and out["total_time_s"] == 123.4
     assert out["route"]["geometry"]["type"] == "LineString" and len(out["route"]["geometry"]["coordinates"]) == 3
+
+
+# -- areas labelled only for other heads (ADR 0009, #128) ----------------------------------------------------------
+@pytest.mark.parametrize("labels", [[3], [1, 3], [3, 4], []])
+def test_a_mowing_area_or_an_unlabelled_one_keeps_the_editor(labels):
+    assert aset.other_head_block(labels) is None
+
+
+@pytest.mark.parametrize("labels", [[1], [2], [1, 4], [9]])
+def test_an_area_labelled_only_for_other_heads_is_read_only(labels):
+    why = aset.other_head_block(labels)
+    assert why and "Lawn Mower" in why
+
+
+@pytest.mark.parametrize("labels", [None, "3", {"x": 3}, [None]])
+def test_labels_that_cannot_be_read_keep_the_editor_closed(labels):
+    assert aset.other_head_block(labels)
+
+
+class LabelRec:
+    """Just what the area settings routes read from the recorder; every write gate open."""
+    def __init__(self, tmp_path, labels, records=None):
+        self.store = Store(str(tmp_path / "t.db"))
+        self.store.set_setting("map_write_enabled", True)
+        area = {"id": 1, "name": "Drive", **({"labels": labels} if labels is not None else {})}
+        self.map_raw = {"areas": [area]}
+        self.snapshot_at = time.time()
+        self.run_id = None
+        self._records = records
+        self.gps_ref = {"lat": 0.0, "lon": 0.0}
+
+    def plan_active(self):
+        return False
+
+    async def read_area_records(self):
+        if self._records is None:
+            raise ValueError("no area records")
+        return self._records
+
+    async def read_area_params(self, aid):
+        return copy.deepcopy(READ)
+
+
+def _request(rec):
+    ops = SimpleNamespace(link=SimpleNamespace(why_no_writes=lambda: None),
+                          controller=SimpleNamespace(start_settling=lambda: None), map_writer=None)
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(rec=rec, ops=ops, store=rec.store)))
+
+
+def _no_write(monkeypatch):
+    async def boom(*a, **k):
+        raise AssertionError("nothing may be written to this area")
+    monkeypatch.setattr(aset, "write", boom)
+
+
+def test_a_snow_area_shows_its_settings_read_only_and_refuses_a_save(tmp_path, monkeypatch):
+    _no_write(monkeypatch)
+    req = _request(LabelRec(tmp_path, [1]))
+    got = asyncio.run(main.area_settings(req, 1))
+    assert got["labels"] == ["Snow Blower"] and "Lawn Mower" in got["blocked"]
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(main.put_area_settings(req, 1, {"changes": {"edge_circles": 3}}))
+    assert e.value.status_code == 409 and "Lawn Mower" in e.value.detail
+
+
+def test_labels_from_the_area_record_count_when_the_map_leaves_them_out(tmp_path, monkeypatch):
+    _no_write(monkeypatch)
+    req = _request(LabelRec(tmp_path, None, records={1: {"id": 1, "labels": [1]}}))
+    assert asyncio.run(main.area_settings(req, 1))["labels"] == ["Snow Blower"]
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(main.put_area_settings(req, 1, {"changes": {"edge_circles": 3}}))
+    assert e.value.status_code == 409 and "Lawn Mower" in e.value.detail
+
+
+@pytest.mark.parametrize("records, why", [
+    (None, "could not read the area's labels"),                   # the read failed
+    ({}, "no record of this area"),                               # no record for this id
+    ({1: {"id": 1}}, "no labels this panel can read"),            # a record without labels
+])
+def test_a_save_is_refused_when_the_labels_cannot_be_read(tmp_path, monkeypatch, records, why):
+    _no_write(monkeypatch)
+    req = _request(LabelRec(tmp_path, None, records=records))
+    got = asyncio.run(main.area_settings(req, 1))
+    assert why in got["blocked"] and got["labels"] is None
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(main.put_area_settings(req, 1, {"changes": {"edge_circles": 3}}))
+    assert e.value.status_code == 409 and why in e.value.detail
+
+
+@pytest.mark.parametrize("labels", [[3], [1, 3], []])
+def test_a_mowing_or_unlabelled_area_is_still_saved(tmp_path, monkeypatch, labels):
+    sent = []
+
+    async def fake_write(writer, aid, changes, *a, **k):
+        sent.append((aid, changes))
+        return {"ok": True}
+    monkeypatch.setattr(aset, "write", fake_write)
+    req = _request(LabelRec(tmp_path, labels))
+    assert asyncio.run(main.area_settings(req, 1))["blocked"] is None
+    assert asyncio.run(main.put_area_settings(req, 1, {"changes": {"edge_circles": 3}})) == {"ok": True}
+    assert sent == [(1, {"edge_circles": 3})]
+
+
+def test_the_write_checks_the_labels_again_under_its_lock(tmp_path):
+    """Relabelled in the app between the route's check and the write: the record read inside the lock wins."""
+    robot = SettingsRobot(sample_map())
+    next(a for a in robot.map["areas"] if a["id"] == 1)["labels"] = [1]
+    with pytest.raises(mw.WriteRefused, match="Lawn Mower"):
+        run(robot, tmp_path, {"edge_circles": 3})
+    assert not robot.sent

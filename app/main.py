@@ -825,22 +825,41 @@ def _robot_area(r, aid: int) -> dict:
     return a
 
 
+async def _area_labels(r, a: dict) -> tuple:
+    """(the area's labels: which heads it is for, why they could not be read). get_map may leave them out; the
+    area's own record has them. Labels that cannot be read keep the mower settings read-only (ADR 0009)."""
+    if a.get("labels") is not None:
+        return a["labels"], None
+    try:
+        record = (await r.read_area_records()).get(a.get("id"))
+    except Exception as exc:
+        return None, f"could not read the area's labels from the robot ({str(exc) or type(exc).__name__})"
+    if record is None:
+        return None, "the robot has no record of this area"
+    return record.get("labels"), None
+
+
+async def _head_block(r, a: dict) -> tuple:
+    """(labels or None, why the mower's settings may not be saved to this area or None)."""
+    labels, err = await _area_labels(r, a)
+    return labels, err or areasettings.other_head_block(labels)
+
+
 @app.get("/api/areas/{aid}/settings")
 async def area_settings(request: Request, aid: int):
-    """An area's mowing settings as the robot has them, the fields the editor knows, and why saving is off (if it is)."""
+    """An area's mowing settings as the robot has them, the fields the editor knows, and why saving is off (if it is).
+    An area labelled only for other heads shows them read-only (ADR 0009)."""
     r = rec(request)
     a = _robot_area(r, aid)
     data, err = await areasettings.read_settings(r.read_area_params, aid)
     if data is None:
         raise HTTPException(503, f"the robot did not return this area's settings ({err})")
-    labels = a.get("labels")
-    if labels is None:                                   # get_map leaves them out; the area's own record has them
-        with contextlib.suppress(Exception):
-            labels = ((await r.read_area_records()).get(aid) or {}).get("labels")
+    labels, head = await _head_block(r, a)
+    shown = ([areasettings.AREA_LABELS.get(x, f"label {x}") for x in labels]       # None hides the Labels row
+             if isinstance(labels, list) and all(isinstance(x, int) for x in labels) else None)
     return {"id": aid, "name": a.get("name") or "", "settings": data, "defaults": data.get("id") == 0,
-            "labels": [areasettings.AREA_LABELS.get(x, f"label {x}") for x in labels or []],
-            "fields": areasettings.AREA_FIELDS,
-            "blocked": _pathway_write_block(request) or areasettings.read_problem(data)}
+            "labels": shown, "fields": areasettings.AREA_FIELDS,
+            "blocked": head or _pathway_write_block(request) or areasettings.read_problem(data)}
 
 
 @app.post("/api/areas/{aid}/preview")
@@ -878,8 +897,8 @@ async def area_preview(request: Request, aid: int, body: dict = Body(None)):
 async def put_area_settings(request: Request, aid: int, body: dict = Body(...)):
     """{changes: {"edge_circles": 3, "first_clean_params.plan_speed": 0.5}} (stored units: metres, m/s, degrees)."""
     r = rec(request)
-    _robot_area(r, aid)
-    why = _pathway_write_block(request)
+    a = _robot_area(r, aid)
+    why = (await _head_block(r, a))[1] or _pathway_write_block(request)
     if why:
         raise HTTPException(409, why)
     changes = body.get("changes")
@@ -1295,7 +1314,6 @@ async def health_view(request: Request, hours: float = 24):
 # -- settings (this panel only) ----------------------------------------------------------------------------------
 SETTINGS_DEFAULTS = {
     "imagery_alignment": {"east_m": 0.0, "north_m": 0.0, "rotate_deg": 0.0, "opacity": 1.0},
-    "deck_m": None,
     "control_enabled": False,
     "map_write_enabled": False,
     "mcp_control_enabled": False,
@@ -1507,12 +1525,6 @@ async def put_setting(request: Request, key: str, value: Any = Body(None)):
         r.store.set_setting(key, cfg.to_dict())
         r.evaluate_conditions()
         return cfg.to_dict()
-    if key == "deck_m":
-        if value is not None and not (isinstance(value, (int, float)) and 0.2 <= value <= 1.5):
-            raise HTTPException(400, "deck width must be between 0.2 and 1.5 m, or null for the head default")
-        r.store.set_setting(key, value)
-        r.store.analysis_clear()
-        return {"deck_m": value}
     if key == "map_write_enabled":
         if not isinstance(value, bool):
             raise HTTPException(400, "true or false")
