@@ -49,7 +49,7 @@ class FakeSDK:
 
 class FakeCloud:
     """The slice of CloudTransport that app.video uses: serial, session JWT, and a refresh that swaps the JWT."""
-    def __init__(self, refresh_ok=True):
+    def __init__(self, refresh_ok="ok"):
         self.sn = SN
         self.sdk = FakeSDK()
         self.refreshes = 0
@@ -58,7 +58,7 @@ class FakeCloud:
     def session_jwt(self):
         return self.sdk.token
 
-    def _refresh(self, stale_jwt=None):
+    def refresh_session(self, stale_jwt=None):
         self.refreshes += 1
         self.sdk.token = "jwt.refreshed.session"
         return self.refresh_ok
@@ -75,7 +75,8 @@ def test_a_token_is_read_with_the_documented_request():
     assert call["url"] == BASE + "/yarbo/robot-service/robot/commonUser/getAgoraToken"
     assert call["json"] == {"channel_name": f"{SN}_middle_image", "sn": SN, "uid": 888882}
     assert call["headers"]["Authorization"] == f"Bearer {JWT}"
-    assert (t.camera, t.uid, t.channel, t.token, t.key, t.salt) == ("front", 888882, f"{SN}_middle_image", TOKEN, KEY, SALT)
+    assert (t.camera, t.uid, t.channel) == ("front", 888882, f"{SN}_middle_image")
+    assert (t.token, t.key, t.salt) == (TOKEN, KEY, SALT)
     assert t.app_id == APP_ID
 
 
@@ -137,10 +138,18 @@ def test_a_second_refusal_after_the_refresh_is_final():
 
 def test_an_expired_session_stops_without_a_retry():
     http = FakeHTTP(answer_post=lambda u, j, h: reply(401))
-    cloud = FakeCloud(refresh_ok=False)
+    cloud = FakeCloud(refresh_ok="expired")
     with pytest.raises(video.VideoTokenError) as e:
         fetch(cloud, http)
     assert e.value.auth and len(http.posts) == 1
+
+
+def test_a_network_failure_during_the_refresh_is_not_reported_as_a_refused_session():
+    http = FakeHTTP(answer_post=lambda u, j, h: reply(401))
+    cloud = FakeCloud(refresh_ok="unreachable")
+    with pytest.raises(video.VideoTokenError) as e:
+        fetch(cloud, http)
+    assert not e.value.auth and "reach" in str(e.value) and len(http.posts) == 1
 
 
 def test_signed_out_makes_no_request():
@@ -168,6 +177,7 @@ def test_no_secret_appears_in_logs_repr_or_str(caplog):
     answers = [reply(401), ok_reply()]                       # take the refresh path too
     t = fetch(FakeCloud(), FakeHTTP(answer_post=lambda u, j, h: answers.pop(0)))
     shown = repr(t) + str(t) + f"{t}" + f"{t!r}"
+    assert str(t.uid) not in shown
     logs = "\n".join(r.getMessage() for r in caplog.records) + caplog.text
     assert "fetched for the front camera" in logs
     for secret in SECRETS + ("jwt.refreshed.session", SN):
@@ -199,4 +209,53 @@ def test_a_refresh_is_skipped_when_another_caller_already_refreshed(tmp_path):
         _auth = Auth()
     cloud = CloudTransport(str(tmp_path), SN, lambda *a: None)
     cloud._client = Client()
-    assert cloud._refresh("jwt.older.session") is True and Auth.calls == 0      # someone got there first
+    assert cloud.refresh_session("jwt.older.session") == "ok" and Auth.calls == 0   # someone got there first
+
+
+def test_refresh_session_tells_a_network_failure_from_an_expired_session(tmp_path):
+    from yarbo_robot_sdk.exceptions import TokenExpiredError
+    from app.cloud import CloudTransport
+
+    def make(exc):
+        class Auth:
+            def refresh(self):
+                raise exc
+
+        class Client:
+            token = "jwt.session"
+            _auth = Auth()
+        cloud = CloudTransport(str(tmp_path), SN, lambda *a: None)
+        cloud._client = Client()
+        return cloud
+    assert make(ConnectionError("down")).refresh_session() == "unreachable"
+    assert make(TokenExpiredError("old")).refresh_session() == "expired"
+    assert make(ConnectionError("down"))._refresh() is True        # the worker keeps its session and retries later
+    assert make(TokenExpiredError("old"))._refresh() is False
+
+
+def test_logout_waits_for_a_refresh_in_flight_so_the_session_file_stays_gone(tmp_path):
+    import threading
+    from app.cloud import CloudTransport
+    inside, release = threading.Event(), threading.Event()
+
+    class Auth:
+        def refresh(self):
+            inside.set()
+            release.wait(5)
+
+    class Client:
+        token, refresh_token, _auth = "jwt.session", "r", Auth()
+    cloud = CloudTransport(str(tmp_path), SN, lambda *a: None)
+    cloud._client, cloud.username = Client(), "a@example.com"
+    cloud._save()
+    refresher = threading.Thread(target=cloud.refresh_session)
+    refresher.start()
+    assert inside.wait(5)                                   # the refresh holds the lock, about to save
+    logger_out = threading.Thread(target=cloud.logout)
+    logger_out.start()
+    logger_out.join(0.3)                                    # without the lock it would already have unlinked
+    release.set()
+    refresher.join(5)
+    logger_out.join(5)
+    assert not refresher.is_alive() and not logger_out.is_alive()
+    assert not cloud.path.exists() and cloud._client is None

@@ -7,9 +7,6 @@ updates:
       # A new mcp major renames and moves things (1.x -> 2.x did); moving to one is its own change (app/mcp_server.py).
       - dependency-name: mcp
         update-types: ["version-update:semver-major"]
-      # yarbo-data-sdk 0.3.0 changed its licence from MIT to PolyForm Noncommercial with no code change; stay on the
-      # MIT 0.2.1 until the panel no longer needs the SDK (see the issue on replacing it).
-      - dependency-name: yarbo-data-sdk
   - package-ecosystem: github-actions
     directory: /
     schedule: {interval: monthly}

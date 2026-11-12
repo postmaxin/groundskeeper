@@ -90,7 +90,7 @@ def locate_map(obj, depth: int = 0):
 
 
 def decode_map(data):
-    """get_map's `data` arrives as base64(zlib(JSON)) on the local broker; accept an already-decoded dict too."""
+    """get_map's `data` arrives as base64(zlib(JSON)); accept an already-decoded dict too."""
     if isinstance(data, dict):
         return data
     return json.loads(zlib.decompress(base64.b64decode(data)))

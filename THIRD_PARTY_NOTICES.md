@@ -9,6 +9,16 @@ build time by the `Dockerfile` (pinned, checksummed) and never loaded from a CDN
 | three.js | 0.170.0 | MIT |
 | Agora Web SDK NG (`agora-rtc-sdk-ng`) | 4.24.9 | MIT |
 
+The image also installs Yarbo's own Python SDK from PyPI, which the panel uses to sign in to the Yarbo cloud:
+
+| Library | Version | Licence |
+|---|---|---|
+| Yarbo Data SDK (`yarbo-data-sdk`) | 0.3.0 | PolyForm Noncommercial 1.0.0 |
+
+From 0.3.0 Yarbo publishes the SDK under the PolyForm Noncommercial licence (0.2.1 and earlier were MIT; the code is
+the same). The panel's own code stays MIT, but the Docker image includes the SDK, so the image as a whole may be used
+for noncommercial purposes only.
+
 ## Agora Web SDK NG
 
 `web/vendor/AgoraRTC_N-production.js` is Agora's unmodified UMD build. It is used under the MIT licence, as the npm

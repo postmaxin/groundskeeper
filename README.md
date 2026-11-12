@@ -49,20 +49,17 @@ sharpest free one that covers your yard.
 
 More: [Map imagery](docs/user/imagery.md), [the catalog](catalog/SOURCES.md).
 
-### Local first, the cloud as a fallback
+### Through the Yarbo cloud
 
-Groundskeeper talks to the robot over your own network, and can use Yarbo's cloud as a second route.
+Groundskeeper talks to the robot through Yarbo's cloud, the same way the official app does. Firmware V3.14.4x closed
+the robot's own broker on the home network, so the cloud is the only route.
 
-- **Local:** the robot's own MQTT broker on your network carries everything: position about once a second while it
-  mows, battery, RTK, the map, plans, and the commands to start, pause, resume, stop and dock, each behind its
-  checks. No Yarbo account and no internet needed.
-- **Cloud, optional:** sign in to your Yarbo account and the panel falls back to the cloud when the robot can't be
-  reached on your network (it drops to 4G where its HaLow link is weak), or if a firmware update ever closes local
-  access or makes it ignore commands. Either route alone is enough for commands and reads, and the panel shows which
-  one it is using. Map and settings writes still go through the cloud until a local write has been proved.
+- **Sign in to your Yarbo account** in Settings → Robot. The robot's serial comes from the account. The cloud carries
+  everything: position while it mows, battery, RTK, the map, plans, map and settings writes, and the commands to
+  start, pause, resume, stop and dock, each behind its checks.
 - **Works alongside the Yarbo app:** a mow started from the phone is recorded like any other, and the panel notes
   the commands other clients send.
-- Control stays off until you switch it on, so you can run local-only for as long as you like.
+- Control stays off until you switch it on, so you can run read-only for as long as you like.
 
 ### Your Frigate cameras keep watch
 
@@ -89,7 +86,7 @@ More: [Integrations](docs/user/integrations.md), [Safety](docs/user/safety.md).
 - **Presence:** an alarm panel, `zone.home`, people or trackers decide whether someone is home before a start.
 - **Notifications** to your phone through the companion app: errors, stuck, maintenance due, and before a
   scheduled start, a "ready to mow" note with a camera snapshot for you to confirm.
-- **Sensors back into Home Assistant:** state, battery, RTK, whether it is mowing, the local link, lawn conditions
+- **Sensors back into Home Assistant:** state, battery, RTK, whether it is mowing, the link, lawn conditions
   and the last run, for your own dashboards and automations.
 
 More: [Integrations](docs/user/integrations.md).
@@ -138,13 +135,22 @@ docker compose up -d
 ```
 
 Open `http://<host>:8425` and set the admin password. The setup code it asks for is in the log:
-`docker logs groundskeeper`. Then the setup guide walks you through the robot's address and serial, the Yarbo cloud
-sign-in (optional: a fallback route), the imagery, cameras, Home Assistant and safety settings. All data stays in
+`docker logs groundskeeper`. Then the setup guide walks you through the Yarbo cloud sign-in (the robot's serial
+comes from your account), the imagery, cameras, Home Assistant and safety settings. All data stays in
 `./data`. It includes your yard's location, so back it up and keep it private.
 
 **Updating:** run `docker compose pull && docker compose up -d`. To stay on one release line, pin the image tag in
 `docker-compose.yml` (for example `:1.0`). Each release's changes are in the [changelog](CHANGELOG.md) and on the
 [releases page](https://github.com/Groundskeeper-robot/groundskeeper/releases).
+
+**Testing what's next.** Pre-release images are in their own package, `ghcr.io/groundskeeper-robot/groundskeeper-dev`:
+`:edge` is built on every merge to `main`, `:nightly` once a night when `main` changed (`:nightly-YYYYMMDD` for a
+given night), and `:sha-<commit>` for an exact commit. Point `docker-compose.yml` at one to try a fix before it is
+released. They passed the same checks as a release but have not been tried on a robot, so back up `./data` first: a
+newer build may change the database in a way the last release cannot read. Settings → This panel shows `nightly` or
+`edge` beside the version; say which when you report a problem. To go back, switch the image to a release; if
+that release then won't start or shows errors about the database, stop the panel, put the backup of `./data` back,
+and start it again.
 
 **Other options** are in [`.env.example`](.env.example). The panel runs as `PUID:PGID` (1000:1000 by default), so
 set those to your own user if you want to edit `./data` by hand. It runs on amd64 and arm64, including a Raspberry
@@ -165,17 +171,15 @@ and can change in any release, patch releases included, so pin the version you d
 - The panel asks for a password. You set it on the first visit, using a one-time code from the container's log.
   Programs use named API tokens instead.
 - Control is **off** on a new install. Switching it on means typing ENABLE, and it is logged.
-- Only five run commands exist: start a plan, pause, resume, stop and dock, plus switching the robot's cameras on
-  (people only, never off). Manual driving (`cmd_vel`) is blocked for
+- Only five run commands exist: start a plan, pause, resume, stop and dock, plus switching the robot's cameras on and
+  keeping it awake for the Cameras tile (people only, cloud only, never off). Manual driving (`cmd_vel`) is blocked for
   good.
 - Every start passes hard interlocks that can't be overridden: the robot is online, it has no active error and
   enough battery, the phone app isn't driving it, and the yard is clear. Soft checks, such as a wet lawn, need a
   person to override them.
 - Guards that resume a paused robot on their own are opt-in.
-- Commands go to the robot's own broker on your network first, and through the Yarbo cloud (the official SDK's
-  route) only as a fallback. Either way they pass the same checks and are logged with the route they took.
-- The robot's local broker accepts commands from any device on your network, without a password: that is the
-  robot's own behaviour. Put the robot on its own network (an IoT VLAN) that only the panel's host can reach.
+- Commands go through the Yarbo cloud (the official SDK's route), the only route since firmware V3.14.4x closed the
+  robot's own broker. They pass the same checks and are logged.
 
 ## Documentation
 
@@ -188,4 +192,6 @@ and can change in any release, patch releases included, so pin the version you d
 
 ## License
 
-[MIT](LICENSE). Yarbo is a trademark of its owner, used here only to say which robot this works with.
+[MIT](LICENSE). The Docker image also includes Yarbo's SDK, which is PolyForm Noncommercial: see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Yarbo is a trademark of its owner, used here only to say which robot
+this works with.

@@ -18,14 +18,15 @@ still notify.
 
 ## What every command passes
 
-Only five run commands exist: start a plan, pause, resume, stop, return to dock; the sixth only switches the robot's
-cameras on, and only for a person at the panel. **Manual driving is blocked for good.**
+Only five run commands exist: start a plan, pause, resume, stop, return to dock. Two more serve only the Cameras tile,
+and only for a person at the panel: switching the robot's cameras on, and a keep-awake (every 4 seconds while the tile
+is open, at most 15 minutes per **Open**). Both go through the Yarbo cloud only, never on your network, and neither
+can switch anything off. **Manual driving is blocked for good.**
 Each one is checked, in order:
 
 1. It is one of those commands.
 2. Control is on.
-3. The robot is online (data under 2 minutes old) and the panel can reach it: on your network, or through the
-   Yarbo cloud as a fallback.
+3. The robot is online (data under 2 minutes old) and the panel can reach it through the Yarbo cloud.
 4. For a start, also: the plan exists, no active error, enough battery, not already running, the yard is clear on
    the cameras, the phone app is not driving it, the lawn is dry, and someone is home.
 5. For a start or a resume: no map, settings or Wi-Fi change is being written to the robot (a Wi-Fi join can take

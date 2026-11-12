@@ -180,6 +180,8 @@ def test_settings_says_configured_but_never_shows_the_address(tmp_path):
     assert BASE not in json.dumps(out, default=str) and "robot-service" not in json.dumps(out, default=str)
     req, _, _ = fake_request(tmp_path)
     assert run(main.settings(req))["robot_video_configured"] is False
+    req, _, _ = fake_request(tmp_path, robot_service_url="http://robot-service.invalid")   # the token route refuses it
+    assert run(main.settings(req))["robot_video_configured"] is False
 
 
 def test_a_plain_http_address_is_refused_before_any_request(t):

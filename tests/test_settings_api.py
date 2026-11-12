@@ -58,7 +58,7 @@ class FakeOps:
 
 
 def env(tmp_path, **over):
-    cfg = Config(yarbo_host="192.0.2.10", yarbo_port=1883, yarbo_sn=None, data_dir=str(tmp_path), port=8425, poll_idle_s=60,
+    cfg = Config(data_dir=str(tmp_path), port=8425, poll_idle_s=60,
                  poll_active_s=2, map_refresh_s=21600, raw_every_s=60, raw_keep_days=90, run_idle_end_s=300, tempest_port=50222,
                  ha_url=None, ha_token=None, demo=False, frigate_url=None, panel_url=None)
     return Config(**{**cfg.__dict__, **over})
@@ -80,21 +80,29 @@ def run(coro):
 def test_runtime_reads_settings_over_the_environment(tmp_path):
     store = Store(str(tmp_path))
     rt = Runtime(env(tmp_path, frigate_url="http://env-frigate:5000"), store)
-    assert rt.frigate_url == "http://env-frigate:5000" and rt.yarbo_host == "192.0.2.10" and rt.data_dir == str(tmp_path)
+    assert rt.frigate_url == "http://env-frigate:5000" and rt.data_dir == str(tmp_path)
     assert rt.set("frigate", {"url": "http://other:5000/"}) == ["url"]
     assert rt.frigate_url == "http://other:5000"                     # trailing slash dropped
     assert rt.set("frigate", {"url": "http://other:5000"}) == []     # same value: nothing changed
     assert rt.set("frigate", {"url": None}) == ["url"]
     assert rt.frigate_url == "http://env-frigate:5000"               # cleared: the environment applies again
     assert store.setting("integrations") == {}
-    rt.set("robot", {"host": "robot.local", "port": 1884, "sn": "YB0000DEMO0001"})
+    rt.set("frigate", {"url": "http://kept:5000"})
     again = Runtime(env(tmp_path), store)                             # survives a restart
-    assert (again.yarbo_host, again.yarbo_port, again.yarbo_sn) == ("robot.local", 1884, "YB0000DEMO0001")
+    assert again.frigate_url == "http://kept:5000"
+
+
+def test_there_is_no_robot_group_any_more(tmp_path):
+    """The robot is reached through the Yarbo cloud and its serial is found: nothing to set in Settings → Robot."""
+    rt = Runtime(env(tmp_path), Store(str(tmp_path)))
+    for values in ({"host": "192.0.2.10"}, {"port": 1883}, {"sn": "YB0000DEMO0001"}):
+        with pytest.raises(KeyError):
+            rt.set("robot", values)
+    assert "robot" not in rt.describe() and rt.store.setting("integrations") is None
 
 
 @pytest.mark.parametrize("group,bad", [
-    ("robot", {"host": ""}), ("robot", {"host": "http://robot"}), ("robot", {"port": 70000}), ("robot", {"port": "1883"}),
-    ("robot", {"sn": "x"}), ("frigate", {"url": "frigate:5000"}), ("home_assistant", {"token": ""}),
+    ("frigate", {"url": "frigate:5000"}), ("home_assistant", {"token": ""}),
     ("weather", {"tempest_port": 1.5}), ("panel", {"poll_idle_s": 1}), ("panel", {"raw_keep_days": True}),
     ("panel", {"nonsense": 1}),
 ])
@@ -131,18 +139,41 @@ def test_false_switches_an_integration_off_over_the_environment(tmp_path):
     assert rt.set("frigate", {"url": None}) == ["url"] and rt.frigate_url == "http://env-frigate:5000"
 
 
-def test_stored_rows_are_checked_on_load_and_restore_puts_a_group_back(tmp_path):
+def test_a_legacy_robot_group_moves_its_serial_and_is_dropped(tmp_path):
+    """Settings → Robot from before the panel went cloud-only: a typed serial is kept as a found one, the address and
+    port go with the group, once."""
+    from app.runtime import found_sn
     store = Store(str(tmp_path))
-    store.set_setting("integrations", {"robot": {"port": "1883", "host": "robot.local", "nonsense": 1},
-                                       "frigate": "junk", "unknown": {"x": 1}})
+    store.set_setting("integrations", {"robot": {"port": 1883, "host": "192.0.2.10", "sn": "YB0000DEMO0001"}})
+    Runtime(env(tmp_path), store)
+    assert "robot" not in store.setting("integrations")
+    assert found_sn(store) == {"sn": "YB0000DEMO0001", "from": "settings"}
+
+
+def test_a_found_serial_is_not_replaced_by_a_typed_one(tmp_path):
+    from app.runtime import FOUND_SN, found_sn
+    store = Store(str(tmp_path))
+    store.set_setting(FOUND_SN, {"sn": "YB0000DEMO0002", "from": "account"})
+    store.set_setting("integrations", {"robot": {"sn": "YB0000DEMO0001"}})
+    Runtime(env(tmp_path), store)
+    assert found_sn(store)["sn"] == "YB0000DEMO0002"
+
+
+def test_stored_junk_rows_are_dropped_on_load(tmp_path):
+    store = Store(str(tmp_path))
+    store.set_setting("integrations", {"frigate": "junk", "unknown": {"x": 1}, "panel": {"poll_idle_s": 1}})
     rt = Runtime(env(tmp_path), store)
-    assert rt.yarbo_port == 1883 and rt.yarbo_host == "robot.local"      # the bad port and the junk were dropped
-    assert rt.describe()["robot"]["port"]["source"] == "default"
-    before = rt.snapshot("robot")
-    rt.set("robot", {"host": "other.local", "sn": "YB0000DEMO0002"})
-    rt.restore("robot", before)
-    assert rt.yarbo_host == "robot.local" and rt.yarbo_sn is None
-    assert Runtime(env(tmp_path), store).yarbo_host == "robot.local"
+    assert rt.frigate_url is None and rt.poll_idle_s == 60 and rt.snapshot("panel") == {}
+
+
+def test_restore_puts_a_group_back(tmp_path):
+    store = Store(str(tmp_path))
+    rt = Runtime(env(tmp_path), store)
+    rt.set("frigate", {"url": "http://kept:5000"})
+    before = rt.snapshot("frigate")
+    rt.set("frigate", {"url": "http://other:5000"})
+    rt.restore("frigate", before)
+    assert rt.frigate_url == "http://kept:5000" and Runtime(env(tmp_path), store).frigate_url == "http://kept:5000"
 
 
 # -- the API -----------------------------------------------------------------------------------------------------
@@ -152,7 +183,7 @@ def test_settings_lists_switches_groups_and_integrations(tmp_path):
     assert out["control_enabled"] is False and out["map_write_enabled"] is False
     assert set(out["conditions"]) == set(ConditionsConfig.__dataclass_fields__)
     assert out["gates"]["min_battery_pct"] == 30
-    assert set(out["integrations"]) == {"robot", "frigate", "home_assistant", "weather", "panel"}
+    assert set(out["integrations"]) == {"frigate", "home_assistant", "weather", "panel"}
     run(main.put_setting(req, "map_write_enabled", True))
     assert run(main.settings(req))["map_write_enabled"] is True
 
@@ -164,10 +195,9 @@ def test_put_integration_applies_live_and_logs_names_only(tmp_path):
     assert o.applied == [("frigate", "http://frigate:5000")]
     run(main.put_integration(req, "home_assistant", {"url": "http://ha:8123", "token": "s3cret"}))
     assert r.applied[-1] == ("ha", "http://ha:8123", "s3cret")
-    run(main.put_integration(req, "robot", {"host": "robot.local"}))
     run(main.put_integration(req, "weather", {"tempest_port": 0}))
     run(main.put_integration(req, "panel", {"run_idle_end_s": 120}))
-    assert [a[0] for a in r.applied] == ["ha", "robot", "weather", "panel"]
+    assert [a[0] for a in r.applied] == ["ha", "weather", "panel"]
     events = " ".join(e["detail"] for e in r.store.events() if e["kind"] == "settings_changed")
     assert "home_assistant: url, token" in events and "s3cret" not in events
     assert run(main.put_integration(req, "frigate", {"url": "http://frigate:5000"}))["changed"] == []   # no re-apply
@@ -275,8 +305,8 @@ def test_ha_notify_services_lists_phones_first(tmp_path):
 
 
 def test_setup_status_reads_what_the_panel_knows(tmp_path):
-    req, r, o = fake_request(tmp_path, yarbo_host=None)
-    r.local_status = lambda: {"connected": False}
+    req, r, o = fake_request(tmp_path)
+    r.robot_status = lambda: {"connected": False, "error": "Yarbo cloud signed out"}
     r.map_geojson, r.tempest, r.yard = None, None, None
     r.ha = SimpleNamespace(enabled=False, error="")
     o.cloud = SimpleNamespace(status=lambda: {"state": "signed out"})
@@ -286,12 +316,15 @@ def test_setup_status_reads_what_the_panel_knows(tmp_path):
     out = run(main.setup_status(req))
     steps = {s["id"]: s for s in out["steps"]}
     assert out["first_run"] and not out["required_done"]
-    assert steps["robot"]["detail"] == "no address yet" and not steps["robot"]["done"]
-    assert steps["safety"]["done"] and steps["cloud"]["optional"] and not steps["weather"]["done"]
-    r.local_status = lambda: {"connected": True}
-    r.map_geojson = {"type": "FeatureCollection", "features": []}
-    r.store.set_setting("integrations", {"robot": {"host": "192.0.2.10"}})
-    req.app.state.cfg = Runtime(env(tmp_path), r.store)
+    assert steps["robot"]["detail"] == "Yarbo cloud signed out" and not steps["robot"]["done"]
+    assert "cloud" not in steps                                       # the cloud is the robot step now
+    assert steps["safety"]["done"] and not steps["weather"]["done"]
+    r.robot_status = lambda: {"connected": True, "heard": False, "error": ""}
+    o.cloud = SimpleNamespace(status=lambda: {"state": "connected"})
+    r.map_geojson = {"type": "FeatureCollection", "features": []}    # restored from the store at start
+    steps = {s["id"]: s for s in run(main.setup_status(req))["steps"]}
+    assert not steps["robot"]["done"] and "waiting to hear" in steps["robot"]["detail"]   # the cloud alone is not it
+    r.robot_status = lambda: {"connected": True, "heard": True, "error": ""}
     r.store.set_setting("weather_sources", {"ha": {"temp": "sensor.out_temp"}})
     r.store.set_setting("gates", {"guard_resume": True})
     out = run(main.setup_status(req))
@@ -314,3 +347,27 @@ def test_the_after_dark_guard_takes_dock_notify_or_ignore_but_not_pause(tmp_path
         run(main.put_setting(req, "gates", {"guard_after_dark": "pause"}))
     run(main.put_setting(req, "gates", {"guard_after_dark": "notify"}))
     assert control.gates(r.store)["guard_after_dark"] == "notify"
+
+
+def test_the_setup_guide_opens_itself_when_the_saved_session_expired(tmp_path):
+    req, r, o = fake_request(tmp_path)
+    r.robot_status = lambda: {"connected": False, "heard": False, "error": "Yarbo cloud needs login"}
+    r.map_geojson, r.tempest, r.yard = {"type": "FeatureCollection", "features": []}, None, None
+    r.ha = SimpleNamespace(enabled=False, error="")
+    o.cloud = SimpleNamespace(status=lambda: {"state": "needs login"})
+    o.frigate = SimpleNamespace(enabled=False)
+    o.notifier = SimpleNamespace(channels=lambda: {"ha": False, "webhook": False})
+    o.controller = SimpleNamespace(enabled=lambda: False)
+    assert run(main.setup_status(req))["first_run"]          # an upgrader whose session expired is guided back in
+
+
+def test_old_robot_variables_in_the_environment_are_named_in_the_log(caplog):
+    import logging
+    with caplog.at_level(logging.WARNING, logger=main.log.name):
+        found = main.warn_obsolete_env({"YARBO_HOST": "192.0.2.10", "YARBO_PORT": "1883", "YARBO_SN": "  ",
+                                        "HA_URL": "http://ha.local"})
+    assert found == ["YARBO_HOST", "YARBO_PORT"]                  # a blank YARBO_SN counts as unset
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "YARBO_HOST is no longer used" in text and "YARBO_PORT is no longer used" in text and "YARBO_SN" not in text
+    assert "192.0.2.10" not in text                               # the value is never logged
+    assert main.warn_obsolete_env({}) == []

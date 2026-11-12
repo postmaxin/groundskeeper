@@ -1,7 +1,7 @@
 # Groundskeeper Helm chart
 
 Run [Groundskeeper](https://github.com/Groundskeeper-robot/groundskeeper) on Kubernetes: a StatefulSet of one pod, a
-Service, and a PersistentVolumeClaim for its `/data`. Everything site-specific (the robot's address, Home Assistant, Frigate,
+Service, and a PersistentVolumeClaim for its `/data`. Everything site-specific (the Yarbo cloud sign-in, Home Assistant, Frigate,
 imagery) is configured in the panel's **Settings** UI after it starts — not in `values.yaml`.
 
 > **Community-maintained.** This chart is kept up by community contributors who run the panel on Kubernetes. Open an
@@ -65,28 +65,14 @@ The entrypoint then skips the chown and runs directly as that user; `fsGroup` ma
 
 ## Notes
 
-- The panel needs network access to the robot's local broker (and/or the cloud); that is reached from the pod and
-  configured in the UI.
+- The panel needs outbound access to the Yarbo cloud (Yarbo's API and its MQTT broker); you sign in under
+  Settings → Robot.
 - `hostNetwork` is only for receiving a Tempest weather station's UDP broadcast. Leave it off otherwise; the panel
   is reachable through the Service regardless.
 - **One panel at a time.** The chart runs exactly one pod, as a StatefulSet, so a replacement (after an eviction, a
   node drain or `kubectl delete pod`) starts only once the old pod has exited. Two panels at once could both send
   robot commands. Don't force-delete the pod (`--grace-period=0 --force`) while its node is still running: that skips
   the wait.
-
-## Upgrading from 0.1.0
-
-Chart 0.1.0 ran the panel as a Deployment; 0.2.0 runs it as a StatefulSet. `helm upgrade` creates the new
-StatefulSet before it removes the old Deployment, so the two panels would overlap on the same `/data` volume. A Helm
-hook can't safely wait for the old pod to exit, so stop it first:
-
-```sh
-kubectl scale deployment <release-fullname> --replicas=0
-kubectl wait --for=delete pod -l app.kubernetes.io/instance=<release> --timeout=120s
-helm upgrade <release> deploy/helm/groundskeeper
-```
-
-Only upgrades from 0.1.0 need this; a fresh install is unaffected.
 - **Your data survives `helm uninstall`.** The chart-created PVC carries `helm.sh/resource-policy: keep`, so
   uninstalling leaves it in place. To reinstall onto it, set `persistence.existingClaim` to its name; to throw the
   data away, delete the PVC yourself.

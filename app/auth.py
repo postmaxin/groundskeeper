@@ -218,6 +218,15 @@ class Auth:
                     out.append({**{k: t.get(k) for k in ("id", "name", "hint", "created", "used")}, "scope": scope})
         return sorted(out, key=lambda t: t.get("created") or 0)
 
+    def _new_id(self) -> str:
+        """A token id no row in either store has, so revoking one can never remove the other kind."""
+        taken = {t.get("id") for key in TOKEN_STORES for t in self._rows(key)
+                 if isinstance(t, dict) and isinstance(t.get("id"), str)}      # an unhashable id must not raise
+        while True:
+            token_id = secrets.token_hex(4)
+            if token_id not in taken:
+                return token_id
+
     def new_token(self, name: str, scope: str = "full") -> dict:
         name = (name or "").strip()[:60]
         if not name:
@@ -226,7 +235,7 @@ class Auth:
             raise ValueError("scope must be 'full' or 'metrics'")
         token = "gk_" + secrets.token_urlsafe(32)
         key = "api_tokens_metrics" if scope == "metrics" else "api_tokens"
-        row = {"id": secrets.token_hex(4), "name": name, "sha256": _sha(token), "hint": token[-4:],
+        row = {"id": self._new_id(), "name": name, "sha256": _sha(token), "hint": token[-4:],
                "created": time.time(), "used": None}                  # no scope key: the store says what it is
         self.store.set_setting(key, self._rows(key) + [row])
         self.store.event("auth", f"API token '{name}'{' (metrics only)' if scope == 'metrics' else ''} was created")
@@ -235,10 +244,10 @@ class Auth:
     def revoke_token(self, token_id: str) -> bool:
         for key in TOKEN_STORES:
             rows = self._rows(key)
-            keep = [t for t in rows if t.get("id") != token_id]
+            keep = [t for t in rows if not (isinstance(t, dict) and t.get("id") == token_id)]
             if len(keep) != len(rows):
                 self.store.set_setting(key, keep)
-                name = next(t.get("name") for t in rows if t.get("id") == token_id)
+                name = next(t.get("name") for t in rows if isinstance(t, dict) and t.get("id") == token_id)
                 self.store.event("auth", f"API token '{name}' was revoked")
                 return True
         return False
@@ -257,7 +266,7 @@ class Auth:
         for key in TOKEN_STORES:
             rows = self._rows(key)
             for t in rows:
-                if _same(t.get("sha256", ""), want):
+                if isinstance(t, dict) and _same(t.get("sha256", ""), want):    # a damaged row is skipped, not a 500
                     found.append(_scope(t, key))
                     now = time.time()
                     if not t.get("used") or now - t["used"] > SEEN_EVERY_S:

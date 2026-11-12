@@ -99,7 +99,9 @@ def entities_from(status: dict, conditions: dict | None, last_run: dict | None) 
         f"binary_sensor.{PREFIX}_running": {"state": "on" if status.get("run") else "off",
                                             "attributes": {"friendly_name": "Yarbo run in progress",
                                                            "icon": "mdi:play-circle"}},
-        f"sensor.{PREFIX}_local_link": {"state": "connected" if status["transport"]["local"]["connected"] else "down",
+        # The entity keeps its old id (local_link) so existing dashboards and automations still find it; it says
+        # whether the robot itself answered lately (through the Yarbo cloud), as /health's robot_connected does.
+        f"sensor.{PREFIX}_local_link": {"state": "connected" if status["transport"]["robot"].get("heard") else "down",
                                         "attributes": {"friendly_name": "Groundskeeper link", "icon": "mdi:lan"}},
     }
     if conditions:
@@ -163,7 +165,7 @@ def summary(status: dict, ops_status: dict, last_run: dict | None, upcoming: lis
         "rtk": {"label": r["rtk"]["label"], "sats": r["rtk"]["sats"]},
         "running": bool(run),
         "run": {"id": run["id"], "started": run["started"], "distance_m": run["distance_m"]} if run else None,
-        "local_link": bool(status["transport"]["local"].get("connected")),
+        "local_link": bool(status["transport"]["robot"].get("heard")),   # old name kept for the HA integration
         "cloud": (ops_status.get("cloud") or {}).get("state"),
         "control_enabled": bool(ops_status.get("control_enabled")),
         "lawn": status.get("conditions"),

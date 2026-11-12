@@ -10,48 +10,52 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 - **A stats line under the Cameras tile's video** (#53), refreshed every 2 seconds while it plays, for example
   `640×480 · 15 fps · 1.2 Mbps · 2% loss · RTT 180 ms`. It comes from the video library's own counters in your browser
   and nothing is sent anywhere. It says **weak link** when loss is 5% or more, the picture froze for 10% of the time
-  or the library rates the robot's upload poor, and **slow to draw** when this browser shows far fewer frames than arrive. The
-  demo shows a made-up line. Sending samples to the panel to map weak spots is not part of this.
+  or the library rates the robot's upload poor, and **slow to draw** when this browser shows far fewer frames than
+  arrive. The demo shows a made-up line. Sending samples to the panel to map weak spots is not part of this.
+- **Pre-release images for testing** (`ghcr.io/groundskeeper-robot/groundskeeper-dev`): `:edge` after every merge
+  and `:nightly` once a night, in their own package so they never replace `:latest` or a release. Settings → This
+  panel shows the channel beside the version, for example `0.19.7 · nightly · 1a756d0`. See the README.
+- **A Cameras tile on Live** shows the robot's own cameras (front, left, right, back), one at a time, while the tile
+  is open. It switches the cameras on (Control on, never off), plays the stream with Agora's SDK from this panel
+  (the panel asks the SDK not to send usage statistics or upload logs, and switches off its remote configuration; a
+  network check saw only Agora's gateway, edge and media servers; Agora's servers see the panel's address) and
+  leaves the channel when closed, on another page or a hidden tab. Shown only with Robot video on; the demo shows
+  a placeholder. An error says which step failed and a short reason, never the token,
+  key, channel or App ID.
+- **The Cameras tile keeps the robot awake and plays on a real robot**. The robot publishes video only while
+  someone sends the keep-awake the Yarbo app sends while open (`set_working_state {"state":1}`). While the tile is
+  open the browser asks `POST /api/video/keepalive` every 4 seconds, and each beat goes through the controller and its
+  checks like any command (robot online, a route, people only, Robot video and Control on, never state 0, an audit row
+  each). One press of Open keeps the robot awake for at most 15 minutes; then, or when the robot goes offline, the
+  tile stops and asks for Open again. At most one beat every 3 s for everyone together. Events note when the beats
+  start and stop.
+- **The panel's own keep-awake is not taken for the phone app, and when in doubt it is.** Each of the panel's sends
+  is matched to its echo, and the matching counts only while every one of the last 10 came back within 0.3 s; one
+  miss and the panel's beats count as the phone app's again, so automatic starts stay blocked while the cameras are
+  open. The panel's beats are jittered so the app's cannot stay in step with them.
+- **The stream's secret is written into Agora's join message by the tile** (a stopgap, AgoraIO/agora-rtc-web#15):
+  it is longer than Agora's Web SDK can wrap. Only the SDK's own connections to `*.agora.io` and `*.sd-rtn.com` are
+  touched; it travels unwrapped inside TLS to Agora, whose servers decrypt the stream for your browser anyway. Allow
+  those hosts in ad blockers. The Yarbo app switches the cameras off when it goes to the background, which stops the
+  panel's video until the tile is reopened.
+- **Cameras: known limitations in Help** (Live → Cameras). It has played the back camera during a run on one robot;
+  waking a docked, sleeping robot, the front, left and right cameras, a phone and more than one viewer are not yet
+  shown to work.
+- **Robot video setting** (Settings → Robot, off by default): lets a signed-in person ask for a robot
+  camera's join details (`POST /api/video/token`); the viewer's browser then connects to Agora. People only: API tokens
+  and AI assistants are refused, and the stream key is never logged. The video service's address is built in, so
+  there is nothing to set up; only the `YARBO_ROBOT_SERVICE_URL` environment variable can replace it, never
+  Settings. The Live tile that plays it is the Cameras tile.
+- **The controller can switch the robot's cameras on** (`smart_vision_control {"state":1}`): the first step of
+  the camera view. It goes through the same interlocks as other run commands (control on, robot online, a route),
+  is marked as the panel's own so it is not taken for the phone app, and nothing can send "off" (state 0 is
+  refused). Only a signed-in person can send it (not an API token, an assistant, the scheduler or a guard), and
+  only through the cloud. The Cameras tile on Live sends it when opened.
 - **"Metrics only" API tokens** (Settings → Access, or `"scope": "metrics"` on `POST /api/auth/tokens`). Such a token
   can read `/api/metrics` and is refused (403) on every other locked path (`/api/`, `/tiles/`, `/imagery/`), so a
   scrape token that leaks gives away nothing about the yard. Existing tokens stay full, and the box is off by
   default. Metrics tokens are kept apart from the full ones, so rolling back to an older image cannot turn one into
   a full token. The metrics endpoint itself comes next.
-- **A Cameras tile on Live** shows the robot's own cameras (front, left, right, back), one at a time, while the tile
-  is open. It switches the cameras on (Control on, never off), plays the stream with Agora's SDK from this panel
-  (the panel asks the SDK not to send usage statistics or upload logs, and switches off its remote configuration; a
-  network capture found no statistics or log traffic, #35; Agora's servers see the panel's address) and leaves the
-  channel when closed, on another page or a hidden tab. Shown
-  only with Robot video on and the service address set; the demo shows a placeholder.
-- **The Cameras tile keeps the robot awake and plays on a real robot** (#45). The robot publishes video only while
-  someone sends the keep-awake the Yarbo app sends while open (`set_working_state {"state":1}`), so while the tile is
-  open the browser asks `POST /api/video/keepalive` every 4 seconds and the panel sends one fixed beat per accepted
-  request (people only; needs Robot video and Control on; at most one every 3 s for everyone together; never state 0;
-  not in the control catalogue, so `/api/control/send` cannot send it). Events note when it starts and stops, not
-  each beat. The panel's own keep-awake and camera-on are matched to their echoes one for one, so they are not
-  taken for the phone app, while the real app's beats still are. This assumes the cloud echoes the panel's own
-  commands back, as it did on one robot (#48): until echoes have been seen (and after three credits in a row go unmatched) the
-  panel's keep-awake and camera-on count as possibly the phone app's while the cameras are open, so automatic starts
-  stay blocked (the safe direction); an event says when that happens. The stream's 64-character secret is longer than
-  Agora's Web SDK can wrap, so the tile now writes it into the join message itself, for as long as the client lives (so a reconnect works too)
-  (a stopgap, #46: it travels unwrapped inside TLS to Agora, whose servers decrypt the stream for your browser anyway).
-  Allow `*.agora.io` and `*.sd-rtn.com` in ad blockers. The Yarbo app switches the cameras off when it goes to the
-  background, which stops the panel's video until the tile is reopened.
-- **Cameras: known limitations in Help** (Live → Cameras). It has played the back camera during a run on one robot;
-  waking a docked, sleeping robot, the front, left and right cameras, a phone and more than one viewer are not yet
-  shown to work.
-- **Cameras tile in the demo and the screenshots** (#23): the demo's Live page shows the tile as a placeholder (it
-  loads nothing from Agora), the Live screenshots in `docs/screenshots/` are regenerated to include it, and Help
-  (Live → Cameras) says what the demo shows.
-- **Robot video setting** (Settings → Robot → Yarbo cloud, off by default): lets a signed-in person ask for a robot
-  camera's join details (`POST /api/video/token`); the viewer's browser then connects to Agora. People only: API tokens
-  and AI assistants are refused, and the stream key is never logged. Needs `YARBO_ROBOT_SERVICE_URL` (environment only); the Live tile
-  that plays it is the Cameras tile.
-- **The controller can switch the robot's cameras on** (`smart_vision_control {"state":1}`, #20): the first step of
-  the camera view. It goes through the same interlocks as other run commands (control on, robot online, a route),
-  is marked as the panel's own so it is not taken for the phone app, and nothing can send "off" (state 0 is
-  refused). Only a signed-in person can send it (not an API token, an assistant, the scheduler or a guard), and
-  only through the cloud. The Cameras tile on Live sends it when opened.
 - **Installable with pip or uv** (`pyproject.toml`): another Python tool can depend on Groundskeeper's `app` package,
   and `uv sync` sets up a checkout. The Docker image and `requirements*.txt` are unchanged, and a test keeps the two
   dependency lists the same. Running the panel itself still needs a checkout or the container.
@@ -68,8 +72,52 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
   samples the robot moves smoothly, so a replay, and Follow in 3D, can be watched at a real pace. The 3D map's 1×–3×
   menu is now labelled Height: it draws the ground taller, it is not a speed.
 
+- **The robot's serial from your Yarbo account.** The panel reads it from your account's robot list (one robot: used;
+  several: Settings → Robot lists them to choose from) and keeps it, so a restart still knows the robot.
+
+### Changed
+
+- **The robot's serial is never typed in.** The serial field is gone from Settings → Robot and `YARBO_SN` is no longer
+  read (the log says so if it is still set). A serial typed in before is kept as a found one until the account names
+  another.
+- **The panel reaches the robot only through the Yarbo cloud.** Yarbo firmware V3.14.4x closes the robot's own
+  broker on the home network (#91), so the local route is gone: everything the panel reads, and every command and
+  map write, goes through the Yarbo cloud, as the Yarbo app's do. **Signing in to the Yarbo cloud (Settings → Robot)
+  is now required.** Gone with it: the robot address and port, Find it on my network, the Route to the robot setting,
+  the Broker chip in the header, the repeat of a Pause, Stop or Return to dock by the other route, and the
+  `YARBO_HOST` and `YARBO_PORT` environment variables (both ignored if set). `/health` reports `robot_connected`
+  (the robot answered through the cloud lately) in place of `local_connected`. The setup guide's first step is the
+  Yarbo cloud sign-in.
+- **Yarbo's SDK 0.3.0** (was 0.2.1). The code is the same; Yarbo changed its licence from MIT to PolyForm
+  Noncommercial, so the Docker image, which includes it, is for noncommercial use. The panel's own code stays MIT.
+  See THIRD_PARTY_NOTICES.md.
+
 ### Fixed
 
+- **An armed emergency button no longer keeps keyboard focus** (#57). Keeping focus across Live refreshes (#36) had
+  left Pause, Resume, Stop or Return to dock focused for its whole 4 s armed window. A click to arm it, followed by
+  Space to scroll, sent the command. Every tap now drops focus from the card, the armed button never gets it back, and a
+  second tap within 0.6 s is ignored as a bounce, a held key or a double-click.
+- **Keyboard focus stays put when Live refreshes** (#36, #37). Live redraws its cards every few seconds and the Cameras
+  tile redraws on each change, which dropped focus to the page. Focus now stays on the same control (a camera chip,
+  Close) or, when it goes away, moves to the one that replaces it (Open to Close, Close to Open).
+- **Home Assistant's link sensor** (`sensor.yarbo_panel_local_link`, and `local_link` in the summary the HA integration
+  reads) is "connected" only while the robot itself has answered lately, as `/health`'s `robot_connected` is, not
+  whenever the Yarbo cloud session is up. A robot switched off or out of range now shows "down".
+- After an upgrade, the setup guide opens by itself when the saved Yarbo session has expired, and the log says when
+  `YARBO_HOST` or `YARBO_PORT` is still set (both are ignored now). Settings → Robot's counter is "Messages sent":
+  reads go through the cloud too.
+- **Yarbo cloud stuck on "connecting".** While it has no serial it now says "waiting for the robot's serial
+  (Settings → Robot)", in Settings and once in the log. A session that disappears shows "needs login" with a reason
+  instead of "connecting" (signing out still shows signed out), and an expired session found while looking up the
+  account's robots says so. Signing in again while the old connection was still winding down no longer leaves the
+  cloud with no connection, and no longer waits for it. A session the Yarbo SDK refreshes during the robot lookup is
+  now saved, so it survives a restart.
+- **Cameras: Settings shows Robot video as configured only for an `https://` service address,** as the token route
+  does.
+- **Cameras: the Control-off and "Asleep, or cameras off" hints say to close and open the tile again.** An open tile
+  does not send the camera switch again when Control comes on. The image carries the panel's licence beside the
+  notices, and the Help pages and design notes now list the keep-awake and the finished Cameras pieces.
 - **A stray shape far from the yard no longer moves the yard.** The panel worked out where the yard is from the outline
   of every shape on the robot's map, so one far away (for example a charging point with an empty location) made the map
   open zoomed out to half the world and imagery sources say they do not cover the yard. Shapes more than 2 km from the
@@ -81,18 +129,14 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 - **The phone header**: the robot's state ("docked, charging") is no longer cut short with large text, and some
   Android browsers no longer leave an empty band above the title. An installed app still keeps clear of the status
   bar.
-- **An armed emergency button no longer keeps keyboard focus** (#57). Keeping focus across Live refreshes (#36) had
-  left Pause, Resume, Stop or Return to dock focused for its whole 4 s armed window. A click to arm it, followed by
-  Space to scroll, sent the command. Every tap now drops focus from the card, the armed button never gets it back, and a
-  second tap within 0.6 s is ignored as a bounce, a held key or a double-click.
-- **The Cameras tile says which step failed and why** (#38), for example "Joining failed: OperationError", instead of
-  "Something went wrong.". It never shows the token, key, channel or App ID.
-- **Keyboard focus stays put when Live refreshes** (#36, #37). Live redraws its cards every few seconds and the Cameras
-  tile redraws on each change, which dropped focus to the page. Focus now stays on the same control (a camera chip,
-  Close) or, when it goes away, moves to the one that replaces it (Open to Close, Close to Open).
-- **The Agora Web SDK's licence is stated as MIT** (#40), as its npm package declares, not Apache-2.0. The MIT text
-  now ships beside the SDK in the image (`web/vendor/THIRD_PARTY_NOTICES.md`).
-- **Cloud-only: a serial saved in Settings → Robot reaches the cloud connection at once** (#15, #91). With no robot address
+- **Cloud commands: a send the cloud connection refuses is now an error, and the panel's own send is marked before it
+  goes.** A command the MQTT client did not take (for example while it was reconnecting) was counted as sent and the
+  panel carried on as if it had gone. It now raises. The panel also notes its own command before sending it, so the
+  robot's echo, which can arrive before the send call returns, is not mistaken for the phone app or another person.
+
+### Fixed
+
+- **Cloud-only: a serial the panel already knows reaches the cloud connection at once** (#91). With no robot address
   set, the card kept saying "waiting for the robot's serial" until the panel restarted.
 
 ## 0.19.6 — 2026-11-09

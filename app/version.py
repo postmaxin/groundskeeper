@@ -8,7 +8,11 @@ import re
 __version__ = "0.19.6"
 _build = (os.environ.get("PANEL_BUILD") or "").strip().lower()
 BUILD = (_build[:7] if re.fullmatch(r"[0-9a-f]{8,40}", _build) else _build[:20]) or None   # a full commit id is cut to 7
+# A pre-release image says which: "edge" (built on every merge to main) or "nightly" (once a night), from
+# .github/workflows/prerelease.yml. None for a release or a local build, and for anything else, so a typo shows nothing.
+_channel = (os.environ.get("PANEL_CHANNEL") or "").strip().lower()
+CHANNEL = _channel if _channel in ("edge", "nightly") else None
 
 
 def version_info() -> dict:
-    return {"version": __version__, "build": BUILD}
+    return {"version": __version__, "build": BUILD, "channel": CHANNEL}

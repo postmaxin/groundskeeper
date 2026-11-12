@@ -3,8 +3,10 @@
 # Safety-critical: robot commands, interlocks, writes, sign-in, the AI assistant server and the guard tests.
 # Changes here get a closer review (CONTRIBUTING.md → Pull requests).
 /app/control.py         @jpittelkow
+/app/link.py            @jpittelkow
 /app/cloud.py           @jpittelkow
-/app/transport_local.py @jpittelkow
+/app/commands.py        @jpittelkow
+/app/video.py           @jpittelkow
 /app/mapwrite.py        @jpittelkow
 /app/areasettings.py    @jpittelkow
 /app/backups.py         @jpittelkow

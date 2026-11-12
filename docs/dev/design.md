@@ -35,7 +35,7 @@ recorded, and guarded.
 | **Health & Maintenance** | RTK/RTCM, HaLow, battery cells, motors, firmware, error dictionary, service timers | §15 |
 | **Insights** | Aggregates across runs, seasons and years | §16 |
 | **Integrations** | Home Assistant entities and alerts, webhooks, an MCP server for AI assistants, notifications | §17 |
-| **Robot cameras** | Planned: a Cameras tile on Live, people only, off by default; see §13 | §13 |
+| **Robot cameras** | A Cameras tile on Live, people only, off by default; plays on one robot, see §13 | §13 |
 
 ### Non-goals
 
@@ -49,7 +49,7 @@ recorded, and guarded.
 
 ## 2. What the robot exposes
 
-| Capability | Local broker (`<robot-ip>:1883`, anonymous) | Cloud (Yarbo SDK, account session) |
+| Capability | Local broker (`<robot-ip>:1883`, anonymous; before V3.14.4x) | Cloud (Yarbo SDK, account session) |
 |---|---|---|
 | Connect | Yes | Yes (EMQX; the SDK picks the broker per robot) |
 | Telemetry (`get_device_msg`, `DeviceMSG`, `heart_beat`) | Yes | Yes |
@@ -58,9 +58,10 @@ recorded, and guarded.
 | Where the phone app's traffic goes | — | **Cloud, even on the home Wi-Fi** |
 | Official run commands | Not used (see §10.2) | Yes; the panel's control route |
 | Map / plan / schedule writes | Not used | Yes, as captured from the app (`map-writes.md`) |
-| Camera video | No | Planned, not on MQTT: the switch is, the stream is Agora's (§13) |
+| Camera video | No | Yes, not on MQTT: the switch is, the stream is Agora's (§13) |
 
-Details and ACLs are in [`protocol.md`](protocol.md).
+Details and ACLs are in [`protocol.md`](protocol.md). Firmware V3.14.4x closes the local broker (connection refused
+on 1883; #91), so the panel uses only the cloud; the local column is what earlier firmware showed.
 
 A known failure mode of the cloud route: the SDK can swallow a failed token refresh and keep reconnecting with a
 stale session, which the broker answers with "Not authorized". §5.3 designs around it.
@@ -80,12 +81,12 @@ stale session, which the broker answers with "Not authorized". §5.3 designs aro
 
 ```
                          ┌──────────────────────── panel host (Docker) ─────────────────────────┐
-  Yarbo robot            │  core (Python 3.12, FastAPI + asyncio)                               │
-  <robot-ip>  ◀──MQTT────┤   transport_local.py (read-only) · cloud.py (yarbo-data-sdk)         │
+                         │  core (Python 3.12, FastAPI + asyncio)                               │
+                         │   link.py → cloud.py (yarbo-data-sdk) · commands.py (allow-lists)    │
                          │   recorder.py · runs.py · mapstudio.py · mapwrite.py · scheduler.py  │
   Yarbo cloud ◀──TLS─────┤   control.py (+interlocks) · conditions.py · frigate.py · ha.py      │
    EMQX + data-api       │   mcp_server.py · imagery/ · elevation.py · store.py                 │
-                         │  SQLite in DATA_DIR: telemetry · runs · map/plan versions · captures │
+   └─ Yarbo robot        │  SQLite in DATA_DIR: telemetry · runs · map/plan versions · captures │
                          │                      · audit · settings                              │
                          │  web/ (plain JS, MapLibre GL, three.js for 3D), served by core       │
                          └──────────────────────────────────────────────────────────────────────┘
@@ -116,33 +117,41 @@ which says nothing about which dead end it is; such an answer is trusted only wh
 
 | Class | Route | Why |
 |---|---|---|
-| Telemetry, reads | local | Fast, no account needed |
-| Control (run commands) | local, the cloud as a fallback | Proved locally 2026-10-21 (§10.2); `app/link.py` |
-| Writes (map/plan/schedule) | cloud only for now | Local writes not proved yet (`link.LOCAL_WRITES_PROVED`) |
-| Capture | both at once | The app talks to the cloud; other local clients talk to the robot |
+| Telemetry, reads | cloud | The only route since firmware V3.14.4x closed the local broker (#91) |
+| Control (run commands) | cloud | `app/link.py`; sent once, never repeated or rerouted |
+| Writes (map/plan/schedule) | cloud | As captured from the app (`map-writes.md`) |
+| Capture | cloud | The app talks to the cloud; the panel listens to its own robot there |
 
-The local client's `request()` publishes only the `READ_ONLY_COMMANDS` allow-list (plus named compute-only requests
-such as the route preview) and raises before the network is touched for anything else. Its `command()` takes only
-the run commands and captured writes, never `cmd_vel`, and only `app/link.py` calls it. Reads also fall back to the
-cloud: after two unanswered local reads in a row they go through the cloud for 5 minutes. Transport health shows as chips in the top bar and as a Home Assistant sensor.
+`app.link.RobotLink` is the one doorway to `CloudTransport.publish`. Its `read()` takes only the `READ_ONLY_COMMANDS`
+allow-list in `app/commands.py` (plus named compute-only requests such as the route preview) and raises before the
+network is touched for anything else. Its `command()` takes only the run commands (called only by `Controller.send`)
+and `write_command()` only the captured writes (called only by `MapWriter`); `cmd_vel` is refused everywhere.
+Transport health shows as the Cloud chip in the top bar and as a Home Assistant sensor.
 
 ### 5.3 Cloud session
 The rotated refresh token is persisted after **every** refresh. A failed refresh means **needs sign-in**: stop
 reconnecting, raise a UI banner and a notification, and never connect with an expired JWT. Reconnects back off
 exponentially from 5 s to 5 min. Sign-in is interactive and the password is never stored; the session lives in
-`DATA_DIR` with owner-only permissions.
+`DATA_DIR` with owner-only permissions. The robot's serial is never typed in. The account's robot list (SDK
+`get_devices()`, an account lookup, nothing sent to a robot) supplies it: one robot is used, several are offered in
+Settings → Robot. The serial found is kept in the `robot_sn` setting with its source, apart from the Settings values;
+the account replaces an older one (from the robot's `heart_beat` or typed in Settings, before firmware V3.14.4x
+closed the local broker). The lookup runs under the refresh lock after a refresh, and a session the SDK refreshes on
+its own during it is saved.
 
 ### 5.4 Keep-awake
-The phone app sends `set_working_state {"state":1}` every few seconds (about 4 s, seen 2026-11-10) while it is open. Local reads are answered
-while the robot is docked and idle without it, so the panel does not send it, with one exception: the robot streams
-its cameras only while someone sends it, so the Cameras tile asks for one every 4 s while it is open (§13).
+The phone app sends `set_working_state {"state":1}` about every 4 s while it is open. Reads were answered on the
+local broker while the robot was docked and idle without it, so the panel does not send it, with one exception: the
+robot streams its cameras only while someone sends it, so the Cameras tile asks for one every 4 s while it is open
+(§13).
 
 ### 5.5 Sharing the robot with the phone app
 The phone app keeps the robot awake (`set_working_state`) and sends its commands through the cloud broker. What
 happens when both sides command the robot at once is not fully known. The rule: **a start is refused while the phone
-app has been seen in the last 60 s** (`phone_app_quiet_s`). It is seen two ways: its keep-awake on the cloud, and,
-locally, the robot streaming `DeviceMSG` about once a second, which it does only while the app is connected (seen
-2026-10-21; the panel's own reads come back on `data_feedback`, so every `DeviceMSG` counts). A stream proves the app is open; without the cloud its absence is not yet taken as "closed" (unknown),
+app has been seen in the last 60 s** (`phone_app_quiet_s`). It is seen two ways: its keep-awake on the cloud, and the
+robot streaming `DeviceMSG` about once a second, which it does only while the app is connected (seen on the local
+broker 2026-10-21; the panel's own reads come back on `data_feedback`, so every `DeviceMSG` counts). A stream
+proves the app is open; without the cloud its absence is not yet taken as "closed" (unknown),
 and right after a route comes up the answer is unknown for the quiet window. Unknown blocks the starts nobody is
 watching (scheduler, assistant, guard resume); a start from the panel shows it. Observed so far: a pause from the app
 shows as paused at once, and a panel resume after an app pause is confirmed within a second.
@@ -325,8 +334,9 @@ and blade load. Wheel slip confounds wet grass with slope and turning; without a
 ### 10.1 Catalogue
 The source of truth for official commands is the SDK's `devices/yarbo_Y.json` → `control_topics`. The panel exposes
 exactly five run commands: `start_plan`, `pause`, `resume`, `stop`, `cmd_recharge` (return to dock), plus
-`smart_vision_control {"state":1}` (cameras on; people only, cloud only, never off; §13). Everything else
-is refused, and **`cmd_vel` (manual drive) is hard-blocked for every actor**.
+`smart_vision_control {"state":1}` (cameras on) and `set_working_state {"state":1}` (keep-awake), both people only,
+cloud only and never off (§13). Everything else is refused, and **`cmd_vel` (manual drive) is hard-blocked for every
+actor**.
 
 The robot sends no reply to run commands on either broker, so a command is **confirmed by the robot's state
 changing** the way the command should change it (for example `planning_paused` becoming 1 after `pause`). An
@@ -338,12 +348,11 @@ Before a route is trusted for control it is proved with a harmless command:
 
 1. **Cloud control:** `cmd_recharge` (return to dock) through the SDK while the robot is already docked. Nothing can
    move.
-2. **Local control:** a harmless setting whose result the robot reports, on the local broker. Done 2026-10-21 with
+2. **Local control:** a harmless setting whose result the robot reports, on the local broker. Proved with
    `set_sound_param` (as the app sends it): accepted, with no handshake and no cloud (`docs/dev/protocol.md` →
    Access control). Run commands work locally too (start, pause, stop and return to dock, each seen in the robot's
-   state within about 2 s, against up to a minute through the cloud on a weak link). The panel still sends them
-   through the cloud and `transport_local.py` still publishes only reads: moving commands to the local broker is a
-   design change of its own (#31 would then mostly disappear).
+   state within about 2 s, against up to a minute through the cloud on a weak link). Firmware V3.14.4x then closed
+   the local broker (#91), so the panel sends everything through the cloud.
 
 The control route follows the result; it is a code-level decision, not a setting a user can flip.
 
@@ -417,7 +426,7 @@ confirmed and what is not, are in
 Seen on one robot (2026-11): the tile played the back camera (640×480, smooth, 45 s and more) during a run while the
 official app was also open, with the keep-awake and the secret swap below and no workarounds. The cloud echoed the
 panel's own `set_working_state` and `smart_vision_control`, so own-echo matching earned trust, and the app's beats were
-still counted as the app's (fork issue #48).
+still counted as the app's.
 
 Known limitations:
 1. **Waking a docked, sleeping robot is not shown.** With the app force-stopped and the robot docked, no video arrived
@@ -428,9 +437,7 @@ Known limitations:
 3. **The official app switches the cameras off when it goes to the background**, which stops the panel's video until
    the tile is reopened.
 4. **Ad blockers** must allow `*.agora.io` and `*.sd-rtn.com`.
-5. **The secret swap is a stopgap.** Agora Web SDK 4.24.9 caps the encryption secret at 62 bytes (RSA wrap) and the
-   robot's is 64, so the tile sends the secret unwrapped inside TLS to Agora, whose servers decrypt for the viewer in
-   the normal path too (step 5 below; fork issue #46,
+5. **The secret swap is a stopgap** (step 6 below;
    [AgoraIO/agora-rtc-web#15](https://github.com/AgoraIO/agora-rtc-web/issues/15)).
 6. **Phone width** not yet checked on a real phone.
 7. **One robot and one viewer at a time** is all that has been tried.
@@ -453,44 +460,67 @@ The panel does not get into the robot, and no video passes through the panel. It
    `POST /api/video/token {camera}`: it needs a person's session (`_person`; an API token is refused, it is not in
    `TOKEN_WRITES`), answers 403 while `robot_video_enabled` is off (the default; only a person can switch it on),
    is not in the MCP `ROUTES`, sends `Cache-Control: no-store`, and logs and records nothing that contains the token,
-   key or salt. The robot service's address is not in this repository: `app/video.py` has no default and the panel
-   reads it only from `YARBO_ROBOT_SERVICE_URL` (never from Settings: the route sends the Yarbo session JWT to that address, so a signed-in person who could set it could collect the JWT); unset, the route answers 503 "not configured".
+   key or salt. The robot service's address is built in (`video.DEFAULT_SERVICE_URL`, the one the official app
+   uses), so nobody has to find an address and paste it: a wrong one would be handed the Yarbo session.
+   `YARBO_ROBOT_SERVICE_URL` (environment) replaces it if Yarbo moves the service. It is never a Settings field: the
+   route sends the Yarbo session JWT to that address, so a signed-in person who could set it could collect the JWT.
+   The demo has no address, and there the route answers 503 "not configured".
 2. **Playback.** The browser plays the stream with Agora's Web SDK, **vendored** under `web/vendor/` with a pinned
    version and a checksummed Dockerfile download, like MapLibre and three.js. Nothing loads from a CDN at runtime, and
    the script is fetched only when the setting is on and someone opens the viewer.
 3. **Keeping it awake.** The robot streams only while someone sends the keep-awake the official app sends while it
-   is open, `set_working_state {"state":1}` (`protocol.md`). While the tile is open (connecting, waiting or playing) the
-   browser asks `POST /api/video/keepalive` at once and then every 4 s; each accepted request makes
-   `Controller.keep_awake` send exactly one beat through `RobotLink.keep_awake_beat` (cloud only, like camera-on,
-   until `LOCAL_KEEPAWAKE_PROVED`). The server never schedules or repeats, so closing the tab stops the beats; the
-   timer belongs to the tile's start (ticket) and `camerasLeave()` clears it. Guards: a person's session (`_person`, not
-   in `TOKEN_WRITES`, not in the MCP `ROUTES`), `robot_video_enabled` and Control on, at most one beat per
-   `KEEP_AWAKE_MIN_S` (3 s) for all viewers together (a quiet `{"sent": false, "limited": true}`), a fixed payload
-   (nothing in the request reaches the robot), never state 0. It is deliberately not in `CATALOGUE`, so
-   `/api/control/send`, the MCP server, the scheduler and the guards cannot send it; it is in `RUN_NEUTRAL`. Audit:
-   one event when the beats start (the first after a gap over `KEEP_AWAKE_GAP_S`, 15 s) and one when they stop (noticed
-   by the 5 s guard loop, or by the next beat), never one per beat. The panel's own `set_working_state` and
-   `smart_vision_control` are matched to their echoes one for one (`Recorder.own_echo`, `COUNTED_OWN`): a time window
-   of 5 s would hide the phone app's own beats, as the panel beats every 4 s. The official app switches the cameras off
-   when it goes to the background, so the panel's video stops until the tile is reopened. A beat already in flight can
-   still arrive just after Close.
+   is open, `set_working_state {"state":1}` (`protocol.md`). It is a catalogue command like camera-on: each beat goes
+   through `Controller.send` and `control.check` (robot online, a route, an audit row per beat), with a fixed payload
+   (`payload_for`), through the cloud (`RobotLink.command`), in `RUN_NEUTRAL`, and sent once like every command.
+   Its own checks: people only, state 1 only, Robot video on, and **within the time limit**. A beat's
+   checks read a light context (`Ops.beat_context`: the snapshot's age and the route, no awaits), so a beat every 4 s
+   never holds the controller's lock across a Frigate or Home Assistant timeout. The audit rows of beats that went are
+   left out of the log the Events page reads (`/api/control/log?beats=true` shows them), so they cannot push a Pause
+   off the page; refused beats stay.
+   - While the tile is open the browser asks `POST /api/video/keepalive` at once and then every 4 s, and each accepted
+     request is one beat (`Controller.keep_awake`). The server never schedules or repeats, so closing the tab stops
+     them; the timer belongs to the tile's start (ticket) and `camerasLeave()` clears it.
+   - **The time limit.** A person pressing Open, a camera or Try again sends `{"start": true}` with the first beat,
+     which opens a window of `KEEP_AWAKE_MAX_S` (15 min). The window is the server's own record, put into the check's
+     context by `Controller.send` only for a beat from `Controller.keep_awake` (a context variable), never taken from
+     the request; a token renewal is not a press. Outside a window every beat is refused, `/api/control/send` can never
+     keep the robot awake (it gets no window, nor skips the rate limit and the jitter), and a forgotten wall display
+     stops after 15 min. The window is one for the panel: any person's press opens it again. A refusal for the time
+     limit, the robot going offline or losing its route, no route at all, or the beats stopping ends the window: the
+     tile closes and says so, and a person presses Open again. A run does not end it (the robot is awake for the run
+     anyway, and the viewer may need the beats). With Control off nothing goes out and no audit row is written per
+     beat. The window then ends `KEEP_AWAKE_GAP_S` (15 s) after the last beat that went out, even while the tile keeps
+     asking: nothing is sent, so the beats have stopped by the gap rule. This is deliberate, and Control coming back
+     on does not reopen it: closing and opening the tile starts a new window.
+   - At most one beat per `KEEP_AWAKE_MIN_S` (3 s) for all viewers together, dropped quietly before `send` (a quiet
+     `{"sent": false, "limited": true}`), so several tabs cannot fill the audit log with refusals.
+   - Each beat waits a random 0 to `KEEP_AWAKE_JITTER_S` (1 s) first, so the phone app's beats cannot stay in step with
+     the panel's (below).
+   - Events: one when the beats start (the first after a gap over `KEEP_AWAKE_GAP_S`, 15 s) and one when they stop
+     (noticed by the 5 s guard loop, by the next beat, or when the window ends), never one per beat.
 
-   **Echo assumption, and the safe fallback.** Matching our own beat to its echo assumes the cloud delivers the
-   panel's own publishes back. On one robot it does (2026-11, fork issue #48); the fallback below stays in case that
-   changes. The matching is trusted only after `OWN_TRUST_AFTER` (3) quick
-   echoes in a row (within `OWN_TRUST_LATENCY_S`, 0.5 s), and trust is withdrawn when `OWN_UNMATCHED_MAX` (3) credits in
-   a row expire unmatched. Until trusted (including right after a start) every `set_working_state` and
-   `smart_vision_control` counts as possibly the phone app's, which blocks automatic starts while the cameras are open:
-   the safe direction. Giving up is one event ("the cloud is not echoing..."), regaining it another. A credit lasts
-   `OWN_ECHO_COUNTED_S` (1.5 s; to be measured on a real robot). A send that the cloud client refuses (paho's return
-   code) raises, so its credit is undone. The verdict is decided once per message (ops, for the cloud) and carried to
-   the recorder with the message, so two messages with the same timestamp are decided separately.
-   Only a match within `OWN_TRUST_LATENCY_S` is ever ours: a slower one is taken for the app's and the credit expires
-   unmatched, so the app's beats can neither earn trust nor keep it alive. Known gap: with no echo at all, an app beat
-   that lands as quickly as an echo for several beats in a row (the two beats drift into phase) cannot be told apart
-   and can briefly earn trust; a slower beat is taken for the app's and restarts the run of quick echoes, but only
-   three expired credits in a row withdraw trust. With a cloud that echoes,
-   as seen so far, this case does not arise (issue #48).
+   **Telling the panel's beats from the app's, failing closed.** The phone-app interlock (`phone_app_quiet_s`) counts
+   the app's `set_working_state` on the cloud, so the panel's own must not count. A time window cannot tell them apart
+   (the panel beats every 4 s), so each of the panel's sends of `set_working_state` and `smart_vision_control`
+   (`COUNTED_OWN`) is a credit for one echo (`Recorder.own_echo`). That assumes the cloud delivers the panel's own
+   publishes back, which was seen on one robot, so the matching fails towards "the phone app":
+   - A message is the panel's only while the matching is **trusted**, and it is trusted only while **every one** of the
+     panel's last `OWN_TRUST_WINDOW` (10) credits was matched within `OWN_TRUST_LATENCY_S` (0.3 s). The credits'
+     outcomes are counted on their own (`hist`), separately from the messages. One credit that expires unmatched
+     (after `OWN_ECHO_COUNTED_S`, 1.5 s) withdraws trust until a full window of quick echoes earns it back. Until then,
+     including right after a start, every such message counts as the app's, which blocks automatic starts while the
+     cameras are open: the safe direction. Losing and regaining trust are one event each.
+   - A slower match is never the panel's: it is the app's, and the credit is left to expire.
+   - If the cloud stops echoing, an app beat can take a credit only by landing within 0.3 s after one of the panel's.
+     With the panel's beats jittered by up to 1 s, that happens for roughly one beat in four at worst and cannot
+     repeat ten times in a row, so trust goes within a few beats (`tests/test_video_keepalive.py` runs this with the
+     app at every phase). Without the jitter, an app beat in step with the panel's could keep trust alive.
+   - Trust is per session: after `OWN_FRESH_S` (15 s) with no such send, the next one starts afresh and trust is
+     earned again (quietly; that is not the cloud failing).
+   - The constants are not measured yet. The panel logs what it sees (quick matches and slower candidates, in ms) when
+     trust changes and every `OWN_LOG_EVERY` sends (`Recorder.own_echo_stats`), to set them from a real robot.
+   - The verdict is decided once per message (ops, for the cloud) and carried to the recorder with the message, so two
+     messages with the same timestamp are decided separately.
 4. **Switching on.** The Cameras panel sends `smart_vision_control {"state":1}` when it opens, through
    `control.CATALOGUE` and `control.check`, marked as the panel's own send so `app/ops.py` does not mistake its echo
    for the phone app (`PHONE_APP_COMMANDS`). It is its own PR for separate review. **Switching off is not decided:**
@@ -507,15 +537,8 @@ The panel does not get into the robot, and no video passes through the panel. It
    Agora hosts), and a random `INSTALL_ID`, all before creating the client (never `enableLogUpload`). The SDK's own
    `websdk_ng_*` localStorage items (device id, cached settings, preload cache) are cleared when it has loaded and on
    leaving. A load of the SDK script that hangs gives up after 20 s so the next try loads it again. It joins as
-   an audience member with `aes-128-gcm2`, the key and the base64-decoded salt, and plays uid 1. **Stopgap (#46):** the
-   Web SDK RSA-OAEP-wraps the secret with a built-in 1024-bit key, which holds at most 62 bytes, and the robot's secret
-   is 64, so `join()` throws. The tile gives `setEncryptionConfig` a constant placeholder (not a secret) and wraps
-   `WebSocket.prototype.send` and `XMLHttpRequest.prototype.send` to write the real secret into any SDK message that
-   carries the secret field (and drop `aes_encrypt`). The wrapper lives as long as the client, because when the SDK's
-   signalling reconnects it clears its join response and sends `join_v3` again from the same stored placeholder secret
-   (the lighter `rejoin_v3` carries no secret); `camerasLeave()` removes it, a new one replaces any old one, and joins
-   run one at a time. A join frame with no secret field fails visibly ("video library changed"). The secret goes unwrapped inside TLS to
-   Agora, whose servers decrypt the stream for the viewer anyway. The vendored SDK is not modified. Retired by #46. It leaves the channel
+   an audience member with `aes-128-gcm2`, the base64-decoded salt and, in place of the key, a placeholder that the
+   secret swap replaces (step 6), and plays uid 1. It leaves the channel
    on close, camera change, leaving Live, a hidden tab and page close. A token's expiry event rejoins with a fresh token
    (the route picks the viewer uid, so a token cannot be renewed in place). A network capture of the tile in use
    (SDK 4.24.9, #35) found no statistics, log or remote-configuration traffic: only the access point, the edge
@@ -527,6 +550,19 @@ The panel does not get into the robot, and no video passes through the panel. It
    the robot's own; a rename of that layout is raised with the maintainers first. A `no-referrer` policy was
    considered to hide the panel's address from Agora and rejected: a browser then sends `Origin: null` on the panel's
    own POSTs, which `auth.same_origin` refuses.
+6. **The secret swap (a stopgap).** The robot's stream secret is 64 bytes. Agora's Web SDK 4.24.9 always wraps the
+   secret with a built-in 1024-bit RSA-OAEP key before it joins, which holds at most 62 bytes, and has no option to
+   skip that (read from the vendored bundle: `ENCRYPT_AES` only adds a flag to the message), so `join()` throws. There
+   is no supported way, and without the secret there is no video. So the tile gives the SDK a placeholder and writes
+   the real secret into the SDK's join message and access-point request in its place
+   ([AgoraIO/agora-rtc-web#15](https://github.com/AgoraIO/agora-rtc-web/issues/15)). It is scoped to the SDK's own
+   connections: while a client lives, the global `WebSocket` and `XMLHttpRequest` are subclasses that rewrite only
+   sockets and requests to Agora's hosts (`*.agora.io`, `*.sd-rtn.com`, over `wss`/`https`), and only a JSON message
+   with the secret field; no prototype is patched, and every other connection is the browser's own. It stays for the
+   client's life because the SDK sends its join again when its signalling reconnects; leaving removes it. The trade-off:
+   the secret travels unwrapped inside TLS to Agora, whose servers decrypt the stream for the viewer anyway, and the
+   swap breaks if the SDK changes its join message (the join then fails visibly, "video library changed"). Remove it
+   once Agora lifts the limit.
 
 Rules:
 - **People only.** The token route is a POST (not a safe method, so API tokens are refused by default and it is
@@ -623,9 +659,9 @@ the panel's write support are summarised in [`map-writes.md`](map-writes.md).
 
 ## 18. Security
 
-- **The robot's local broker is unauthenticated.** Anything on the same network can read the map and the robot's
-  live position. Put the robot on a segment where only the panel host (and Home Assistant, if it talks to the robot)
-  can reach its broker ports. The phone app uses the cloud, so such a rule does not break it.
+- **The robot's local broker was unauthenticated** on firmware before V3.14.4x, which closes it: anything on the same
+  network could read the map and the robot's live position. The panel does not use it. On older firmware, put the
+  robot on a segment nobody else can reach; the phone app uses the cloud, so such a rule does not break it.
 - **The panel:** LAN only by default. For remote access use an authenticating reverse proxy or a VPN; never a raw
   port forward.
 - **Secrets:** the Yarbo password is never stored; the cloud session is kept with owner-only permissions in
@@ -639,13 +675,13 @@ the panel's write support are summarised in [`map-writes.md`](map-writes.md).
 
 | Risk | Mitigation |
 |---|---|
-| Cloud control stops working for third-party clients | Routing is isolated in `cloud.py`; the SDK is pinned; the recorder needs only the local broker |
+| Cloud control stops working for third-party clients | Routing is isolated in `cloud.py`; the SDK is pinned; history is unaffected (no local route since #91) |
 | The phone app and the panel fight for the robot | §5.5 guard; confirmation by state change |
 | RTK gating would block every start | §10.3: the robot gates, the panel surfaces the refusal |
 | Gap detection flags RTK-float segments | §12: fixed-RTK only |
 | The panel is down, so nothing mows | §8.1: heartbeat alert, uptime monitor, phone app as fallback |
 | Frigate misses a person or pet | §11: additional to the robot's detection, never a replacement |
-| A firmware update closes the local broker | Reads degrade, history is unaffected, the firmware tracker alerts |
+| A firmware update closed the local broker (V3.14.4x, #91) | The panel is cloud only; the firmware tracker alerts on a change |
 | A firmware update renames telemetry fields | §6.3 tolerant ingestion; schema diff |
 | A bad map write | §7.4: docked only, validation, diff, read-back, undo, restore |
 | Session-expiry loops | §5.3 |
@@ -673,9 +709,9 @@ The panel was built in this order; each step works without the next.
 ## 21. Distribution
 
 - **Shape:** one Docker image (core + web), one SQLite file in a mounted `DATA_DIR`; a setup guide on first run.
-- **Setup guide:** robot address (local broker check) → Yarbo cloud sign-in (optional; only for commands and map
-  writes) → AI assistant (optional) → imagery → cameras → Home Assistant → weather → safety (recommended: control
-  off, yard must be clear, no resume after a guard pause) → notifications. Every step skippable.
+- **Setup guide:** Yarbo cloud sign-in (the robot's serial comes from the account) → AI assistant (optional) →
+  imagery → cameras → Home Assistant → weather → safety (recommended: control off, yard must be clear, no resume
+  after a guard pause) → notifications. Every step skippable.
 - **No household data in the repository:** no ids, addresses, serials or coordinates.
 - **Licence:** MIT (the Yarbo SDK is MIT). Not affiliated with Yarbo. Writes stay behind explicit opt-in and the
   safeguards above.

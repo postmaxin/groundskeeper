@@ -5,7 +5,7 @@ import pytest
 from app import geo, telemetry
 from app.codec import decode, encode
 from app.runs import RunDetector, RunStats
-from app.transport_local import COMPUTE_ONLY, READ_ONLY_COMMANDS, LocalTransport, ReadOnlyViolation, check_read_only
+from app.commands import COMPUTE_ONLY, READ_ONLY_COMMANDS, ReadOnlyViolation, check_read_only
 
 
 # -- read-only guarantee -------------------------------------------------------------------------------------
@@ -23,11 +23,15 @@ def test_read_requests_are_allowed(cmd):
     assert cmd.startswith(("get_", "read_")) or cmd in COMPUTE_ONLY
 
 
-def test_transport_refuses_before_touching_the_network():
-    t = LocalTransport("127.0.0.1", 1, "SN", lambda *a: None)  # never started, never connected
+def test_a_read_through_the_link_refuses_a_command_before_anything_is_published():
+    from types import SimpleNamespace
+
+    from app.link import RobotLink
+    sent = []
+    cloud = SimpleNamespace(state="connected", connected=True, publish=lambda cmd, payload: sent.append(cmd))
     with pytest.raises(ReadOnlyViolation):
-        t.request("start_plan", {"id": 1})
-    assert t.published == 0
+        RobotLink(None, cloud, None).read("start_plan", {"id": 1})
+    assert sent == []
 
 
 # -- codec ---------------------------------------------------------------------------------------------------

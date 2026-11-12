@@ -18,7 +18,7 @@ class FakeRec:
     def status(self):
         return {"snapshot_age_s": 3, "run": None, "plan": {"active": True}}
 
-    def local_status(self):
+    def robot_status(self):
         return {"connected": True}
 
 
@@ -118,10 +118,11 @@ CLOSED_TO_TOKENS = [
     ("PUT", "/api/settings/map_write_enabled", True),
     ("PUT", "/api/settings/mcp_control_enabled", True),
     ("PUT", "/api/settings/gates", {"guard_resume": True}),
-    ("PUT", "/api/settings/robot_route", "cloud"),
-    ("PUT", "/api/integrations/robot", {"host": "192.0.2.20"}),
+    ("PUT", "/api/settings/wifi_survey", "on"),
+    ("POST", "/api/robot/account", {"sn": "YB0000DEMO0002"}),
     ("POST", "/api/mcp/token", None),
     ("POST", "/api/cloud/login", {"username": "a", "password": "b"}),
+    ("POST", "/api/robot/account", {"sn": "YB0000DEMO0002"}),
     ("POST", "/api/studio/draft/apply", {}),
     ("POST", "/api/schedule/pending/confirm", None),
     ("DELETE", "/api/studio/overlay", None),
@@ -421,6 +422,42 @@ def test_one_hash_in_two_rows_gets_the_narrower_scope(client):
     client.store.set_setting("api_tokens_metrics", [{**row, "id": "ff66"}])
     assert client.auth.token_scope("Bearer gk_dup") == "metrics"
     assert _bot("gk_dup").get("/api/events").status_code == 403
+
+
+def test_a_new_token_id_is_never_one_the_other_store_has(client, monkeypatch):
+    signed_in(client)
+    first = _scoped(client, "metrics", "m1")
+    ids = iter([first["id"], first["id"], "aaaa1111"])                  # a collision, twice, then a free id
+    monkeypatch.setattr(auth.secrets, "token_hex", lambda n: next(ids))
+    second = _scoped(client, None, "f1")
+    assert second["id"] == "aaaa1111"
+    client.c.delete(f"/api/auth/tokens/{second['id']}")
+    assert [t["name"] for t in client.c.get("/api/auth/tokens").json()["tokens"]] == ["m1"]    # the metrics one stayed
+
+
+@pytest.mark.parametrize("junk", [None, "oops", 7, ["x"]])
+def test_a_row_that_is_not_a_dict_is_skipped_not_a_500(client, junk):
+    signed_in(client)
+    good = _scoped(client, None, "good")
+    metrics = _scoped(client, "metrics", "scrape")
+    for key in ("api_tokens", "api_tokens_metrics"):
+        client.store.set_setting(key, [junk] + client.store.setting(key))
+    assert _bot(good["token"]).get("/api/events").status_code == 200                # the bearer gate still answers
+    assert _bot(metrics["token"]).get("/api/metrics").status_code != 500
+    assert _bot("gk_unknown").get("/api/events").status_code == 401
+    assert client.auth.token_scope(f"Bearer {good['token']}") == "full"
+    assert [t["name"] for t in client.c.get("/api/auth/tokens").json()["tokens"]] == ["good", "scrape"]
+    assert client.c.delete(f"/api/auth/tokens/{metrics['id']}").status_code == 200   # revoking walks past the junk
+    assert client.auth.token_scope(f"Bearer {metrics['token']}") is None
+
+
+@pytest.mark.parametrize("bad_id", [[], {}, 7, None])
+def test_a_row_with_an_unhashable_id_does_not_break_creating_a_token(client, bad_id):
+    signed_in(client)
+    for key in ("api_tokens", "api_tokens_metrics"):
+        client.store.set_setting(key, [{"id": bad_id, "name": "odd"}] + (client.store.setting(key) or []))
+    assert client.c.post("/api/auth/tokens", json={"name": "new"}).status_code == 200
+    assert client.c.post("/api/auth/tokens", json={"name": "new2", "scope": "metrics"}).status_code == 200
 
 
 def test_creating_a_metrics_token_says_so_in_the_event_log(client):

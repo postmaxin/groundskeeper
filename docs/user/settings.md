@@ -10,7 +10,7 @@ It is open when you go to Settings and closes once you choose a section.
 | Section | What it holds |
 |---|---|
 | [Set up](#settings/setup) | The first-run guide: every step below in order, with what each is for ([more](#help/setup)) |
-| [Robot](#settings/robot) | Find the robot on your network or type its address; port and serial; the Yarbo cloud sign-in; the Wi-Fi survey |
+| [Robot](#settings/robot) | The Yarbo cloud sign-in and the robot's serial; deck width; the Wi-Fi survey |
 | [Safety](#settings/safety) | The control and map writing switches ([more](#help/safety)) |
 | [Run rules](#settings/rules) | What must be true to start, and what each guard does during a run |
 | [Lawn conditions](#settings/lawn) | Weather from the Tempest and/or Home Assistant, soil moisture, units, the dry / damp / wet rules and the last 24 h |
@@ -44,7 +44,7 @@ someone else on your network cannot claim the panel before you do. Sessions last
   assistants use their own token, set in
   [AI assistant](#settings/assistant).
   - **A full token reaches** every read under `/api/` (the map, run tracks, positions, settings without their
-    secrets, Frigate snapshots and the live yard-camera streams), the aerial tiles under `/tiles/` and `/imagery/`,
+    secrets and Frigate snapshots), the aerial tiles under `/tiles/` and `/imagery/`,
     and robot commands while Control is on (strict checks, never camera-on). Treat it like a key to the yard.
   - **A metrics-only token** (tick **Metrics only** when you create it) reaches `GET /api/metrics` and nothing else:
     every other locked path (`/api/`, `/tiles/`, `/imagery/`, including the live stream and the command routes)
@@ -61,6 +61,8 @@ someone else on your network cannot claim the panel before you do. Sessions last
   run apps there that you don't trust, give the panel its own hostname.
 - `/health` stays open for Docker and uptime checks. It reports the version, whether the robot is reachable and
   whether it is busy mowing.
+- **Version** ([This panel](#settings/panel) → Running): a pre-release image says which it is, for example
+  `0.19.7 · nightly · 1a756d0` (the version, the channel, the commit). A release shows only the version and commit.
 - **Proxy that signs people in itself?** `PANEL_AUTH=off` turns the panel's own sign-in off. Never
   do this when anyone else on the network can reach the panel: it would let them start the robot.
   If the proxy is there for single sign-on, use the panel's own OpenID Connect sign-in instead (below).
@@ -69,7 +71,7 @@ someone else on your network cannot claim the panel before you do. Sessions last
 
 The panel can let people sign in through an OpenID Connect provider you already run, such as Authentik, Keycloak
 or Authelia, or a hosted one like Google. It works like Grafana's generic OAuth sign-in, and the settings are named
-after Grafana's. Set them in the panel's environment (`docker run -e`, compose or the Helm chart's `env`/`envFrom`; keep the
+after Grafana's. Set them in the panel's environment (`docker run -e` or compose; keep the
 secret out of any file you share). They are read from the environment only, on purpose: they are not on the
 Settings page, so nobody who is signed in can widen who may sign in:
 
@@ -124,29 +126,32 @@ answer that takes more than 12 seconds is counted but not put on the map: the ro
 ## Yarbo cloud sign-in
 
 You type your Yarbo password in Settings → Robot. It goes straight to Yarbo's own SDK and is never stored or
-logged; only the session is kept on the server. It is optional: the panel reads and commands the robot over your
-network, and uses the cloud only as a fallback when the robot can't be reached there (Settings → Robot → Route to
-the robot shows which way each goes).
+logged; only the session is kept on the server. The panel needs it: it reads and commands the robot only through
+the Yarbo cloud, as the official app does. (Firmware V3.14.4x closed the robot's own broker on your network.)
+
+The cloud needs the robot's serial. You never type it: the panel asks your Yarbo account which robots it has and
+uses the only one (several: the card lists them, press **Use this** on yours). The serial found is kept, so a restart
+still knows the robot. While none is known the card says **waiting for the robot's serial**: sign in to the Yarbo
+account the robot is on.
 
 ### Robot video
 
-Settings → Robot → Yarbo cloud → **Robot video** is **off** on a new install. When you switch it on (the panel asks you
+Settings → Robot → **Robot video** is **off** on a new install. When you switch it on (the panel asks you
 to confirm), a signed-in person can ask the panel for the join details of one of the robot's cameras. **Your browser
 then connects to Agora's real-time network to play the stream**; the video never passes through the panel. It uses the
 Yarbo cloud sign-in above, so that must be connected. Only a person signed in to the panel can switch it on or ask
 for a camera: API tokens and AI assistants cannot, and the stream's key is never written to the logs or Events. The
-address of the cloud's video service is set only by the `YARBO_ROBOT_SERVICE_URL` environment variable (it must start
-with `https://`), never in Settings, because the panel sends your Yarbo session to it; Settings only shows
-"configured" or "not configured", and until it is set the panel answers "not configured". With `PANEL_AUTH=off`
+address of the cloud's video service is built in, so there is nothing to set up. It can be replaced only by the
+`YARBO_ROBOT_SERVICE_URL` environment variable (it must start with `https://`), never in Settings, because the panel
+sends your Yarbo session to it; Settings only shows "configured" or "not configured". With `PANEL_AUTH=off`
 anyone who can reach the panel gets the video too. The video plays in the **Cameras** tile on [Live](#help/live).
-While that tile is open it also sends the robot a keep-awake every 4 seconds (as the Yarbo app does while open, since
-the robot streams only then): this needs **Control** on, and stops when the tile is closed (a beat already on its way can still arrive just after). The stream's secret is sent
-unwrapped, in the join message and the access-point request, inside TLS to Agora (whose servers decrypt the stream for
-the browser anyway), because it is longer than
-Agora's Web SDK can wrap; a stopgap pending an Agora fix (issue #46). Allow `*.agora.io` and `*.sd-rtn.com` in ad
-blockers, or the tile cannot connect.
+While that tile is open it also sends the robot a keep-awake every 4 seconds (as the Yarbo app does while open,
+since the robot streams only then): this needs **Control** on, lasts at most 15 minutes per press of **Open**, and
+stops when the tile is closed (a beat already on its way can still arrive just after). The stream's secret is sent
+unwrapped, in the join message and the access-point request, inside TLS to Agora (whose servers decrypt the stream
+for the browser anyway), because it is longer than Agora's Web SDK can wrap; a stopgap pending an Agora fix
+(AgoraIO/agora-rtc-web#15). Allow `*.agora.io` and `*.sd-rtn.com` in ad blockers, or the tile cannot connect.
 The panel asks the SDK not to send Agora usage statistics or upload logs, and switches off its remote configuration;
-a network capture of the tile in use (SDK 4.24.9) found no statistics or log traffic (issue #35). Agora still sees your
-browser's address, the panel's address
-(the `Origin` and `Referer` of the SDK's requests) and the camera's channel name, which carries the robot's serial
-number.
+a network check while video played saw only Agora's gateway, edge and media servers. Agora still sees your
+browser's address, the panel's address (the `Origin` and `Referer` of the SDK's requests) and the camera's
+channel name, which carries the robot's serial number.

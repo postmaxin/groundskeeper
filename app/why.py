@@ -19,8 +19,8 @@ CHECKS = {
     "Robot online": ("offline", "The robot is not reporting",
                      "Check that it is powered on and on the network (HaLow or Wi-Fi)", "#settings/robot"),
     "Route to the robot": ("no_route", "The panel cannot reach the robot",
-                           "Check the robot's local broker in Settings → Robot, or sign in to the Yarbo cloud there as a "
-                           "fallback", "#settings/robot"),
+                           "Check the Yarbo cloud in Settings → Robot: sign in, or wait while it reconnects",
+                           "#settings/robot"),
     "Plan exists": ("plan_missing", "That plan is not on the robot",
                     "Pick another plan, or make it again in the Yarbo app", "#help/not-yet"),
     "No active error": ("robot_error", "The robot has an active error",

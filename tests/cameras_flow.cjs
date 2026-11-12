@@ -11,17 +11,33 @@ const listeners = {};
 const ROBOT = { uid: 1, hasVideo: true, videoTrack: { play: (...a) => log("play", a[1]) } };
 const SDK_USER = ROBOT;
 let client;
-const KEY_PREFIX = "SYNTHETICSECRET";                // the stream secret the stub panel hands out (64 characters, as the robot's is)
+// The stream secret the stub panel hands out (64 characters, as the robot's is).
+const KEY_PREFIX = "SYNTHETICSECRET";
 let tokens = 0;
 const intervals = new Map();                         // the keep-awake timer: fired by the test, never by the clock
 let nextInterval = 1;
 let beats = 0;
 const wsSendOriginal = function (d) { log("ws-send", typeof d === "string" ? d : "<binary>"); };
 const xhrSendOriginal = function (d) { log("xhr-send", typeof d === "string" ? d : "<binary>"); };
-const WRAPPED = '"aes_secret":"WRAPPED-BY-THE-SDK","aes_encrypt":true';     // what the real SDK puts in the join message
-const joinMessage = (inner) => `{"_id":7,"_type":"join","_message":{"aes_mode":"aes-128-gcm2",${inner},"aes_salt":"AQID","ts":1731234567890123456}}`;
-const knobs = { beatFail: false, beatReply: { sent: true }, beatGate: null, joinMsg: "default", leaveGate: null, roleGate: null, joinGate: null, joinEmit: false, refuseToken: false, remote: [],
-                subscribeFail: false, joinFail: null, tokenFail: null, tokenGate: null, writeOnLeave: false, sdkPresent: true, fastSdk: false, videoOff: false, scripts: [] };
+// The browser's own WebSocket and XMLHttpRequest; the tile may swap the globals for subclasses while a client lives,
+// but never touches these prototypes.
+function FakeWS(url) { this.url = url; }
+FakeWS.prototype.send = wsSendOriginal;
+function FakeXHR() {}
+FakeXHR.prototype.open = function (method, url) { this.url = url; };
+FakeXHR.prototype.send = xhrSendOriginal;
+const AGORA_WS = "wss://edge-10-1-2-3.edge.agora.io:4705/";       // the SDK's signalling socket
+const AGORA_AP = "https://webrtc2-ap-web-1.agora.io/api/v2/transpond/webrtc?v=2";   // its access-point request
+const agoraWs = () => new sandbox.WebSocket(AGORA_WS);
+const agoraXhr = () => { const x = new sandbox.XMLHttpRequest(); x.open("POST", AGORA_AP); return x; };
+// What the real SDK puts in the join message.
+const WRAPPED = '"aes_secret":"WRAPPED-BY-THE-SDK","aes_encrypt":true';
+const joinMessage = (inner) =>
+  `{"_id":7,"_type":"join","_message":{"aes_mode":"aes-128-gcm2",${inner},"aes_salt":"AQID","ts":1731234567890123456}}`;
+const knobs = { beatFail: false, beatReply: { sent: true }, beatGate: null, joinMsg: "default", leaveGate: null,
+                roleGate: null, joinGate: null, joinEmit: false, refuseToken: false, remote: [],
+                subscribeFail: false, joinFail: null, tokenFail: null, tokenGate: null, writeOnLeave: false,
+                sdkPresent: true, fastSdk: false, videoOff: false, scripts: [] };
 knobs.stats = { video: {}, rtc: {}, quality: {} };
 const storage = {};
 const AgoraRTC = {
@@ -46,25 +62,40 @@ const AgoraRTC = {
       join: async (app, channel, token, uid) => {
         log("join", app, channel, token, uid);
         if (knobs.joinMsg !== "none") {              // what the real SDK sends while it joins
-          const ws = new sandbox.WebSocket(), xhr = new sandbox.XMLHttpRequest();
+          const ws = agoraWs(), xhr = agoraXhr();
           ws.send("ping"); ws.send(new Uint8Array(2)); ws.send('{"x":1}');
-          ws.send(knobs.joinMsg === "default" ? joinMessage(WRAPPED) : knobs.joinMsg === "camel" ? joinMessage('"aesSecret":"d3JhcHBlZA==","aesEncrypt":true') : joinMessage('"y":2'));
-          xhr.send(knobs.joinMsg === "default" || knobs.joinMsg === "xhr-only" ? `{"aesMode":"aes-128-gcm2","aesSecret":"d3JhcHBlZA==","aesEncrypt":true,"uid":5}` : "{}");
+          const camel = '"aesSecret":"d3JhcHBlZA==","aesEncrypt":true';
+          ws.send(knobs.joinMsg === "default" ? joinMessage(WRAPPED)
+            : knobs.joinMsg === "camel" ? joinMessage(camel) : joinMessage('"y":2'));
+          const ap = '{"aesMode":"aes-128-gcm2","aesSecret":"d3JhcHBlZA==","aesEncrypt":true,"uid":5}';
+          xhr.send(knobs.joinMsg === "default" || knobs.joinMsg === "xhr-only" ? ap : "{}");
         }
         if (knobs.joinFail) throw knobs.joinFail;
         if (knobs.joinEmit) await handlers["user-published"](ROBOT, "video");   // the robot was already publishing
         if (knobs.joinGate) await knobs.joinGate;
       },
-      subscribe: async (u, t) => { if (knobs.subscribeFail) throw { code: "SUBSCRIBE_FAILED", message: "token=007tok" }; log("subscribe", u.uid, t); },
-      leave: async () => { log("leave"); if (knobs.leaveGate) await knobs.leaveGate; if (knobs.writeOnLeave) storage["websdk_ng_cache_parameter"] = "written-as-it-leaves"; },
+      subscribe: async (u, t) => {
+        if (knobs.subscribeFail) throw { code: "SUBSCRIBE_FAILED", message: "token=007tok" };
+        log("subscribe", u.uid, t);
+      },
+      leave: async () => {
+        log("leave");
+        if (knobs.leaveGate) await knobs.leaveGate;
+        if (knobs.writeOnLeave) storage["websdk_ng_cache_parameter"] = "written-as-it-leaves";
+      },
       handlers,
     };
     return client;
   },
 };
 const sandbox = {
-  window: { get AgoraRTC() { log("sdkRead"); return knobs.sdkPresent ? AgoraRTC : undefined; }, addEventListener: (e, f) => { listeners[e] = f; } },
-  document: { hidden: false, addEventListener: (e, f) => { listeners[e] = f; }, head: { append: (el) => knobs.scripts.push(el) } },
+  window: {
+    get AgoraRTC() { log("sdkRead"); return knobs.sdkPresent ? AgoraRTC : undefined; },
+    addEventListener: (e, f) => { listeners[e] = f; },
+  },
+  document: {
+    hidden: false, addEventListener: (e, f) => { listeners[e] = f; }, head: { append: (el) => knobs.scripts.push(el) },
+  },
   // Like a real Storage: its own keys are the stored items, and the methods are not among them.
   localStorage: new Proxy(storage, { get: (t, p) => ({
     getItem: (k) => (k in t ? t[k] : null),
@@ -76,8 +107,7 @@ const sandbox = {
   getJSON: async () => ({ robot_video_enabled: !knobs.videoOff, robot_video_configured: true }),
   setInterval: (fn, ms) => { const id = nextInterval++; intervals.set(id, fn); log("interval", ms); return id; },
   clearInterval: (id) => { if (intervals.delete(id)) log("clear-interval"); },
-  WebSocket: Object.assign(function WebSocket() {}, { prototype: { send: wsSendOriginal } }),
-  XMLHttpRequest: Object.assign(function XMLHttpRequest() {}, { prototype: { send: xhrSendOriginal } }),
+  WebSocket: FakeWS, XMLHttpRequest: FakeXHR, location: { href: "https://panel.test/#live" }, URL,
   postJSON: async (url, body) => {
     if (url === "/api/video/keepalive") {
       beats++; log("beat", JSON.stringify(body));
@@ -97,12 +127,18 @@ const sandbox = {
     return { sent: true };
   },
   // The script-load timeout (20 s) is shortened when a test wants to see it fire; no other timer is touched.
-  setTimeout: (fn, ms) => { const t = setTimeout(fn, (knobs.fastSdk && ms === 20000) || (knobs.fastJoin && ms === 30000) ? 5 : ms); if (ms === 30000) t.unref(); return t; },
+  setTimeout: (fn, ms) => {
+    const t = setTimeout(fn, (knobs.fastSdk && ms === 20000) || (knobs.fastJoin && ms === 30000) ? 5 : ms);
+    if (ms === 30000) t.unref();
+    return t;
+  },
   Promise, Uint8Array, atob, clearTimeout, Number, String, Date, Array, Object, JSON, Math,
 };
 vm.createContext(sandbox);
 const tail = "\nthis.cams = cams; this.camerasCard = camerasCard; this.camerasOpen = camerasOpen;" +
-  " this.camerasPick = camerasPick; this.camerasStop = camerasStop; this.camerasStart = camerasStart; this.camerasSwapInstall = camerasSwapInstall; this.camerasJoinSwapped = camerasJoinSwapped; this.camerasLeave = camerasLeave;";
+  " this.camerasPick = camerasPick; this.camerasStop = camerasStop; this.camerasStart = camerasStart;" +
+  " this.camerasSwapInstall = camerasSwapInstall; this.camerasJoinSwapped = camerasJoinSwapped;" +
+  " this.camerasLeave = camerasLeave;";
 vm.runInContext(fs.readFileSync(process.argv[2], "utf8") + tail, sandbox);
 
 const tick = () => new Promise((r) => setImmediate(r));
@@ -160,7 +196,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // 4. A failed subscribe in user-published leaves and shows a sanitized error.
   sandbox.camerasOpen(); await settle();
   knobs.subscribeFail = true;
-  mark("publish-fails"); try { await client.handlers["user-published"](SDK_USER, "video"); } catch { /* unhandled in the old code */ } await settle(); phase();
+  mark("publish-fails");
+  try { await client.handlers["user-published"](SDK_USER, "video"); } catch { /* unhandled in the old code */ }
+  await settle(); phase();
   knobs.subscribeFail = false; sandbox.camerasStop(); await settle();
   // 5. Control switched on after the last card render: the command still goes out (the latest status is read).
   await sandbox.camerasCard({ ops: { control_enabled: false } });
@@ -234,7 +272,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   knobs.sdkPresent = false;
   const keys = () => calls.push(["storage", Object.keys(storage).sort().join(",")]);
   mark("sdk-load"); sandbox.camerasOpen(); await settle(); keys();
-  storage["websdk_ng_install_id"] = "new-device"; storage["websdk_ng_cache_parameter"] = "x";   // what the SDK does as it starts
+  // What the SDK does as it starts:
+  storage["websdk_ng_install_id"] = "new-device"; storage["websdk_ng_cache_parameter"] = "x";
   knobs.sdkPresent = true; knobs.scripts[0].onload(); await settle(); keys();
   storage["websdk_ng_global_parameter"] = "written-while-joined"; knobs.writeOnLeave = true;
   knobs.leaveGate = new Promise((r) => { release = r; });
@@ -250,9 +289,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // 16. A lost connection leaves and says so; a disconnect that is our own leave is not an error.
   sandbox.camerasOpen(); await settle();
   mark("own-leave"); client.handlers["connection-state-change"]("DISCONNECTED", "CONNECTED", "LEAVE"); phase();
-  mark("connection-lost"); client.handlers["connection-state-change"]("DISCONNECTED", "CONNECTED", "NETWORK_ERROR"); phase();
+  mark("connection-lost");
+  client.handlers["connection-state-change"]("DISCONNECTED", "CONNECTED", "NETWORK_ERROR"); phase();
   await settle(); sandbox.camerasStop(); await settle();
-  // 17. The keep-awake: one beat as soon as the tile opens (before camera-on), then one per timer tick, from the start's
+  // 17. The keep-awake: one beat as soon as the tile opens (before camera-on), then one per timer tick, from the
+  // start's
   // ticket; the test fires the timer by hand. Control on, so camera-on is sent too.
   const fire = async () => { for (const fn of [...intervals.values()]) fn(); await settle(); };
   control(true);
@@ -278,7 +319,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await stopsBeats("leave-live", async () => { sandbox.state.view = "runs"; listeners.hashchange(); await sleep(10); });
   sandbox.state.view = "live";
   await stopsBeats("crypt-error", () => client.handlers["crypt-error"]());
-  await stopsBeats("connection-lost", () => client.handlers["connection-state-change"]("DISCONNECTED", "CONNECTED", "NETWORK_ERROR"));
+  await stopsBeats("connection-lost",
+    () => client.handlers["connection-state-change"]("DISCONNECTED", "CONNECTED", "NETWORK_ERROR"));
   await stopsBeats("settings-off", async () => {
     knobs.videoOff = true; sandbox.cams.settingsAt = 0; await sandbox.camerasCard({ ops: { control_enabled: false } });
   });
@@ -299,28 +341,61 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // A failed beat shows nothing and does not stop playback; "Control is off" from the server shows the existing hint.
   knobs.beatReply = { sent: true }; knobs.beatFail = true; control(true);
   mark("beat-fails"); sandbox.camerasOpen(); await settle(); await fire();
-  await client.handlers["user-published"](SDK_USER, "video"); await settle(); phase(); calls.push(["hint", sandbox.cams.hint]);
+  await client.handlers["user-published"](SDK_USER, "video"); await settle(); phase();
+  calls.push(["hint", sandbox.cams.hint]);
   sandbox.camerasStop(); await settle(); knobs.beatFail = false;
   knobs.beatReply = { sent: false, control_off: true };
   mark("beat-control-off"); sandbox.camerasOpen(); await settle(); calls.push(["hint", sandbox.cams.hint]); phase();
-  knobs.beatReply = { sent: true }; await fire(); calls.push(["hint-after-control-on", sandbox.cams.hint]);   // Control came back on
-  sandbox.cams.hint = "something else"; await fire(); calls.push(["hint-unrelated", sandbox.cams.hint]);       // an unrelated hint stays
+  // Control came back on; then an unrelated hint stays.
+  knobs.beatReply = { sent: true }; await fire(); calls.push(["hint-after-control-on", sandbox.cams.hint]);
+  sandbox.cams.hint = "something else"; await fire(); calls.push(["hint-unrelated", sandbox.cams.hint]);
   sandbox.camerasStop(); await settle(); knobs.beatReply = { sent: true }; control(false);
+  // 17c. The panel ends the window (time up, or the robot went offline): the tile closes, says so, beats no more.
+  knobs.beatReply = { sent: false, ended: true, refused: "Within the time limit: 15 min are up" };
+  mark("beat-ended"); sandbox.camerasOpen(); await settle();
+  calls.push(["after-ended", sandbox.cams.open, sandbox.cams.phase, sandbox.cams.message, intervals.size]);
+  const endedBeats = beats; await fire(); calls.push(["beats-after-ended", beats - endedBeats]);
+  knobs.beatReply = { sent: true };
+  // 17e. A start beat that fails keeps asking for the window; a beat still in flight is not asked again on top.
+  knobs.beatFail = true; mark("beat-start-fails"); sandbox.camerasOpen(); await settle();
+  knobs.beatFail = false; await fire();
+  let relSlow; knobs.beatGate = new Promise((r) => { relSlow = r; });
+  mark("beat-in-flight"); await fire(); await fire(); await fire();
+  knobs.beatGate = null; relSlow(); await settle();
+  sandbox.camerasStop(); await settle();
+  // 17d. A token renewal is not a press of play: its first beat does not ask for a new window.
+  sandbox.camerasOpen(); await settle();
+  mark("beat-renew"); client.handlers["token-privilege-will-expire"](); await settle();
+  sandbox.camerasStop(); await settle();
   // 18. The secret swap. The SDK is given the placeholder; the real secret goes into the join message only while the
   // join runs, and the prototypes are the originals again afterwards, however the join ended.
-  const restored = () => calls.push(["restored", sandbox.WebSocket.prototype.send === wsSendOriginal, sandbox.XMLHttpRequest.prototype.send === xhrSendOriginal]);
-  // After the join, as on a signalling reconnect: join_v3 sent again with the SDK's stored (wrapped) secret, the lighter
+  const restored = () => calls.push(["restored",
+    sandbox.WebSocket === FakeWS && FakeWS.prototype.send === wsSendOriginal,
+    sandbox.XMLHttpRequest === FakeXHR && FakeXHR.prototype.send === xhrSendOriginal]);
+  // After the join, as on a signalling reconnect: join_v3 sent again with the SDK's stored (wrapped) secret, the
+  // lighter
   // rejoin_v3 (no secret), and another access-point request.
   const afterJoin = () => {
-    new sandbox.WebSocket().send(joinMessage(WRAPPED));
-    new sandbox.WebSocket().send('{"_id":9,"_type":"rejoin_v3","_message":{"cid":1,"uid":2}}');
-    new sandbox.XMLHttpRequest().send("{\"aesSecret\":\"x\"}");
+    agoraWs().send(joinMessage(WRAPPED));
+    agoraWs().send('{"_id":9,"_type":"rejoin_v3","_message":{"cid":1,"uid":2}}');
+    agoraXhr().send("{\"aesSecret\":\"x\"}");
   };
   mark("swap"); sandbox.camerasOpen(); await settle(); restored(); afterJoin();
   calls.push(["leak", JSON.stringify(Object.values(storage)).includes(KEY_PREFIX),
-    Object.entries(sandbox.cams).filter(([k]) => k !== "client").some(([, v]) => { try { return String(JSON.stringify(v)).includes(KEY_PREFIX); } catch { return false; } }),
+    Object.entries(sandbox.cams).filter(([k]) => k !== "client").some(([, v]) => {
+      try { return String(JSON.stringify(v)).includes(KEY_PREFIX); } catch { return false; }
+    }),
     Object.values(sandbox.cams).some((v) => typeof v === "string" && v.includes(KEY_PREFIX))]);
   sandbox.camerasStop(); await settle(); restored();                  // leaving removes it
+  // Only Agora's own connections: while a client lives, a socket or request to anyone else (the panel, a look-alike
+  // host, plain ws/http to Agora) goes out exactly as written, secret field and all.
+  mark("swap-scope"); sandbox.camerasOpen(); await settle();
+  for (const url of ["wss://panel.test/ws", "wss://agora.io.example.test/", "ws://edge.agora.io/", "/api/x"]) {
+    new sandbox.WebSocket(url).send(joinMessage(WRAPPED));
+    const x = new sandbox.XMLHttpRequest(); x.open("POST", url.replace(/^ws/, "http")); x.send('{"aesSecret":"x"}');
+  }
+  const plain = new sandbox.XMLHttpRequest(); plain.send('{"aesSecret":"x"}');      // never opened: not Agora's
+  sandbox.camerasStop(); await settle();
   mark("swap-camel"); knobs.joinMsg = "camel"; sandbox.camerasOpen(); await settle(); restored();
   sandbox.camerasStop(); await settle(); restored();
   mark("swap-changed"); knobs.joinMsg = "no-secret-field"; sandbox.camerasOpen(); await settle(); phase(); restored();
@@ -329,13 +404,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   sandbox.camerasStop(); await settle();
   mark("swap-none"); knobs.joinMsg = "none"; sandbox.camerasOpen(); await settle(); phase(); restored();
   sandbox.camerasStop(); await settle(); knobs.joinMsg = "default";
-  mark("swap-join-fails"); knobs.joinFail = { name: "NetworkError", message: "" }; sandbox.camerasOpen(); await settle(); phase(); restored();
+  mark("swap-join-fails"); knobs.joinFail = { name: "NetworkError", message: "" };
+  sandbox.camerasOpen(); await settle(); phase(); restored();
   knobs.joinFail = null; sandbox.camerasStop(); await settle();
   // A join that never settles gives up after its timeout; the wrapper is gone by then.
   mark("swap-hangs"); knobs.joinGate = new Promise(() => {}); knobs.fastJoin = true;
   sandbox.camerasOpen(); await sleep(80); await settle(); restored(); phase();
   sandbox.camerasStop(); await settle(); knobs.joinGate = null; knobs.fastJoin = false;
-  // Overlapping starts: A is held in its join, B (another camera) starts behind it. B's join waits for A's to settle and
+  // Overlapping starts: A is held in its join, B (another camera) starts behind it. B's join waits for A's to settle
+  // and
   // carries B's own secret; the wrapper is never shared and ends restored.
   tokens = 0;
   let relA; knobs.joinGate = new Promise((r) => { relA = r; });
@@ -347,22 +424,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   sandbox.camerasStop(); await settle(); restored();
   // 19. The helpers on their own, with no start around them (so nothing but their own lines can clean up after them).
   const direct = (name, client) => { mark(name); return sandbox.camerasJoinSwapped(client, [], "DIRECTSECRET"); };
-  const sends = () => { const ws = new sandbox.WebSocket(); ws.send(joinMessage(WRAPPED)); };
-  let r1 = "resolved"; try { await direct("direct-join-fails", { join: async () => { throw new Error("boom"); } }); } catch (e) { r1 = e.message; }
+  const sends = () => { agoraWs().send(joinMessage(WRAPPED)); };
+  let r1 = "resolved";
+  try {
+    await direct("direct-join-fails", { join: async () => { throw new Error("boom"); } });
+  } catch (e) { r1 = e.message; }
   calls.push(["direct", r1]); restored();                              // a failed join took its own wrapper off
   let r2 = "resolved"; try { await direct("direct-no-frame", { join: async () => {} }); } catch (e) { r2 = e.message; }
-  calls.push(["direct", r2]); restored();                              // no secret field: error, and nothing left behind
+  calls.push(["direct", r2]); restored();                // no secret field: error, and nothing left behind
   await direct("direct-ok", { join: async () => { sends(); } });
   calls.push(["direct", "joined"]); restored();                        // kept for the client's life ...
   sandbox.camerasLeave(); restored();                                  // ... and gone on leave
   // A wrapper that cannot be restored (someone wrapped over it) must still go quiet once removed.
   mark("direct-wrapped-over");
   sandbox.camerasSwapInstall("OVERSECRET");
-  const inner = sandbox.WebSocket.prototype.send;
-  sandbox.WebSocket.prototype.send = function (d) { return inner.call(this, d); };    // another script wrapping on top
+  const Ours = sandbox.WebSocket;
+  sandbox.WebSocket = class extends Ours {};                           // another script wrapping on top
   sandbox.camerasLeave();
   sends();                                                             // must go out as the SDK made it
-  sandbox.WebSocket.prototype.send = wsSendOriginal;
+  sandbox.WebSocket = FakeWS;
   // 20. Video stats under the tile (step 1 of #53): the SDK's local counters, read every 2 s while the video plays.
   // Field names as in the vendored SDK (4.24.9): ratios are 0..1, bitrate is bits per second, delay and RTT are ms.
   const ROBOT_KEY = String(1);

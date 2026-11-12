@@ -5,7 +5,7 @@ user help is in [docs/user](../user/).
 
 ## What it does
 
-- Listens to the robot's own MQTT broker (`snowbot/{SN}/#`) and keeps the latest full state.
+- Listens to the robot through the Yarbo cloud broker (`snowbot/{SN}/#`) and keeps the latest full state.
 - Records telemetry (1/min idle, ~1 Hz during a run) and a raw snapshot every minute (kept 90 days) into SQLite.
 - Detects runs (provisional: wheels turning or an active plan) for any head, mower or snow, and stores each track.
 - Reads the map, plans, GPS reference and low-confidence config on start and every 6 h, versioned on change.
@@ -40,8 +40,8 @@ scale and a hover readout.
 Settings → Set up (`secSetup` in `web/settings.js`) walks a fresh install through robot, cloud, AI assistant,
 imagery, cameras, Home Assistant, weather, safety and notifications. Each step reuses its section's own controls;
 `GET /api/setup/status` (also MCP `setup_status`) says which are done from state the panel already keeps, so the
-wizard stores nothing. It opens itself once per browser session while there is no robot address or no map (never on
-the demo). Help page: `docs/user/setup.md`.
+wizard stores nothing. It opens itself once per browser session while the panel is not signed in to the Yarbo
+cloud or has no map (never on the demo). Help page: `docs/user/setup.md`.
 
 ## Why it cannot run
 
@@ -120,17 +120,18 @@ cm scale. User page: `docs/user/mcp.md`; the token and connect snippets live in 
   `sensor.yarbo_panel_{state,battery,rtk,lawn,local_link,last_run}` and `binary_sensor.yarbo_panel_running` every
   minute. Put the token in Settings → Home Assistant, or in the `.env` file, never in the compose file.
 - **Demo mode:** `DEMO=1` (`DEMO_SEED=1` is the older name) with its own `DATA_DIR` runs the panel against a made-up
-  robot instead of the robot's broker. `app/demo_robot.py` has the yard (three lawns, a flower bed and a tree as
+  robot instead of the Yarbo cloud. `app/demo_robot.py` has the yard (three lawns, a flower bed and a tree as
   no-go zones, a no-vision zone, two pathways and a dock, laid out on a public park's lawn in Portland, Oregon, so
-  the bundled keyless city imagery shows grass under it) and `DemoTransport`, which has `LocalTransport`'s interface,
-  refuses anything outside `READ_ONLY_COMMANDS` the same way, answers the recorder's reads (`get_map`,
-  `get_device_msg`, `get_plan_feedback`, `read_all_plan`, area and pathway settings, backups, route previews...) and
+  the bundled keyless city imagery shows grass under it), `DemoCloud`, which stands in for `CloudTransport`, refuses
+  anything outside `READ_ONLY_COMMANDS` and takes no commands, and `DemoTransport`, which answers the recorder's
+  reads (`get_map`, `get_device_msg`, `get_plan_feedback`, `read_all_plan`, area and pathway settings, backups,
+  route previews...) and
   publishes `heart_beat` and `DeviceMSG` in the robot's own shapes. Its robot mows plans for real: an edge lap, then
   stripes around the no-go zones at 0.5 m/s (`DEMO_SPEED` speeds it up), the battery draining, RTK float and single
   under the tree, then home to charge. `app/demo.py` seeds a fresh `DATA_DIR` once: three mows over the last week
   (one with a gap), the first 45 % of today's mow (the recorder joins the robot's carrying-on onto it, as after a
   restart mid-plan), events, Wi-Fi scans, weather, two schedule windows and maintenance items. Demo mode ignores the
-  robot address, Home Assistant, Frigate and Tempest settings, never restores or opens a cloud session, and shows a
+  robot serial, Home Assistant, Frigate and Tempest settings, never restores or opens a cloud session, and shows a
   "Demo data" chip. `scripts/deploy_demo.sh` starts one as `yarbo-panel-demo` on port 8426, so changes and the
   browser tests can be tried without touching the live panel.
 - **Screenshots:** `python scripts/screenshots.py` starts the panel in demo mode (127.0.0.1, a free port, a temporary
@@ -318,15 +319,17 @@ own resolution (at most 4096 px a side), and keeps it.
 
 ## What can command the robot
 
-- **Local broker:** `app/transport_local.py` still publishes only `READ_ONLY_COMMANDS` (`get_device_msg`, `get_map`,
-  `read_all_plan`, `read_gps_ref`, `read_low_cfd_config`, `read_tow_params`, `get_all_map_backup`,
-  `get_map_buckup_from_id`); anything else raises `ReadOnlyViolation` before the network is touched. Control never
-  uses the local broker.
-- **Cloud:** only `app.control.Controller.send()` publishes. It is called by `POST /api/control/send` (which requires
-  `confirm: true`) and by a confirmed or auto-start schedule window. Every call goes through, in order:
+- **One route, the Yarbo cloud:** `app.link.RobotLink` alone reaches `CloudTransport.publish`. Its `read()` takes
+  only `READ_ONLY_COMMANDS` in `app/commands.py` (`get_device_msg`, `get_map`, `read_all_plan`, `read_gps_ref`,
+  `read_low_cfd_config`, `read_tow_params`, `get_all_map_backup`, `get_map_buckup_from_id`...); anything else raises
+  `ReadOnlyViolation` before the network is touched. There is no local route (firmware V3.14.4x closed it, #91).
+- **Commands:** only `app.control.Controller.send()` sends run commands, through the link, each once. It is
+  called by `POST /api/control/send` (which requires `confirm: true`) and by a confirmed or auto-start schedule
+  window. Every call goes through, in order:
   1. **Catalogue:** `start_plan {"id": N}`, `pause {}`, `resume {}`, `stop {}`, `cmd_recharge {"cmd": 2}` (the
-     official SDK payloads), and `smart_vision_control {"state": 1}` (cameras on: people only, cloud only, never
-     off). Anything else is refused. **`cmd_vel` (manual drive) is blocked for good.**
+     official SDK payloads), `smart_vision_control {"state": 1}` (cameras on) and `set_working_state {"state": 1}`
+     (keep-awake for the Cameras tile): both people only, cloud only, never off. Anything else is refused.
+     **`cmd_vel` (manual drive) is blocked for good.**
   2. **Master switch** `control_enabled`, **off by default**. Switching it on in Settings → Safety needs typing ENABLE and is
      logged as an event.
   3. **Interlocks.** Every command needs the robot online (snapshot under 2 min old) and the cloud connected.
@@ -343,14 +346,14 @@ own resolution (at most 4096 px a side), and keeps it.
 - `docs/user/` — the in-app Help; `docs/dev/` — design, protocol, map writes, robot states, UI and imagery notes.
 - `scripts/` — deploy to a remote Docker host over SSH, the demo instance, the headless Map Studio check, and the
   README screenshots (`screenshots.py`, from the demo).
-- `tools/` — standalone protocol tools from before the panel: `yarbo_local.py` (local broker, stdlib only),
-  `yarbo_cloud.py` and `yarbo_capture.py` (need `tools/requirements.txt`), `yarbo_portwatch.py`, and `design/gen.py`
+- `tools/` — standalone protocol tools from before the panel: `yarbo_cloud.py` and `yarbo_capture.py` (the cloud
+  broker; need `YARBO_SN` and `tools/requirements.txt`), and `design/gen.py`
   (generates the design-canvas artboards into the ignored `tools/design/project/`). Cloud session and captures live
   in `~/.yarbo/`, outside the repo, because they contain the yard's GPS position.
 
 ## Configuration
 
-Everything site-specific is set in the panel: **Settings → Robot** (the robot's address, port and serial),
+Everything site-specific is set in the panel: **Settings → Robot** (the Yarbo cloud sign-in; the serial is always found, never set),
 **AI assistant** (optional, recommended next: a token and connect snippets so an MCP client such as Claude can do
 the rest by conversation, including finding the most detailed imagery for the yard),
 **Cameras** (Frigate), **Home Assistant** (address and token), **Lawn conditions** (the Tempest UDP port),
@@ -364,9 +367,6 @@ Compose stack reads; the stack file itself holds nothing site-specific.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `YARBO_HOST` | unset | The robot's LAN address (or set it in Settings → Robot) |
-| `YARBO_PORT` | 1883 | Its broker port |
-| `YARBO_SN` | discovered | Serial; found from `heart_beat` when unset |
 | `DATA_DIR` | `./data` | SQLite and imagery cache |
 | `PORT` | 8425 | HTTP port |
 | `POLL_IDLE_S` / `POLL_ACTIVE_S` | 60 / 2 | Ask for a snapshot when ours is older than this |

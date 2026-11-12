@@ -9,7 +9,7 @@ from app import recorder as rec_mod
 from app.recorder import GAP_S, WIFI_POLL_S, WIFI_TEST_MIN_S, WIFI_TIMEOUT_S, Recorder
 from app.runs import RunStats
 from app.store import Store
-from app.transport_local import check_read_only
+from app.commands import check_read_only
 
 from .test_settings_api import fake_request
 
@@ -29,6 +29,7 @@ def bare(store, run_id=None):
     r.transport, r.wifi_survey, r._wifi_asked, r._wifi_waiting = FakeTransport(), None, 0.0, None
     r._wifi_foreign_at, r._robot_at, r.activity, r._wifi_answer_at = 0.0, 0.0, "mowing", 0.0
     r._signal_cache, r.gps_ref = {}, (39.0, -76.5)
+    r.link, r.reads_sent = None, 0              # reads go to the fake transport, as without Ops
     return r
 
 

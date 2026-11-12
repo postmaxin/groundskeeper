@@ -12,7 +12,8 @@ that breaks one of its rules can't be merged, whether a person or an AI assistan
 - **Imagery sources.** A sharper free aerial map for your county or country helps everyone there. See
   [catalog/README.md](catalog/README.md).
 - **Bug reports**, especially from robots, heads or firmware versions other than the ones the panel was built on.
-- **Code and docs.** Look for issues labelled `good first issue` or `help wanted`.
+- **Code and docs.** Look for issues labelled `good first issue` or `help wanted`. If none are open, ask in
+  [Discussions](https://github.com/Groundskeeper-robot/groundskeeper/discussions) what would help.
 
 ## Set up
 
@@ -26,7 +27,8 @@ mkdir -p web/vendor
 curl -sSfL -o web/vendor/maplibre-gl.js  https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js
 curl -sSfL -o web/vendor/maplibre-gl.css https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css
 curl -sSfL -o web/vendor/three.module.min.js https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js
-curl -sSfL -o web/vendor/AgoraRTC_N-production.js https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.24.9/AgoraRTC_N-production.js
+curl -sSfL -o web/vendor/AgoraRTC_N-production.js \
+  https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.24.9/AgoraRTC_N-production.js
 ```
 
 ### Run it without a robot
@@ -35,6 +37,15 @@ Demo mode runs a made-up robot mowing a made-up yard, through the same recorder,
 
 ```bash
 DEMO=1 PANEL_AUTH=off DATA_DIR=./demo-data .venv/bin/python -m app     # http://127.0.0.1:8425
+```
+
+On Windows the commands on this page work as they are in WSL. With Windows Python (Git Bash or PowerShell) the
+virtual environment's programs are in `.venv/Scripts`, not `.venv/bin`. In PowerShell, this runs the demo and then
+clears the variables, so a later run in the same window doesn't start with sign-in off:
+
+```powershell
+$env:DEMO = "1"; $env:PANEL_AUTH = "off"; $env:DATA_DIR = "./demo-data"
+try { .venv\Scripts\python -m app } finally { Remove-Item Env:DEMO, Env:PANEL_AUTH, Env:DATA_DIR }
 ```
 
 `DEMO_SPEED=10` makes it mow faster. Use a separate `DATA_DIR` for the demo: it refuses to start on a folder that
@@ -46,7 +57,7 @@ holds a real robot's data.
 DATA_DIR=./data .venv/bin/python -m app
 ```
 
-Then open Settings → Robot and give it the robot's address. `./data` holds your yard's location and your cloud
+Then open Settings → Robot and sign in to the Yarbo cloud. `./data` holds your yard's location and your cloud
 session. It is git-ignored; keep it that way.
 
 ## Checks
@@ -82,6 +93,13 @@ and Microsoft Edge or Chrome:
 4. Run `scripts/check.py` and fill in the PR template, including the safety checklist.
 5. CI must pass. A maintainer reviews every PR. Anything that sends a command to the robot, changes an interlock,
    touches sign-in or sends location data off the machine gets a second, closer look.
+6. [CodeRabbit](https://coderabbit.ai) reviews each PR once it is ready for review, and again on each push
+   (`.coderabbit.yaml`; drafts wait). It checks the PR against `AGENTS.md`. Its comments are suggestions: fix what is
+   right, reply where it is wrong, and leave the decision to the maintainer. Never weaken a check because it asked.
+
+Dependabot opens PRs for Python packages (weekly), and GitHub Actions and the Docker base image (monthly), as set in
+`.github/dependabot.yml`. A maintainer merges them once CI passes. Some moves are left out on purpose and done by hand
+as their own change: a new `mcp` major, and a new Python minor for the image.
 
 ## Working with an AI assistant
 
@@ -108,7 +126,7 @@ What we ask:
 
 The panel learns new robot commands only from the official app, never by guessing. To record one:
 
-1. Run the panel against your robot. It must be connected to the robot's local broker.
+1. Run the panel against your robot, signed in to the Yarbo cloud (Settings → Robot).
 2. Open Map Studio → More → **Record an app edit** and start a recording.
 3. Make one change in the Yarbo app, such as one setting on one area, and write down exactly what you changed.
 4. Stop the recording and open **Captured writes**. Passwords, tokens and email addresses are masked before
@@ -133,6 +151,16 @@ or a change people must act on).
 4. The release workflow checks that the tag, `app/version.py` and the changelog agree. It then publishes
    `ghcr.io/groundskeeper-robot/groundskeeper:X.Y.Z`, `:X.Y` and `:latest` for amd64 and arm64, and creates a GitHub
    release whose notes are that version's changelog section.
+
+### Pre-release images
+
+`.github/workflows/prerelease.yml` builds `ghcr.io/groundskeeper-robot/groundskeeper-dev`: `:edge` on every push to
+`main`, `:nightly` (and `:nightly-YYYYMMDD`) on a schedule when `main` changed, `:sha-<commit>` for each. Each build
+runs `scripts/check.py` first and passes `PANEL_CHANNEL`, so the panel shows the channel beside its version. Nothing
+there writes to the release package or `:latest`. Run the workflow by hand for a nightly now. Old versions are not
+pruned automatically (free storage for a public package; a count-based clean-up can split a multi-arch build).
+
+Once, after the first run, make the package **public** in its settings on GitHub.
 
 ## Security
 

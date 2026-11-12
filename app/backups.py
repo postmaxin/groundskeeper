@@ -105,7 +105,7 @@ def preview(current: dict, backup: dict, plans: list) -> dict:
 
 class Backups:
     """I/O comes in as functions (tests stand in for the robot): writer = the MapWriter (cloud sends, its lock);
-    read(cmd, payload) -> reply dict over the local broker (reads only); read_map() -> fresh raw map;
+    read(cmd, payload) -> reply dict through the link (reads only); read_map() -> fresh raw map;
     read_areas() -> {id: full area record} (Recorder.read_area_records)."""
 
     def __init__(self, store, writer, read, read_map, read_areas):

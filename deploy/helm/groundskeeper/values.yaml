@@ -1,5 +1,5 @@
 # Default values for the Groundskeeper chart.
-# Everything site-specific (the robot's address, Frigate, Home Assistant, ...) is configured in the panel's
+# Everything site-specific (the Yarbo cloud sign-in, Frigate, Home Assistant, ...) is configured in the panel's
 # Settings UI after it is running — not here.
 
 image:

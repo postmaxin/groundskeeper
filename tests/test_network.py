@@ -297,6 +297,8 @@ def _request(**over):
     o = SimpleNamespace(cloud=SimpleNamespace(state=over.get("cloud", "connected")),
                         map_writer=SimpleNamespace(lock=Lock()),
                         controller=SimpleNamespace(start_settling=lambda: over.get("starting")))
+    from app.link import RobotLink
+    o.link = RobotLink(r, o.cloud, r.store)
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(rec=r, ops=o)))
 
 
