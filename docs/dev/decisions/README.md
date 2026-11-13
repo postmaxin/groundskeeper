@@ -65,3 +65,4 @@ The code and tests that hold the decision in place.
 | [0009](0009-head-aware-run-rules.md) | Run rules depend on the attached head | Proposed |
 | [0010](0010-robot-video-through-yarbos-agora.md) | Robot video through Yarbo's Agora channel, as a host that publishes nothing | Accepted |
 | [0011](0011-bluetooth-local-control-open.md) | Bluetooth local control: open to contributors, not planned | Accepted |
+| [0012](0012-ble-local-control.md) | BLE local control as an optional, off-by-default transport (fork draft) | Proposed |
