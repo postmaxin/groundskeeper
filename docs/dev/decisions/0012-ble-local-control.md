@@ -35,7 +35,8 @@ guard, interlock and command check applies unchanged. There is no second doorway
   way round (0011).
 - Using the route needs an explicit setting and a named adapter; with it off the panel behaves as 0007 describes.
 - No real robot data, keys or pairing secrets in code, docs or tests.
-- No code is written, and none of the protocol is trusted, until the captures below are done.
+- No code is written, and none of the framing is trusted, until the framing captures below are done. Map writes
+  need the later write captures too.
 
 ### How it honours 0002
 The BLE tunnel carries `cmd_vel`, `cmd_roller` and the other motor commands in the official app, so the transport is
@@ -45,10 +46,12 @@ BLE route and expects the same refusal. The route never opens a raw write door a
 drive, joystick or Bluetooth mapping-drive flows. Nothing from those flows is captured for replay.
 
 ### How it honours 0004
-Writes come only from captures read back as before. The app encodes five map-write topics (`save_clean_area`,
-`preview_snowbot_area_path`, `save_pathway`, `save_deadend`, `save_sidewalk`) as protobuf over BLE, where the cloud
-path sends JSON. Those BLE encodings are different writes: each needs its own capture, its own entry in
-`docs/dev/map-writes.md`, and a replay against a harmless test object before use. Until then BLE carries reads and
+Writes come only from captures read back as before. The app encodes five topics as protobuf over BLE, where the
+cloud path sends JSON. Four are persistent map writes (`save_clean_area`, `save_pathway`, `save_deadend`,
+`save_sidewalk`): their BLE encodings are different writes, and each needs its own capture, its own entry in
+`docs/dev/map-writes.md`, and a replay against a harmless test object before use. The fifth,
+`preview_snowbot_area_path`, is a compute-only request that `RobotLink.read()` allows, with no state to read back; it
+stays on the cloud (or is refused on BLE) until its BLE encoding is captured too. Until then BLE carries reads and
 the run commands only, and map writes stay on the cloud. Every BLE write is read back and put back on a mismatch.
 
 ## Consequences
@@ -68,8 +71,11 @@ the run commands only, and map writes stay on the cloud. Every BLE write is read
   and the panel cannot add a protection of its own.
 
 ### To confirm by an HCI capture before any code is trusted
-Taken with Android's Bluetooth HCI snoop log of the official app on the owner's own robot, read-only flows only,
-with serials and Wi-Fi passwords redacted before sharing:
+**Framing captures** (needed before any BLE code). Taken with Android's Bluetooth HCI snoop log of the official app
+on the owner's own robot, read-only flows only. The raw logs stay on the owner's machine: they hold the serial, home
+coordinates, map geometry, Wi-Fi names and passwords, and device identifiers such as a SIM ICCID, some inside
+compressed payloads. Anything shared (in an issue, a doc or a test) is decoded first and has all of those removed,
+not only serials and passwords:
 
 - the MTU the app requests and the one agreed, and the real chunk size (the static read has `mtu - 120`, or `mtu`
   when it is 100 or less, but its literals may be tagged integers)
@@ -78,9 +84,12 @@ with serials and Wi-Fi passwords redacted before sharing:
   pairing-mode power-button hold
 - the characteristic's GATT properties (write without response, notify)
 - the module version at which zlib starts (the static read has 1.1.43), and what `ble_version` reports
-- JSON versus protobuf for the five map topics, and whether the robot also accepts JSON for them
 - the idle stream (topics and rate) and a multi-chunk reply such as `get_map`, to confirm reassembly
 - real range and the link-loss behaviour
+
+**Write captures** (needed only before BLE map writes, and only as 0004 requires: authorised, one harmless test
+object, read back): JSON versus protobuf for the five topics above, and whether the robot also accepts JSON for them.
+Read-only flows cannot show this.
 
 ## Enforced by
 Nothing yet, because this ADR is a proposal. When it is accepted, `app/link.py` and `app/control.py` (`HARD_BLOCKED`,
