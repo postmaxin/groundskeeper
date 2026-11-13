@@ -7,6 +7,10 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 
 ### Added
 
+- **An optional Bluetooth route behind the panel's one doorway** (part of #73): off by default (`ble_enabled`) and
+  with no Bluetooth driver yet, so nothing changes for anyone. It is only a second path for run commands and reads
+  when the cloud is down; map writes, `cmd_vel` and the camera keep-awake never use it. See ADR 0012.
+
 - **A live feed for the Home Assistant integration's map card** (#12): `GET /api/ha/stream` (server-sent events,
   read with an API token) sends the robot's state, last known position, current run, the camera that covers it
   and the map's version every 5 seconds, and each new position sample in between. It is lighter than

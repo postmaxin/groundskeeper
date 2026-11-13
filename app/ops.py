@@ -8,6 +8,7 @@ from datetime import datetime
 from . import conditions, control, maintenance, telemetry
 from . import why as reasons
 from . import demo_robot
+from .ble import BleTransport
 from .cloud import CloudTransport
 from .runtime import found_sn
 from .link import RobotLink
@@ -54,7 +55,7 @@ def point_in_ring(lon: float, lat: float, ring: list) -> bool:
 
 
 class Ops:
-    def __init__(self, cfg, rec):
+    def __init__(self, cfg, rec, ble_adapter=None):
         self.cfg, self.rec, self.store = cfg, rec, rec.store
         # The Yarbo cloud is the only route to the robot (app/link.py); the demo has a stand-in that opens no socket.
         self.cloud = (demo_robot.DemoCloud(rec) if getattr(cfg, "demo", False)
@@ -63,7 +64,12 @@ class Ops:
         # After a sign-in the cloud checks a serial kept from the account against the new account (never mid-run).
         self.cloud.sn_source = self._kept_sn_source
         self.cloud.on_forget = self._cloud_forgot_sn
-        self.link = RobotLink(rec, self.cloud, self.store, mark_sent=rec.mark_sent)
+        # The optional BLE route (app/ble.py, ADR 0012): none unless an adapter is given (there is no real one yet),
+        # never in the demo, and even then only while the ble_enabled setting is on. RobotLink alone picks the route.
+        self.ble = (BleTransport(ble_adapter, self._from_cloud, lambda: self.rec.sn)
+                    if ble_adapter is not None and not getattr(cfg, "demo", False) else None)
+        self.link = RobotLink(rec, self.cloud, self.store, mark_sent=rec.mark_sent, ble=self.ble,
+                              ble_enabled=lambda: self.store.setting("ble_enabled", False))
         rec.link = self.link
         self.frigate = Frigate(cfg.frigate_url)
         self.notifier = Notifier(self.store, cfg.ha_url, cfg.ha_token)
@@ -158,6 +164,8 @@ class Ops:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self.cloud.stop()
+        if self.ble is not None:
+            await asyncio.to_thread(self.ble.close)
         await self.frigate.close()
         await self.notifier.close()
 

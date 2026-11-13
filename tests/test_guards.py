@@ -59,7 +59,7 @@ def test_only_known_modules_publish_to_the_robot():
 
 
 def test_only_the_link_reaches_the_cloud_publish():
-    users = {rel(p) for p in APP if re.search(r"\bcloud\.publish\b", read(p))}
+    users = {rel(p) for p in APP if re.search(r"\b(cloud|ble)\.publish\b", read(p))}   # ble: ADR 0012
     extra = users - CLOUD_PUBLISH_USERS
     assert not extra, (f"{sorted(extra)} reach cloud.publish directly; commands go Controller/MapWriter → "
                        "app.link.RobotLink (AGENTS.md → Safety)")
@@ -166,7 +166,7 @@ def test_read_requests_are_reads_or_listed_compute_only():
 
 
 def test_a_new_install_has_every_switch_off():
-    for key in ("control_enabled", "map_write_enabled", "mcp_control_enabled"):
+    for key in ("control_enabled", "map_write_enabled", "mcp_control_enabled", "ble_enabled"):
         assert SETTINGS_DEFAULTS[key] is False, f"{key} must default to off (AGENTS.md: never loosen a default)"
     assert control.GATE_DEFAULTS["guard_resume"] is False, "guard auto-resume spins blades; it stays opt-in"
     assert control.GATE_DEFAULTS["yard_clear_required"] is True

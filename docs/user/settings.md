@@ -161,3 +161,10 @@ The panel asks the SDK not to send Agora usage statistics or upload logs, and sw
 a network check while video played saw only Agora's gateway, edge and media servers. Agora still sees your
 browser's address, the panel's address (the `Origin` and `Referer` of the SDK's requests) and the camera's
 channel name, which carries the robot's serial number.
+
+### Bluetooth (not usable yet)
+
+The `ble_enabled` setting is **off** on a new install and nothing in this version can turn it into a connection: the
+panel has no Bluetooth driver yet (it is built in pieces, see ADR 0012). Only a signed-in person can set it, not an
+API token. When a driver exists it will carry only run commands and reads, never a map write, and the cloud will
+still be used whenever it is connected.

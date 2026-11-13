@@ -19,6 +19,7 @@ import random
 import time
 
 from . import why
+from .ble import DeliveryUncertain
 
 log = logging.getLogger(__name__)
 
@@ -466,6 +467,11 @@ class Controller:
                           + (why.from_checks(r.checks, override=override and actor == "user") if r.checks else
                              [] if not self.enabled() and r.reason.startswith("control is switched off") else
                              [why.reason("refused", r.reason, "", source="control")])}
+            except DeliveryUncertain as exc:
+                # BLE only: it may still arrive. A person's run-affecting command then counts as taken over, as if sent.
+                if actor != "guard" and cmd not in RUN_NEUTRAL:
+                    self.last_human_cmd_at = time.time()
+                result = {"sent": False, "cmd": cmd, "error": str(exc), "uncertain": True}
             except Exception as exc:
                 result = {"sent": False, "cmd": cmd, "error": str(exc)}
         # Confirmation runs outside the lock: a Pause pressed while a start is still being confirmed goes out now.
