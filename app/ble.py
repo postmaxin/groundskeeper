@@ -17,6 +17,7 @@ app/ble_packet.py's; nothing here re-implements it.
 """
 import abc
 import asyncio
+import concurrent.futures
 import json
 import logging
 import threading
@@ -24,7 +25,6 @@ import time
 from collections.abc import Callable
 
 from . import ble_packet
-from .codec import decode
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +33,11 @@ log = logging.getLogger(__name__)
 #    (recorder.COUNTED_OWN) expects the cloud's echo, which a BLE send would never produce;
 #  * preview_snowbot_area_path is protobuf over BLE in the official app (ADR 0012 / 0004): not captured, so cloud only.
 NEVER_ON_BLE = frozenset({"smart_vision_control", "set_working_state", "preview_snowbot_area_path"})
-WRITE_TIMEOUT_S = 10.0
+SEND_TIMEOUT_S = 5.0     # for all of one message's writes together: the caller waits this long at most
+
+
+class DeliveryUncertain(ConnectionError):
+    """A write timed out: the message may still reach the robot, so RobotLink keeps its own-send mark."""
 
 
 class BleAdapter(abc.ABC):
@@ -86,6 +90,8 @@ class BleTransport:
         self.compress = compress         # whether the module takes zlib: unconfirmed until captured, so off
         self.published = 0
         self.error = ""
+        self._bound_sn: str | None = None    # the robot this link was made for; a different selected serial is no link
+        self._uncertain = False              # a write timed out: it may still be on the air, so no send until reconnect
         self._reasm = ble_packet.Reassembler()
         self._rlock = threading.Lock()   # the Reassembler is fed from the adapter's thread
         self._wlock = threading.Lock()   # one message's chunks are written without another's between them
@@ -97,32 +103,46 @@ class BleTransport:
     # -- state, as RobotLink reads it from the cloud transport ----------------------------------------------------
     @property
     def connected(self) -> bool:
-        return bool(self.adapter.is_connected)
+        """Up only for the robot it was connected for: if the selected serial changed since, this is no link to it."""
+        return bool(self.adapter.is_connected and self._bound_sn and self._bound_sn == self._sn()
+                    and not self._uncertain)
 
     @property
     def state(self) -> str:
         return "connected" if self.connected else "disconnected"
 
-    def _run(self, coro, timeout: float = WRITE_TIMEOUT_S):
+    def _run(self, coro, timeout: float):
         if threading.current_thread() is self._thread:
             coro.close()
             raise RuntimeError("BleTransport called from its own loop")
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout)
+        fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        try:
+            return fut.result(timeout)
+        except concurrent.futures.TimeoutError:
+            fut.cancel()                 # asks the adapter to stop; whether the bytes went is then unknown
+            raise
 
     def connect(self, name_prefix: str) -> None:
+        """Connect for the robot selected now (Ops's serial); a later change of serial drops the link to it."""
+        sn = self._sn()
+        if not sn:
+            raise ConnectionError("no robot serial to bind the BLE link to")
         try:
             self._run(self.adapter.connect(name_prefix), 30.0)
-            self.error = ""
         except Exception as exc:
             self.error = str(exc)
             raise
+        with self._rlock:
+            self._reasm = ble_packet.Reassembler()       # nothing half-received from an earlier link counts
+        self._bound_sn, self._uncertain, self.error = sn, False, ""
 
     def close(self) -> None:
         try:
-            if self.connected:
-                self._run(self.adapter.disconnect())
+            if self.adapter.is_connected:
+                self._run(self.adapter.disconnect(), 10.0)
         except Exception:
             log.warning("BLE disconnect failed")
+        self._bound_sn = None
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(2.0)
 
@@ -140,9 +160,13 @@ class BleTransport:
         except ValueError as exc:
             raise ConnectionError(f"BLE could not frame {cmd}: {exc}") from exc
         with self._wlock:
+            deadline = time.monotonic() + SEND_TIMEOUT_S
             try:
                 for chunk in chunks:
-                    self._run(self.adapter.write(chunk))
+                    self._run(self.adapter.write(chunk), max(0.1, deadline - time.monotonic()))
+            except concurrent.futures.TimeoutError as exc:
+                self._uncertain = True   # it may still go out: no other message follows it on this link
+                raise DeliveryUncertain("BLE write timed out; the message may or may not have been delivered") from exc
             except Exception as exc:
                 raise ConnectionError(f"BLE write failed: {exc}") from exc
         self.published += 1
@@ -154,11 +178,16 @@ class BleTransport:
         if msg is None:
             return
         sn = self._sn()
-        if not sn or not msg.topic or "/" in msg.topic:
-            log.warning("BLE message dropped: no serial or an odd topic")
+        if not sn or sn != self._bound_sn or not msg.topic or "/" in msg.topic:
+            log.warning("BLE message dropped: not the robot this link was made for, or an odd topic")
             return
         try:
-            self._on_message(f"snowbot/{sn}/device/{msg.topic}", decode(msg.body), time.time())
+            data = json.loads(msg.body)     # already inflated (and bounded) by the Reassembler: never inflated twice
+        except ValueError:
+            log.warning("BLE %s: body is not JSON (or is a compressed body over the size limit), dropped", msg.topic)
+            return
+        try:
+            self._on_message(f"snowbot/{sn}/device/{msg.topic}", data, time.time())
         except Exception:
             log.exception("BLE message handler failed")
 

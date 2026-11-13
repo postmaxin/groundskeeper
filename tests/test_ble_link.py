@@ -78,6 +78,8 @@ def rig():
         ad = FakeBleAdapter(connected=connected, replies=replies)
         tr = ble.BleTransport(ad, lambda t, d, ts: got.append((t, d)), lambda: SN) if adapter else None
         made.append(tr)
+        if tr and connected:
+            tr.connect("Yarbo-test")                  # binds the link to SN, as Ops will
         cl = FakeCloud(cloud)
         lk = RobotLink(Rec(), cl, None, mark_sent=marked.append, ble=tr, ble_enabled=lambda: enabled)
         return lk, cl, ad, got, marked
@@ -195,6 +197,7 @@ def test_with_both_routes_up_the_cloud_carries_it_and_ble_gets_nothing(rig):
 def test_a_send_that_fails_on_ble_is_not_repeated_on_the_cloud_and_takes_its_mark_back():
     undone, ad = [], FakeBleAdapter()
     tr = ble.BleTransport(ad, lambda *a: None, lambda: SN)
+    tr.connect("Yarbo-test")
     try:
         cl = FakeCloud("signed out")
         lk = RobotLink(Rec(), cl, None, mark_sent=lambda c: (lambda: undone.append(c)), ble=tr,
@@ -252,3 +255,48 @@ def test_the_transport_runs_its_adapter_off_the_callers_thread(rig):
     ad.write = write
     lk.command("pause", {})
     assert seen == ["yarbo-ble"]
+
+
+def test_a_link_made_for_one_robot_is_no_route_once_another_is_selected(rig):
+    lk, cl, ad, got, _ = rig(replies={"get_map": b"{}"})
+    serial = [SN]
+    lk.ble._sn = lambda: serial[0]
+    assert lk.command("pause", {}) == "ble"
+    serial[0] = "YB0000DEMO0002"                              # the selection changed; the link did not
+    assert lk.ble_up() is False
+    with pytest.raises(NoRoute):
+        lk.command("pause", {})
+    n = len(ad.writes)
+    for pkt in ble_packet.encode_message("get_map", b"{}", 200):
+        lk.ble._notified(pkt)
+    assert len(ad.writes) == n and got == []
+
+
+def test_a_timed_out_write_may_have_gone_so_nothing_else_is_sent_until_reconnect(rig, monkeypatch):
+    lk, cl, ad, got, marked = rig()
+    monkeypatch.setattr(ble, "SEND_TIMEOUT_S", 0.2)
+    started = []
+
+    async def hang(data):
+        started.append(1)
+        await __import__("asyncio").sleep(30)
+
+    real, ad.write = ad.write, hang
+    with pytest.raises(ConnectionError, match="may or may not"):
+        lk.command("pause", {})
+    assert started == [1] and lk.ble_up() is False and marked == ["pause"]       # the mark stays: it may arrive
+    ad.write = real
+    with pytest.raises(NoRoute):
+        lk.command("pause", {})                                # nothing overlaps the one that may still be out
+    lk.ble.connect("Yarbo-test")                               # a fresh link clears it
+    assert lk.command("pause", {}) == "ble"
+
+
+def test_a_compressed_body_over_the_limit_is_dropped_not_inflated_again(rig, monkeypatch):
+    import zlib
+    lk, cl, ad, got, _ = rig()
+    monkeypatch.setattr(ble_packet, "MAX_BODY", 1000)
+    bomb = zlib.compress(b"[" + b"0," * 5000 + b"0]")      # inflates past the limit, so it is handed back as is
+    for pkt in ble_packet.encode_message("get_map", bomb, 200):
+        lk.ble._notified(pkt)
+    assert got == []

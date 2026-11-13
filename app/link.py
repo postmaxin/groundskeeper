@@ -19,7 +19,7 @@ never repeated on the other, even when it fails; own-echo marks are made per sen
 """
 import time
 
-from .ble import NEVER_ON_BLE
+from .ble import NEVER_ON_BLE, DeliveryUncertain
 from .commands import check_command, check_read_only
 
 ROUTE = "cloud"
@@ -89,6 +89,8 @@ class RobotLink:
         undo = self.mark_sent(cmd)       # before it goes, as for commands: its echo may be handled first
         try:
             transport.publish(cmd, payload or {})
+        except DeliveryUncertain:
+            raise                        # it may still arrive: its echo is still ours
         except BaseException:
             if callable(undo):
                 undo()
@@ -125,6 +127,8 @@ class RobotLink:
         undo = self.mark_sent(cmd)       # before it goes: the echo can be handled before the send call returns
         try:
             transport.publish(cmd, payload)
+        except DeliveryUncertain:
+            raise                        # it may still arrive: its echo is still ours
         except BaseException:
             if callable(undo):
                 undo()                   # it never went, so it is not ours
