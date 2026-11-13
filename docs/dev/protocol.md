@@ -187,6 +187,69 @@ cameras only while someone sends it: with `smart_vision_control` on and no keep-
 switches the cameras off when it goes to the background. The panel sends it only for the Cameras tile, state 1 only,
 through the controller like any command, at most 15 min per press of play (design.md §13).
 
+## Bluetooth (BLE) link (not used by the panel)
+
+The panel is cloud only (ADR 0007) and sends nothing over Bluetooth. This section records how the official app's
+Bluetooth link to the robot works, so a future route (draft ADR 0012, fork only) starts from known framing. It comes
+from a static read of the Android app, not from a capture: nothing was sent to a robot. Every number marked **to
+confirm** is a literal the decompiler may have shown doubled (Dart tags small integers), and waits for an HCI capture.
+
+The link is not a separate command set. It carries the same topics and payloads as the cloud path, so `cmd_vel` and
+the motor commands in the table above travel over it too (ADR 0002: never sent).
+
+### Discovery and GATT
+- Advertised name: `Yarbo Rover <last 7 characters of the serial>` or `Yarbo Mini <last 7 characters>`, for example
+  `Yarbo Rover EMO0001` for the demo serial `YB0000DEMO0001`. The model code inside the serial that
+  picks Rover or Mini, and which code is which, are **to confirm by capture**.
+- One service per model, scanned for by UUID: `00000000-0000-0000-00aa-bbccdd010101` (2024 robot) and
+  `00000000-0000-0000-00aa-bbccdd010110` (2026 Mini).
+- One characteristic, `00000000-0000-0000-000f-00dc0de00001`, for both directions: the app writes chunks to it
+  (write without response) and subscribes to notifications on it. Its exact GATT properties are **to confirm by
+  capture**.
+- Data Center (RTK base) and docking-station devices use other services and text protocols; they do not carry robot
+  commands and are not described here.
+- Requested MTU 500 and connect-time MTU 512: **to confirm by capture**. The link counts as up on the first
+  notification, and the app drops it after about 20 s with no data (the exact period is **to confirm**).
+- Range: the app's own text says within about 5 m without obstacles (3 m for the Mini's Bluetooth mapping).
+- Pairing, bonding and any application-layer authentication: none seen in the app. Whether the robot enforces any is
+  unknown and **to confirm by capture**.
+
+### Packet
+Each chunk is one protobuf `Packet`, written as one GATT write. There is no extra header, length prefix or checksum.
+
+| Field | Name | Type | Notes |
+|---|---|---|---|
+| 1 | `totalPackets` | `google.protobuf.UInt32Value` | Number of chunks in the message |
+| 2 | `packetIndex` | `google.protobuf.UInt32Value` | Position of the chunk, 1-based (**to confirm**) |
+| 3 | `topic` | `google.protobuf.StringValue` | The last `/` segment of the cloud topic, such as `get_device_msg` |
+| 4 | `timestamp` | `google.protobuf.UInt64Value` | Milliseconds since the epoch |
+| 5 | `data` | `bytes` | One slice of the message body |
+
+The numeric fields are the protobuf wrapper types, so each is a nested message with its value in field 1.
+
+### Body, compression and chunking
+- The body is the JSON of the payload as UTF-8 (`{}` when there is none). Five map topics use protobuf instead of
+  the cloud's JSON: `save_clean_area`, `preview_snowbot_area_path`, `save_pathway`, `save_deadend`, `save_sidewalk`.
+  Whether the robot also accepts JSON for them is **to confirm**.
+- On a Bluetooth module at version 1.1.43 or later (the version `ble_version` reports; the threshold and the key are
+  **to confirm**) the body is zlib-compressed, as the cloud path does. Older modules take it uncompressed.
+- Chunk size is `mtu - 120` when the MTU is over 100, else the MTU itself (**to confirm**: the MTU, and the 120).
+  A message that fits is one chunk with `totalPackets` 1.
+- The receiver collects chunks by `packetIndex` until `totalPackets` have arrived, joins them in index order, then
+  decompresses if the data is zlib and decodes it by topic.
+
+### Replies and telemetry
+The robot streams `data_feedback`, `heart_beat` and the other feedback topics, and answers requests, over the same
+characteristic in the same `Packet` framing. After decoding they have the same types as the cloud path's, so the
+parsers described above apply. While the link is up the app takes the cloud's `data_feedback`, `ota_feedback` and
+`odc_calib_state` only, and ignores other cloud topics.
+
+### Topics only used over Bluetooth
+When the link is up and the cloud is not, the app switches Wi-Fi provisioning to `ble_`-prefixed topics:
+`ble_get_wifi_list`, `ble_get_connect_wifi_name`, `ble_get_saved_wifi_list`, `ble_change_to_wifi`, `ble_forget_wifi`,
+`ble_pair_halow` and `ble_set_dc_info`. Their payloads are **to confirm by capture**. `get_sn` over Bluetooth is how
+the app reads the serial when it adds a robot.
+
 ## Robot video (Agora)
 
 The robot's cameras are not served on the LAN. The robot publishes each camera to Agora's real-time network, and the
