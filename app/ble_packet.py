@@ -227,13 +227,16 @@ class Reassembler:
         if entry is not None and (entry[0] != pkt.total or entry[1].get(pkt.index, pkt.data) != pkt.data):
             log.warning("BLE %s: a new message began before the last finished; dropped %d of %d packets",
                         pkt.topic, len(entry[1]), entry[0])
+            del self._pending[pkt.topic]
             entry = None
         if entry is None:
-            if len(self._pending) >= MAX_PENDING:
+            # only a new, still-incomplete topic needs a slot; a restart reuses its own, a one-packet message none
+            if pkt.total > 1 and len(self._pending) >= MAX_PENDING:
                 oldest = min(self._pending, key=lambda t: self._pending[t][2])
                 log.warning("BLE %s: too many partial messages, dropped", oldest)
                 del self._pending[oldest]
-            entry = self._pending[pkt.topic] = [pkt.total, {}, self._clock()]
+            entry = [pkt.total, {}, self._clock()]
+            self._pending[pkt.topic] = entry
         entry[1].setdefault(pkt.index, pkt.data)
         if sum(map(len, entry[1].values())) > MAX_BODY:
             log.warning("BLE %s: message larger than %d bytes, dropped", pkt.topic, MAX_BODY)
@@ -241,7 +244,7 @@ class Reassembler:
             return None
         if len(entry[1]) < entry[0]:
             return None
-        del self._pending[pkt.topic]
+        self._pending.pop(pkt.topic, None)
         payload = b"".join(entry[1][i] for i in range(1, entry[0] + 1))
         body, compressed = inflate_if_zlib(payload)
         return Message(pkt.topic, body, compressed)

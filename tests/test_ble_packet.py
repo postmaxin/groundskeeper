@@ -250,3 +250,14 @@ def test_pending_state_is_bounded(monkeypatch):
     rx.feed(encode_packet(3, 1, "big", 1, b"x" * 60))
     assert rx.feed(encode_packet(3, 2, "big", 1, b"x" * 60)) is None
     assert "big" not in rx._pending
+
+
+def test_a_restart_or_a_one_packet_message_does_not_evict_an_unrelated_partial(monkeypatch):
+    monkeypatch.setattr(bp, "MAX_PENDING", 2)
+    rx = Reassembler()
+    rx.feed(encode_packet(2, 1, "a", 1, b"1"))
+    rx.feed(encode_packet(2, 1, "b", 1, b"2"))
+    assert rx.feed(encode_packet(1, 1, "c", 1, b"whole")) == bp.Message("c", b"whole", False)  # needs no slot
+    rx.feed(encode_packet(3, 1, "b", 1, b"2"))  # b restarts with a new total: reuses its own slot
+    assert rx.pending == 2
+    assert rx.feed(encode_packet(2, 2, "a", 1, b"3")) == bp.Message("a", b"13", False)  # a survived
