@@ -142,11 +142,11 @@ class BleTransport:
     async def _settle(self) -> None:
         """Tear the old link down and give a cancelled write the loop's turns to finish before it is replaced."""
         await self.adapter.disconnect()
-        for _ in range(5):
-            await asyncio.sleep(0.1)
         pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
         if pending:
-            await asyncio.wait(pending, timeout=5.0)
+            _, still = await asyncio.wait(pending, timeout=5.0)
+            if still:
+                raise ConnectionError("an earlier BLE write has not settled; the link stays unusable")
 
     def close(self) -> None:
         try:

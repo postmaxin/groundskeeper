@@ -400,3 +400,28 @@ def test_a_reconnect_after_a_timeout_tears_the_old_link_down_first(rig, monkeypa
         lk.ble.publish("pause", {})
     lk.ble.connect("Yarbo-test")
     assert order == ["disconnect", "write settled", "connect"] and lk.ble_up()
+
+
+def test_a_reconnect_is_refused_while_a_cancelled_write_is_still_running(rig, monkeypatch):
+    import asyncio
+    lk, cl, ad, *_ = rig()
+    monkeypatch.setattr(ble, "SEND_TIMEOUT_S", 0.2)
+    stuck = []
+
+    async def hang(data):
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.6)                    # slow to give way after the cancel
+            stuck.append(1)
+
+    ad.write = hang
+    real_wait = asyncio.wait
+    monkeypatch.setattr(ble.asyncio, "wait", lambda tasks, timeout=None: real_wait(tasks, timeout=0.3))
+    with pytest.raises(ble.DeliveryUncertain):
+        lk.ble.publish("pause", {})
+    with pytest.raises(ConnectionError, match="has not settled"):
+        lk.ble.connect("Yarbo-test")
+    assert lk.ble_up() is False and stuck == []
+    __import__("time").sleep(0.8)                        # let it end before the rig closes the loop
+    assert stuck == [1]
