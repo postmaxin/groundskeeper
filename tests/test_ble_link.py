@@ -300,3 +300,71 @@ def test_a_compressed_body_over_the_limit_is_dropped_not_inflated_again(rig, mon
     for pkt in ble_packet.encode_message("get_map", bomb, 200):
         lk.ble._notified(pkt)
     assert got == []
+
+
+def test_a_send_queued_behind_a_timed_out_one_does_not_follow_it(rig, monkeypatch):
+    import asyncio
+    import time
+    lk, cl, ad, *_ = rig()
+    monkeypatch.setattr(ble, "SEND_TIMEOUT_S", 0.3)
+    started, errs = [], []
+
+    async def hang(data):
+        started.append(1)
+        await asyncio.sleep(30)
+
+    ad.write = hang
+
+    def send():
+        try:
+            lk.ble.publish("pause", {})
+        except ConnectionError as e:
+            errs.append(type(e).__name__)
+
+    a = threading.Thread(target=send)
+    a.start()
+    time.sleep(0.1)
+    b = threading.Thread(target=send)          # passes the connected check, then waits for the write lock
+    b.start()
+    a.join(5)
+    b.join(5)
+    assert started == [1] and sorted(errs) == ["ConnectionError", "DeliveryUncertain"]
+
+
+def test_the_deadline_covers_the_whole_message_not_each_chunk(rig, monkeypatch):
+    import asyncio
+    lk, cl, ad, *_ = rig()
+    ad._mtu = 130                                          # 10 bytes of body per Packet: many writes
+    monkeypatch.setattr(ble, "SEND_TIMEOUT_S", 0.3)
+    real = ad.write
+
+    async def slow(data):
+        await asyncio.sleep(0.1)
+        await real(data)
+
+    ad.write = slow
+    with pytest.raises(ble.DeliveryUncertain):
+        lk.command("start_plan", {"id": 1, "note": "z" * 200})
+    assert 1 <= len(ad.writes) < 8 and lk.ble_up() is False
+
+
+def test_a_possibly_delivered_pause_still_counts_as_a_persons_takeover(rig, monkeypatch):
+    import asyncio
+    from app.store import Store
+    import tempfile
+    store = Store(tempfile.mkdtemp())
+    store.set_setting("control_enabled", True)
+    lk, cl, ad, *_ = rig()
+    monkeypatch.setattr(ble, "SEND_TIMEOUT_S", 0.2)
+    ad.write = lambda data: asyncio.sleep(30)
+
+    async def context(args):
+        return {"snapshot_age_s": 1, "route_state": "connected", "plans": [{"id": 1}], "error_code": 0, "battery": 90,
+                "running": True, "yard": {"ok": True, "detail": "clear"}, "phone_app_active": False,
+                "conditions": "Dry", "presence": True, "writing": False}
+
+    c = control.Controller(store, lk, context, lambda cmd: asyncio.get_running_loop().create_future(),
+                           lambda: {"planning": 1, "planning_paused": 0})
+    before = c.last_human_cmd_at
+    out = asyncio.run(c.send("pause", wait=False))
+    assert out["sent"] is False and out["uncertain"] is True and c.last_human_cmd_at > before

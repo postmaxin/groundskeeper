@@ -160,12 +160,17 @@ class BleTransport:
         except ValueError as exc:
             raise ConnectionError(f"BLE could not frame {cmd}: {exc}") from exc
         with self._wlock:
+            if not self.connected:       # re-checked: a send queued behind one that timed out must not follow it
+                raise ConnectionError(f"BLE is {self.state}")
             deadline = time.monotonic() + SEND_TIMEOUT_S
             try:
                 for chunk in chunks:
-                    self._run(self.adapter.write(chunk), max(0.1, deadline - time.monotonic()))
+                    left = deadline - time.monotonic()
+                    if left <= 0:        # out of time: what went is on the air, the rest never will
+                        raise concurrent.futures.TimeoutError()
+                    self._run(self.adapter.write(chunk), left)
             except concurrent.futures.TimeoutError as exc:
-                self._uncertain = True   # it may still go out: no other message follows it on this link
+                self._uncertain = True   # part or all may be out: no other message follows it on this link
                 raise DeliveryUncertain("BLE write timed out; the message may or may not have been delivered") from exc
             except Exception as exc:
                 raise ConnectionError(f"BLE write failed: {exc}") from exc
