@@ -229,3 +229,24 @@ def test_an_inflate_bomb_is_not_inflated(monkeypatch):
     bomb = zlib.compress(b"\x00" * 100_000)
     (msg,) = feed_all([encode_packet(1, 1, "t", 1, bomb)])
     assert msg.body == bomb and msg.compressed is False
+
+
+def test_trailing_bytes_after_a_zlib_stream_keep_the_payload_opaque():
+    payload = zlib.compress(b"hello") + b"tail"
+    (msg,) = feed_all([encode_packet(1, 1, "t", 1, payload)])
+    assert msg.body == payload and msg.compressed is False
+
+
+def test_pending_state_is_bounded(monkeypatch):
+    monkeypatch.setattr(bp, "MAX_PENDING", 3)
+    monkeypatch.setattr(bp, "MAX_BODY", 100)
+    now = [0.0]
+    rx = Reassembler(clock=lambda: now[0])
+    for i in range(5):
+        now[0] += 1
+        rx.feed(encode_packet(2, 1, f"t{i}", 1, b"x"))
+    assert rx.pending == 3
+    # the oldest topics were evicted; a message that grows past the byte limit is dropped
+    rx.feed(encode_packet(3, 1, "big", 1, b"x" * 60))
+    assert rx.feed(encode_packet(3, 2, "big", 1, b"x" * 60)) is None
+    assert "big" not in rx._pending

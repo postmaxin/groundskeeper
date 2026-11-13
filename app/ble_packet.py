@@ -31,6 +31,7 @@ MIN_COMPRESS_VERSION = "1.1.43"
 # Bounds so a bad or hostile peer cannot make the reassembler hold or inflate unbounded memory.
 MAX_PACKETS = 4096
 MAX_BODY = 16 * 1024 * 1024
+MAX_PENDING = 32  # topics with a half-received message; the oldest is dropped past this
 PARTIAL_TIMEOUT = 20.0  # seconds a half-received message is kept (the app's received-data watchdog is 20 s)
 
 Packet = namedtuple("Packet", "total index topic timestamp data")
@@ -190,8 +191,8 @@ def inflate_if_zlib(payload: bytes):
         out = d.decompress(payload, MAX_BODY + 1)
     except zlib.error:
         return payload, False
-    if len(out) > MAX_BODY or not d.eof:
-        # a truncated stream or a bomb is not a body we can use; hand the bytes back untouched
+    if len(out) > MAX_BODY or not d.eof or d.unused_data:
+        # a truncated stream, trailing bytes or a bomb is not a body we can use; hand the bytes back untouched
         return payload, False
     return out, True
 
@@ -202,7 +203,11 @@ class Reassembler:
     Pending messages are keyed by topic. A Packet with a different `totalPackets` than the pending message for its
     topic, or a repeated index carrying different data, means the earlier message was abandoned: it is dropped and a
     new one starts. A repeated index with the same data is ignored. A message that stays incomplete longer than
-    `timeout` seconds is dropped the next time a Packet arrives, or when `expire()` is called.
+    `timeout` seconds is dropped the next time a Packet arrives, or when `expire()` is called. At most MAX_PENDING
+    topics are held, each up to MAX_BODY bytes.
+
+    Known limit: the robot's real message identity is unconfirmed (see the module docstring), so two messages on one
+    topic with the same `totalPackets` whose Packets interleave are not told apart.
     """
 
     def __init__(self, timeout: float = PARTIAL_TIMEOUT, clock=time.monotonic):
@@ -224,8 +229,16 @@ class Reassembler:
                         pkt.topic, len(entry[1]), entry[0])
             entry = None
         if entry is None:
+            if len(self._pending) >= MAX_PENDING:
+                oldest = min(self._pending, key=lambda t: self._pending[t][2])
+                log.warning("BLE %s: too many partial messages, dropped", oldest)
+                del self._pending[oldest]
             entry = self._pending[pkt.topic] = [pkt.total, {}, self._clock()]
         entry[1].setdefault(pkt.index, pkt.data)
+        if sum(map(len, entry[1].values())) > MAX_BODY:
+            log.warning("BLE %s: message larger than %d bytes, dropped", pkt.topic, MAX_BODY)
+            del self._pending[pkt.topic]
+            return None
         if len(entry[1]) < entry[0]:
             return None
         del self._pending[pkt.topic]
