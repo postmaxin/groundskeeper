@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-11-11
-- **Links:** #91, #111, #113
+- **Links:** #91, #111, #113, 0011
 
 ## Context
 The panel first read the robot on its own MQTT broker on the home network, and later sent run commands there too

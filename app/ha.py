@@ -180,6 +180,35 @@ def summary(status: dict, ops_status: dict, last_run: dict | None, upcoming: lis
     }
 
 
+# -- live feed for a Home Assistant card (GET /api/ha/stream, #12, §17) ------------------------------------------
+# What a map card needs between summary polls: where the robot is, which camera covers it, and whether the run or
+# the map changed (so the card fetches the track or the map again). Unlike the summary this carries the robot's
+# position, as /api/stream already does for an API token; the integration sends it only to its card, never into an
+# entity, so Home Assistant's recorder does not keep a history of it. Bump LIVE_API as for SUMMARY_API.
+LIVE_API = 1
+POSE_KEYS = ("t", "lon", "lat", "heading")
+
+
+def pose(p: dict | None) -> dict | None:
+    """A position sample (or the status's position) cut to what a map needs, or None without a fix."""
+    if not p or p.get("lon") is None or p.get("lat") is None:
+        return None
+    return {k: p.get(k) for k in POSE_KEYS}
+
+
+def live(status: dict, follow: dict | None, map_sha: str | None) -> dict:
+    """The state event of /api/ha/stream: the robot's state, its last known position, the current run, which
+    camera covers it (Ops.follow_camera) and the map's version."""
+    run = status.get("run")
+    return {
+        "api": LIVE_API, "state": status["state"], "activity": status.get("activity"),
+        "position": pose(status["robot"].get("position")),
+        "run": {"id": run["id"], "distance_m": run.get("distance_m")} if run else None,
+        "follow": {"camera": follow.get("camera"), "covered": bool(follow.get("covered"))} if follow else None,
+        "map": map_sha,
+    }
+
+
 # -- presence -----------------------------------------------------------------------------------------------------
 # "Is anyone home?" from one HA entity. An alarm panel (Alarmo) armed away or on vacation means nobody; any other
 # armed state or disarmed means someone. A person, device tracker or group of them: home means someone, anything

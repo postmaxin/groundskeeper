@@ -641,6 +641,15 @@ the panel's write support are summarised in [`map-writes.md`](map-writes.md).
   and/or the webhook: robot error, the robot pausing itself, stuck, lost contact, guard action, head changed, cloud
   needs sign-in, maintenance due, a start waiting for confirmation, a skipped window and auto-starts
   (`app/notify.py`).
+- **Home Assistant integration** (the HACS one, read with an API token, #12): `GET /api/ha/summary` (state, battery,
+  lawn, runs, schedule and the start check; no position) and `GET /api/ha/stream`, the live feed for its map card. The
+  stream is server-sent events: `state` on connect and every 5 s (`app/ha.py` `live`: `api`, state, activity, last known
+  `position` {t, lon, lat, heading}, current `run` {id, distance_m}, `follow` {camera, covered} from the follow-cam, and
+  `map`, the newest map version's sha) and `pose` with the position samples that came since the last check (a JSON
+  array, one or more, oldest first; each {t, lon, lat, heading}). Both are versioned by `api` (`SUMMARY_API`,
+  `LIVE_API`: bumped only when a field changes meaning or goes away). The stream carries the robot's position, as
+  `/api/stream` does for the same callers; the integration sends it only to its card and never into an entity, so Home
+  Assistant keeps no history of it. A metrics-only token reads neither, and the MCP server has no route to them.
 - **Home Assistant, in:** weather and soil sensors, presence.
 - **Webhooks:** run and alert events with a JSON payload.
 - **MCP server** (`/mcp`, streamable HTTP, bearer token, off until a token is created). Three tiers:

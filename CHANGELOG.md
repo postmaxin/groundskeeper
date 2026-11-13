@@ -7,6 +7,15 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 
 ### Added
 
+- **A live feed for the Home Assistant integration's map card** (#12): `GET /api/ha/stream` (server-sent events,
+  read with an API token) sends the robot's state, last known position, current run, the camera that covers it
+  and the map's version every 5 seconds, and each new position sample in between. It is lighter than
+  `/api/stream` and asks nothing of the robot or Frigate. See Integrations.
+
+## 0.20.0 — 2026-11-12
+
+### Added
+
 - **A stats line under the Cameras tile's video** (#142), refreshed every 2 seconds while it plays, for example
   `640×480 · 15 fps · 1.2 Mbps · 2% loss · RTT 180 ms`. It comes from the video library's own counters in your
   browser and nothing is sent anywhere. It says **weak link** when loss is 5% or more, the picture froze for 10% of
@@ -26,7 +35,7 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
   See Integrations. Not on the MCP server.
 - **Pre-release images for testing** (`ghcr.io/groundskeeper-robot/groundskeeper-dev`): `:edge` after every merge
   and `:nightly` once a night, in their own package so they never replace `:latest` or a release. Settings → This
-  panel shows the channel beside the version, for example `0.19.7 · nightly · 1a756d0`. See the README.
+  panel shows the channel beside the version, for example `0.20.1 · nightly · 1a756d0`. See the README.
 - **A Cameras tile on Live** shows the robot's own cameras (front, left, right, back), one at a time, while the tile
   is open. It switches the cameras on (Control on, never off), plays the stream with Agora's SDK from this panel
   (the panel asks the SDK not to send usage statistics or upload logs, and switches off its remote configuration; a
@@ -110,6 +119,9 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 
 ### Fixed
 
+- **The Metrics switch shows with `PANEL_AUTH=off` too** (#143). Behind a reverse proxy that signs people in, Settings
+  → Access showed only "Sign-in: Off", so metrics could not be switched on (or off again). The switch is now there;
+  the API tokens still are not, as they mean nothing with sign-in off.
 - **Keyboard focus stays put when Live refreshes** (#141). Live redraws its cards every few seconds and the Cameras
   tile redraws on each change, which dropped focus to the page. Focus now stays on the same control (a camera chip,
   Close) or, when it goes away, moves to the one that replaces it (Open to Close, Close to Open).
@@ -168,9 +180,6 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
   goes.** A command the MQTT client did not take (for example while it was reconnecting) was counted as sent and the
   panel carried on as if it had gone. It now raises. The panel also notes its own command before sending it, so the
   robot's echo, which can arrive before the send call returns, is not mistaken for the phone app or another person.
-
-### Fixed
-
 - **Cloud-only: a serial the panel already knows reaches the cloud connection at once** (#91). With no robot address
   set, the card kept saying "waiting for the robot's serial" until the panel restarted.
 
