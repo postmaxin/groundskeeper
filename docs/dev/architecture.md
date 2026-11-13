@@ -387,7 +387,7 @@ Compose stack reads; the stack file itself holds nothing site-specific.
 
 ## API
 
-Reads: `/health` · `/api/status` · `/api/ha/summary` (for an HA integration; `api` versions it) · `/api/stream` (SSE) · `/api/map` · `/api/map/raw` · `/api/plans` · `/api/cfd` ·
+Reads: `/health` · `/api/status` · `/api/ha/summary` (for an HA integration; `api` versions it) · `/api/ha/stream` (SSE for its map card) · `/api/stream` (SSE) · `/api/map` · `/api/map/raw` · `/api/plans` · `/api/cfd` ·
 `/api/snapshot` · `/api/replies` · `/api/commands` · `/api/runs` · `/api/runs/{id}` · `/api/track/points?since=&hours=` ·
 `/api/series?metric=&hours=` · `/api/events` · `/api/stats` · `/api/imagery` · `/api/runs/{id}/points` ·
 `/api/runs/{id}/coverage` · `/api/runs/{id}/plan-feedback?raw=` · `/api/problems?days=&run_id=` · `/api/signal?metric=&network=` · `POST /api/studio/backups/save` · `POST /api/studio/backups/{id}/delete` · `POST /api/studio/backups/{id}/rename` · `GET /api/studio/backups/{id}/preview` · `POST /api/studio/backups/{id}/restore` · `/api/conditions` · `/api/weather/series` · `/api/health` ·

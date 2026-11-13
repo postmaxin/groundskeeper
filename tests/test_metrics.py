@@ -259,6 +259,16 @@ def test_only_a_person_switches_it_and_it_is_not_on_mcp(client):
     assert not mcp_server.allowed("PUT", "/api/settings/metrics_enabled")
 
 
+def test_with_sign_in_off_the_switch_works_and_the_endpoint_follows_it(client, monkeypatch):
+    monkeypatch.setenv("PANEL_AUTH", "off")                    # a proxy signs people in: every caller is a person
+    anon = TestClient(main.app, base_url="http://panel.test")
+    assert anon.get("/api/metrics").status_code == 403         # off by default, as with sign-in on
+    assert anon.put("/api/settings/metrics_enabled", json=True).json() == {"metrics_enabled": True}
+    assert anon.get("/api/metrics").status_code == 200         # /api/ is open with sign-in off, so this is too
+    assert anon.put("/api/settings/metrics_enabled", json=False).status_code == 200
+    assert anon.get("/api/metrics").status_code == 403
+
+
 def test_a_scrape_asks_nobody_and_runs_no_start_check(client, monkeypatch):
     client.store.set_setting("metrics_enabled", True)
 

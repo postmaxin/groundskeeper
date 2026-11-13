@@ -455,6 +455,11 @@ class Store:
         r = self.db.execute("SELECT json FROM versions WHERE kind=? ORDER BY fetched DESC LIMIT 1", (kind,)).fetchone()
         return json.loads(r["json"]) if r else None
 
+    def latest_sha(self, kind: str) -> str | None:
+        """The newest version's sha, without reading any version's JSON."""
+        r = self.db.execute("SELECT sha FROM versions WHERE kind=? ORDER BY fetched DESC LIMIT 1", (kind,)).fetchone()
+        return r["sha"] if r else None
+
     def version(self, vid: int):
         r = self.db.execute("SELECT id, kind, fetched, sha, json FROM versions WHERE id=?", (vid,)).fetchone()
         return {**dict(r), "json": json.loads(r["json"])} if r else None

@@ -38,6 +38,8 @@ All optional. Each is set in Settings and has a Test button.
         - targets: ["192.0.2.10:8425"]               # the panel; add scheme: https behind a reverse proxy
   ```
 
+  With `PANEL_AUTH=off` there are no tokens: scrape without one, and only the proxy keeps others out.
+
   Over plain HTTP the token crosses the network unencrypted. On a shared network, put the panel behind an HTTPS
   reverse proxy and set `scheme: https` in the scrape job.
 
@@ -61,4 +63,7 @@ All optional. Each is set in Settings and has a Test button.
   lawn, the last finished run, the next schedule window, whether the robot is stuck or out of touch, and whether a
   start would go out now, and why not (checked at most every 30 s). It carries no position and no serial number: the
   robot is named by a hash of it. The [Home Assistant integration](https://github.com/Groundskeeper-robot/groundskeeper-ha)
-  reads it.
+  reads it. Its map card follows the robot with `GET /api/ha/stream` (server-sent events): every 5 s the state,
+  the robot's last known position, the current run, the camera that covers it and the map's version, and each new
+  position sample in between. Unlike the summary it carries the robot's position, as `/api/stream` already does for
+  any API token; the integration keeps it out of Home Assistant's history.

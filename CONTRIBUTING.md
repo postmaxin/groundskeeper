@@ -141,7 +141,7 @@ A release normally bumps the last number (0.19.0 → 0.19.1), whatever it holds:
 middle number goes up only when a maintainer decides a release is a big step (a new way of reaching the robot, say,
 or a change people must act on).
 
-1. Bump `__version__` in `app/version.py`.
+1. Bump `__version__` in `app/version.py` and `appVersion` in `deploy/helm/groundskeeper/Chart.yaml`.
 2. In `CHANGELOG.md`, rename `## Unreleased` to `## X.Y.Z — YYYY-MM-DD` and start a new empty `## Unreleased`
    above it.
 3. Commit, then tag and push the tag:

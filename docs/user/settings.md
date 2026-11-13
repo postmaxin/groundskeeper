@@ -53,7 +53,7 @@ someone else on your network cannot claim the panel before you do. Sessions last
     metrics. It works once the **Metrics** switch below is on; until then `/api/metrics` answers 403. Tokens made
     before this option stay full.
   - **Metrics** (Settings → Access → API tokens) is **off** on a new install. Switching it on (only you, signed in,
-    can) serves `GET /api/metrics` in Prometheus's text format; see
+    can; with `PANEL_AUTH=off`, whoever reaches the panel) serves `GET /api/metrics` in Prometheus's text format; see
     [Integrations](#help/integrations). The output has no position (no latitude, longitude, local x/y or RTK
     height), no serial number and no robot label.
 - **Forgot the password?** Run `docker exec groundskeeper python -m app.auth reset` and restart the container.
@@ -66,9 +66,11 @@ someone else on your network cannot claim the panel before you do. Sessions last
 - `/health` stays open for Docker and uptime checks. It reports the version, whether the robot is reachable and
   whether it is busy mowing.
 - **Version** ([This panel](#settings/panel) → Running): a pre-release image says which it is, for example
-  `0.19.7 · nightly · 1a756d0` (the version, the channel, the commit). A release shows only the version and commit.
+  `0.20.1 · nightly · 1a756d0` (the version, the channel, the commit). A release shows only the version and commit.
 - **Proxy that signs people in itself?** `PANEL_AUTH=off` turns the panel's own sign-in off. Never
   do this when anyone else on the network can reach the panel: it would let them start the robot.
+  Access then shows only the **Metrics** switch: there are no API tokens, and `GET /api/metrics`, like the rest of
+  `/api/`, answers anyone who can reach the panel once Metrics is on.
   If the proxy is there for single sign-on, use the panel's own OpenID Connect sign-in instead (below).
 
 ### Single sign-on (OpenID Connect)

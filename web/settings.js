@@ -1069,11 +1069,19 @@ async function authPost(url, body, method = "POST") {
   if (!r.ok) throw new Error((data && data.detail) || String(r.status));
   return data;
 }
+// The Metrics switch, shown with sign-in on (under API tokens) and with PANEL_AUTH=off (there are no tokens then).
+const metricsRow = (d) => srow("Metrics",
+  "Serves /api/metrics for Prometheus: no position, no serial. Off unless you switch it on.",
+  sstate(d.st.metrics_enabled ? AMBER : MUTED, d.st.metrics_enabled ? "ON" : "Off"),
+  sbtn(d.st.metrics_enabled ? "Switch metrics off" : "Switch metrics on",
+       () => saveSetting("metrics_enabled", !d.st.metrics_enabled,
+                         d.st.metrics_enabled ? "Metrics are off." : "Metrics are on."), "btn"));
 function secAccess(d) {
   const a = d.access || {};
   if (a.disabled) {
     return [scard("Sign-in", srow("Off", ["PANEL_AUTH=off is set, so anyone who can reach this panel can use it, robot control included. ",
-                                           "Only for a panel behind a reverse proxy that signs people in."], sstate(CORAL, "Off")))];
+                                           "Only for a panel behind a reverse proxy that signs people in."], sstate(CORAL, "Off"))),
+            scard("Metrics", metricsRow(d))];
   }
   const cur = h("input", { class: "field slim", type: "password", autocomplete: "current-password", placeholder: "Current" });
   const npw = h("input", { class: "field slim", type: "password", autocomplete: "new-password", placeholder: `New (${a.min_password || 8}+ characters)` });
@@ -1120,11 +1128,7 @@ function secAccess(d) {
             mono("Authorization: Bearer <token>"), ". A token can read, and can ask for robot commands while control is on, under the strictest checks: anything unknown blocks a start or resume, and it cannot override. ",
             "It cannot change settings, safety switches or the map. AI assistants use their own token (", slink("#settings/assistant", "AI assistant"), ").",
             " A metrics-only token reads /api/metrics and nothing else.")),
-      srow("Metrics", "Serves /api/metrics for Prometheus: no position, no serial. Off unless you switch it on.",
-        sstate(d.st.metrics_enabled ? AMBER : MUTED, d.st.metrics_enabled ? "ON" : "Off"),
-        sbtn(d.st.metrics_enabled ? "Switch metrics off" : "Switch metrics on",
-             () => saveSetting("metrics_enabled", !d.st.metrics_enabled,
-                               d.st.metrics_enabled ? "Metrics are off." : "Metrics are on."), "btn")),
+      metricsRow(d),
       ...tokens.map((t) => srow(t.scope === "metrics" ? `${t.name} (metrics only)` : t.name,
         `Created ${when(t.created)} · last used ${t.used ? when(t.used) : "never"}`,
         h("span", { class: "row gap" }, mono(`…${t.hint}`), sbtn("Revoke", () => revoke(t))))),
