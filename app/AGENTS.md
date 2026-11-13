@@ -6,6 +6,9 @@ Local rules for the Python side. The top-level `AGENTS.md` comes first.
   `READ_ONLY_COMMANDS` (`commands.py`); `command()` and `write_command()` are called only by
   `control.Controller.send()` and `mapwrite.MapWriter` (`ops.py` wires the writer). `tests/test_guards.py` checks
   this.
+- **BLE** (`ble.py`, ADR 0012) is a second route chosen inside `RobotLink` only, off unless `ble_enabled` is on and an
+  adapter is connected. It carries run commands and reads, never `write_command`, `cmd_vel` or `ble.NEVER_ON_BLE`;
+  the checks run before the route is chosen, and one send takes one route.
 - **Interlocks** are in `control.check` and run on the server for every sender (UI, scheduler, guards, MCP). A new
   one fails closed: unknown or missing state blocks. The reason shown to the user goes through `why.py`.
 - **Writes** to the robot run under `MapWriter.lock`, are read back, compared and put back on a mismatch. A per-id

@@ -1369,6 +1369,7 @@ SETTINGS_DEFAULTS = {
     "webhook_url": None,
     "wifi_survey": "off",
     "robot_video_enabled": False,    # §13: the viewer's browser joins Agora; people only (POST /api/video/token)
+    "ble_enabled": False,            # ADR 0012: the optional Bluetooth route behind RobotLink; needs an adapter too
     "metrics_enabled": False,        # #95: GET /api/metrics (Prometheus); people switch it on, tokens can't
 }
 
@@ -1598,6 +1599,13 @@ async def put_setting(request: Request, key: str, value: Any = Body(None)):
             raise HTTPException(400, "true or false")
         r.store.set_setting(key, value)
         r.store.event("robot_video_switched", "robot video switched ON" if value else "robot video switched off")
+        return {key: value}
+    if key == "ble_enabled":
+        _person(request)                  # a person's session: a token must not open a second route to the robot
+        if not isinstance(value, bool):
+            raise HTTPException(400, "true or false")
+        r.store.set_setting(key, value)
+        r.store.event("ble_switched", "Bluetooth route switched ON" if value else "Bluetooth route switched off")
         return {key: value}
     if key == "metrics_enabled":
         _person(request)                  # a person's session: a scrape token must not be able to open its own door

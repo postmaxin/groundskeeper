@@ -1,0 +1,166 @@
+"""An optional Bluetooth (BLE) transport behind app.link.RobotLink (ADR 0012, fork issue #73, upstream #150).
+
+Off by default, and not a doorway of its own: RobotLink checks every command and read first (the 0002 refusal of
+cmd_vel and the other motor commands, the run-command and read allowlists) and only then picks a route. This module
+sends bytes it is handed and refuses anything RobotLink would never hand it (`allowed`), as a second lock, not the
+first. Map writes are not carried (ADR 0004: their BLE encodings are not captured), nor the cloud-video keep-alive
+commands (NEVER_ON_BLE).
+
+`BleTransport` has the shape of `CloudTransport` as RobotLink uses it: `publish(cmd, payload)` raising
+ConnectionError when it did not go, `state`, `connected` and `takes_commands`; incoming messages are handed to the same
+`on_message(topic, decoded, ts)` the cloud path uses (Ops._from_cloud), with the topic spelled as the cloud spells a
+robot message, so DeviceMSG and replies are handled once, in one place.
+
+The device I/O is a `BleAdapter`, shaped for bleak (BlueZ) but library-agnostic. This PR has none that touches
+Bluetooth: tests use a fake. The bleak adapter is a later PR and needs a robot and a capture (ADR 0012). Framing is
+app/ble_packet.py's; nothing here re-implements it.
+"""
+import abc
+import asyncio
+import json
+import logging
+import threading
+import time
+from collections.abc import Callable
+
+from . import ble_packet
+from .codec import decode
+
+log = logging.getLogger(__name__)
+
+# Commands that are never carried on BLE even when RobotLink would allow them on the cloud:
+#  * the camera-on and keep-awake commands belong to the cloud video path, and the own-echo accounting for them
+#    (recorder.COUNTED_OWN) expects the cloud's echo, which a BLE send would never produce;
+#  * preview_snowbot_area_path is protobuf over BLE in the official app (ADR 0012 / 0004): not captured, so cloud only.
+NEVER_ON_BLE = frozenset({"smart_vision_control", "set_working_state", "preview_snowbot_area_path"})
+WRITE_TIMEOUT_S = 10.0
+
+
+class BleAdapter(abc.ABC):
+    """The device I/O a BleTransport needs: one GATT central link to one robot. Async, as bleak is. There is no real
+    implementation in this PR; the bleak one is a later PR (ADR 0012), written against this and the tests' fake.
+
+    `mtu` is the agreed ATT MTU in bytes (what `ble_packet.encode_message` is given). `is_connected` is True only while
+    a link is up. `write` is one GATT write-without-response of one whole Packet and raises on failure. The callback set
+    by `set_notify_callback` receives the raw bytes of each notification (one Packet) and must be safe to call from
+    the adapter's own thread or loop."""
+
+    @property
+    @abc.abstractmethod
+    def mtu(self) -> int: ...
+
+    @property
+    @abc.abstractmethod
+    def is_connected(self) -> bool: ...
+
+    @abc.abstractmethod
+    async def connect(self, name_prefix: str) -> None:
+        """Find a robot by advertised name prefix and connect, subscribing to notifications."""
+
+    @abc.abstractmethod
+    async def disconnect(self) -> None: ...
+
+    @abc.abstractmethod
+    async def write(self, data: bytes) -> None: ...
+
+    @abc.abstractmethod
+    def set_notify_callback(self, callback: Callable[[bytes], None]) -> None: ...
+
+
+def allowed(cmd: str) -> bool:
+    """What this transport will carry, as a second lock behind RobotLink: a documented read or a run command, never a
+    hard-blocked command, a map write or a NEVER_ON_BLE one."""
+    from . import control, mapwrite
+    from .commands import READ_ONLY_COMMANDS
+    if cmd in control.HARD_BLOCKED or cmd in mapwrite.WRITE_COMMANDS or cmd in NEVER_ON_BLE:
+        return False
+    return cmd in READ_ONLY_COMMANDS or cmd in control.CATALOGUE
+
+
+class BleTransport:
+    takes_commands = True
+
+    def __init__(self, adapter: BleAdapter, on_message: Callable[[str, object, float], None],
+                 sn: Callable[[], str | None], compress: bool = False):
+        self.adapter, self._on_message, self._sn = adapter, on_message, sn
+        self.compress = compress         # whether the module takes zlib: unconfirmed until captured, so off
+        self.published = 0
+        self.error = ""
+        self._reasm = ble_packet.Reassembler()
+        self._rlock = threading.Lock()   # the Reassembler is fed from the adapter's thread
+        self._wlock = threading.Lock()   # one message's chunks are written without another's between them
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._loop.run_forever, name="yarbo-ble", daemon=True)
+        self._thread.start()
+        adapter.set_notify_callback(self._notified)
+
+    # -- state, as RobotLink reads it from the cloud transport ----------------------------------------------------
+    @property
+    def connected(self) -> bool:
+        return bool(self.adapter.is_connected)
+
+    @property
+    def state(self) -> str:
+        return "connected" if self.connected else "disconnected"
+
+    def _run(self, coro, timeout: float = WRITE_TIMEOUT_S):
+        if threading.current_thread() is self._thread:
+            coro.close()
+            raise RuntimeError("BleTransport called from its own loop")
+        return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout)
+
+    def connect(self, name_prefix: str) -> None:
+        try:
+            self._run(self.adapter.connect(name_prefix), 30.0)
+            self.error = ""
+        except Exception as exc:
+            self.error = str(exc)
+            raise
+
+    def close(self) -> None:
+        try:
+            if self.connected:
+                self._run(self.adapter.disconnect())
+        except Exception:
+            log.warning("BLE disconnect failed")
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        self._thread.join(2.0)
+
+    # -- out ---------------------------------------------------------------------------------------------------------
+    def publish(self, cmd: str, payload: dict) -> None:
+        """Only app.link.RobotLink calls this, after its checks. Raises ConnectionError when the message did not all go;
+        it is never sent again (the link does not retry or fall back to the cloud)."""
+        if not allowed(cmd):
+            raise ConnectionError(f"BLE does not carry {cmd}")
+        if not self.connected:
+            raise ConnectionError(f"BLE is {self.state}")
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        try:
+            chunks = ble_packet.encode_message(cmd, body, self.adapter.mtu, self.compress)
+        except ValueError as exc:
+            raise ConnectionError(f"BLE could not frame {cmd}: {exc}") from exc
+        with self._wlock:
+            try:
+                for chunk in chunks:
+                    self._run(self.adapter.write(chunk))
+            except Exception as exc:
+                raise ConnectionError(f"BLE write failed: {exc}") from exc
+        self.published += 1
+
+    # -- in ----------------------------------------------------------------------------------------------------------
+    def _notified(self, raw: bytes) -> None:
+        with self._rlock:
+            msg = self._reasm.feed(raw)
+        if msg is None:
+            return
+        sn = self._sn()
+        if not sn or not msg.topic or "/" in msg.topic:
+            log.warning("BLE message dropped: no serial or an odd topic")
+            return
+        try:
+            self._on_message(f"snowbot/{sn}/device/{msg.topic}", decode(msg.body), time.time())
+        except Exception:
+            log.exception("BLE message handler failed")
+
+    def status(self) -> dict:
+        return {"state": self.state, "error": self.error, "commands_sent": self.published}
