@@ -30,7 +30,9 @@ Add an optional BLE transport, **off by default**, that sits behind `app.link.Ro
 guard, interlock and command check applies unchanged. There is no second doorway.
 
 - It sends only what the cloud path may send: the official run commands, the documented reads, and captured writes.
-  The same `HARD_BLOCKED` and `CATALOGUE` checks run before a BLE write exactly as before a cloud one.
+  Each `RobotLink` entry point keeps its own allowlist, unchanged: `command()` checks `CATALOGUE` and
+  `HARD_BLOCKED`, `write_command()` checks `WRITE_COMMANDS`, and `read()` checks `READ_ONLY_COMMANDS`. They run
+  before a BLE write exactly as before a cloud one, so `CATALOGUE` is not applied to reads or map writes.
 - A command is sent by one route only. The panel never repeats by BLE a command the cloud already sent, or the other
   way round (0011).
 - Using the route needs an explicit setting and a named adapter; with it off the panel behaves as 0007 describes.
