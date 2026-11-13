@@ -64,6 +64,8 @@ def _read_varint(buf: bytes, pos: int):
         pos += 1
         n |= (b & 0x7F) << shift
         if not b & 0x80:
+            if n >> 64:
+                raise PacketError("varint exceeds 64 bits")
             return n, pos
         shift += 7
 

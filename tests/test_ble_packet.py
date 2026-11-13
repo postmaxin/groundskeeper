@@ -202,6 +202,7 @@ GOOD = encode_packet(2, 1, "ab", 300, b"hi")
     bytes.fromhex("0a020802" "12020800" "2a00"),  # packetIndex 0 (indexes are 1-based)
     encode_packet(bp.MAX_PACKETS + 1, 1, "t", 0, b""),
     b"",  # nothing at all
+    bytes.fromhex("0a020801" "12020801" "220b08" + "80" * 9 + "02" "2a00"),  # timestamp 2**64: ten-byte overflow
 ])
 def test_a_malformed_packet_is_rejected(raw):
     with pytest.raises(PacketError):
