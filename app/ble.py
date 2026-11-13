@@ -127,14 +127,26 @@ class BleTransport:
         sn = self._sn()
         if not sn:
             raise ConnectionError("no robot serial to bind the BLE link to")
-        try:
-            self._run(self.adapter.connect(name_prefix), 30.0)
-        except Exception as exc:
-            self.error = str(exc)
-            raise
+        with self._wlock:                # not while a send is in progress
+            try:
+                if self._uncertain:      # an old write may be pending: end that link, and let it settle, first
+                    self._run(self._settle(), 10.0)
+                self._run(self.adapter.connect(name_prefix), 30.0)
+            except Exception as exc:
+                self.error = str(exc)
+                raise
         with self._rlock:
             self._reasm = ble_packet.Reassembler()       # nothing half-received from an earlier link counts
         self._bound_sn, self._uncertain, self.error = sn, False, ""
+
+    async def _settle(self) -> None:
+        """Tear the old link down and give a cancelled write the loop's turns to finish before it is replaced."""
+        await self.adapter.disconnect()
+        for _ in range(5):
+            await asyncio.sleep(0.1)
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        if pending:
+            await asyncio.wait(pending, timeout=5.0)
 
     def close(self) -> None:
         try:

@@ -15,7 +15,7 @@ SN = "YB0000DEMO0001"
 
 
 class FakeBleAdapter(ble.BleAdapter):
-    """Loops every written Packet back through a scripted robot. `replies` maps a topic to the body it answers with."""
+    """Loops every written Packet back through a scripted robot. `replies` maps a request topic to the reply body."""
 
     def __init__(self, mtu=200, connected=True, replies=None):
         self._mtu, self._up, self.replies = mtu, connected, replies or {}
@@ -45,7 +45,8 @@ class FakeBleAdapter(ble.BleAdapter):
         self.writes.append(bytes(data))
         msg = self.heard.feed(data)
         if msg and msg.topic in self.replies:                        # the robot answers, in as many Packets as needed
-            for pkt in ble_packet.encode_message(msg.topic, self.replies[msg.topic], self._mtu):
+            # as the robot does: on data_feedback, with the request's name inside (Recorder._handle matches on that)
+            for pkt in ble_packet.encode_message("data_feedback", self.replies[msg.topic], self._mtu):
                 self._cb(pkt)
 
     def sent_topics(self):
@@ -102,7 +103,8 @@ def test_a_read_goes_over_ble_and_its_reply_reassembles_into_the_normal_message_
     lk, cl, ad, got, _ = rig(replies={"get_map": reply})
     assert lk.read("get_map") == "ble"
     assert len(ad.writes) == 1 and cl.sent == []
-    assert got == [(f"snowbot/{SN}/device/get_map", {"topic": "get_map", "data": {"x": "y" * 1500}})]
+    # the topic and body the recorder resolves a waiting request from (device/data_feedback, body["topic"])
+    assert got == [(f"snowbot/{SN}/device/data_feedback", {"topic": "get_map", "data": {"x": "y" * 1500}})]
 
 
 def test_a_long_command_is_chunked_with_the_codec_at_the_adapters_mtu(rig):
@@ -368,3 +370,33 @@ def test_a_possibly_delivered_pause_still_counts_as_a_persons_takeover(rig, monk
     before = c.last_human_cmd_at
     out = asyncio.run(c.send("pause", wait=False))
     assert out["sent"] is False and out["uncertain"] is True and c.last_human_cmd_at > before
+
+
+def test_a_reconnect_after_a_timeout_tears_the_old_link_down_first(rig, monkeypatch):
+    import asyncio
+    lk, cl, ad, *_ = rig()
+    monkeypatch.setattr(ble, "SEND_TIMEOUT_S", 0.2)
+    order = []
+
+    async def hang(data):
+        try:
+            await asyncio.sleep(30)
+        finally:
+            await asyncio.sleep(0.2)                    # slow to give way once cancelled
+            order.append("write settled")
+
+    real_dis, real_con = ad.disconnect, ad.connect
+
+    async def dis():
+        order.append("disconnect")
+        await real_dis()
+
+    async def con(prefix):
+        order.append("connect")
+        await real_con(prefix)
+
+    ad.write, ad.disconnect, ad.connect = hang, dis, con
+    with pytest.raises(ble.DeliveryUncertain):
+        lk.ble.publish("pause", {})
+    lk.ble.connect("Yarbo-test")
+    assert order == ["disconnect", "write settled", "connect"] and lk.ble_up()
