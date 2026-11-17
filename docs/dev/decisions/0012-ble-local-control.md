@@ -36,6 +36,9 @@ guard, interlock and command check applies unchanged. There is no second doorway
 - A command is sent by one route only. The panel never repeats by BLE a command the cloud already sent, or the other
   way round (0011).
 - Using the route needs an explicit setting and a named adapter; with it off the panel behaves as 0007 describes.
+- A BLE send is awaited on the panel's own event loop (`RobotLink.acommand()` and `aread()`), never run on a
+  thread of its own that the caller blocks on, so a slow Bluetooth write cannot stall the panel (#77). The
+  synchronous `command()` and `read()` are cloud only.
 - No real robot data, keys or pairing secrets in code, docs or tests.
 - No code is written, and none of the framing is trusted, until the framing captures below are done. Map writes
   need the later write captures too.

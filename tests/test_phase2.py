@@ -415,9 +415,9 @@ def test_a_send_that_fails_half_way_still_holds_writes(tmp_path):
     store, cloud, c = make_controller(tmp_path, enabled=True)
     c._state = lambda: {"planning": 0}
 
-    def broken(cmd, payload):
+    async def broken(cmd, payload):
         raise ConnectionError("dropped mid-publish")
-    c.link.command = broken
+    c.link.acommand = broken
     r = run(c.send("start_plan", {"plan_id": 1}, wait=False))
     assert not r["sent"] and c.start_settling()
 

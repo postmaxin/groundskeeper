@@ -165,7 +165,7 @@ class Ops:
         await asyncio.gather(*tasks, return_exceptions=True)
         self.cloud.stop()
         if self.ble is not None:
-            await asyncio.to_thread(self.ble.close)
+            await self.ble.close()
         await self.frigate.close()
         await self.notifier.close()
 

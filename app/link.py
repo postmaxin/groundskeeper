@@ -16,7 +16,12 @@ setting and a transport, and is used only for a run command or a read the cloud 
 carries commands, always wins). The cmd_vel and allowlist checks run before any route is chosen. Map writes never go
 by BLE (ADR 0004: not captured), nor the cloud-video commands (ble.NEVER_ON_BLE). One send takes one route and is
 never repeated on the other, even when it fails; own-echo marks are made per send whatever the route.
+
+Two forms of each send share every check: `command()` and `read()` are synchronous and cloud only (the cloud's publish
+never blocks); `acommand()` and `aread()` are awaitable and may take the BLE route, whose write is awaited on the
+caller's own event loop (never a thread, never a blocked loop). Controller and Recorder use the awaitable forms.
 """
+import asyncio
 import time
 
 from .ble import NEVER_ON_BLE, DeliveryUncertain
@@ -62,16 +67,17 @@ class RobotLink:
     def write_route(self) -> str | None:
         return self._cloud_command_route()       # map writes are cloud only (ADR 0004)
 
-    def _pick(self, cmd: str, reading: bool = False, writing: bool = False):
-        """(route, transport) for one send, chosen once: the cloud when it can carry it, else BLE when it may. None
-        when neither can. Called only after the entry point's checks, so the cmd_vel refusal never depends on it."""
+    def _pick(self, cmd: str, reading: bool = False, writing: bool = False, ble: bool = True):
+        """(route, transport) for one send, chosen once: the cloud when it can carry it, else BLE when it may (and
+        the caller can await it). None when neither can. Called only after the entry point's checks, so the cmd_vel
+        refusal never depends on it."""
         if writing:
             return (ROUTE, self.cloud) if self._cloud_command_route() else (None, None)
         if reading and self.cloud_up():
             return ROUTE, self.cloud
         if not reading and self._cloud_command_route():
             return ROUTE, self.cloud
-        if cmd not in NEVER_ON_BLE and self.ble_up():
+        if ble and cmd not in NEVER_ON_BLE and self.ble_up():
             return ROUTE_BLE, self.ble
         return None, None
 
@@ -81,24 +87,8 @@ class RobotLink:
         return "connected" if self.command_route() else "no route to the robot"
 
     # -- sending ---------------------------------------------------------------------------------------------------
-    def read(self, cmd: str, payload: dict | None = None) -> str:
-        check_read_only(cmd)
-        route, transport = self._pick(cmd, reading=True)
-        if route is None:
-            raise NoRoute(self._why_none())
-        undo = self.mark_sent(cmd)       # before it goes, as for commands: its echo may be handled first
-        try:
-            transport.publish(cmd, payload or {})
-        except DeliveryUncertain:
-            raise                        # it may still arrive: its echo is still ours
-        except BaseException:
-            if callable(undo):
-                undo()
-            raise
-        return route
-
-    def command(self, cmd: str, payload: dict) -> str:
-        """A run command (Controller only). Returns the route it went."""
+    def _command_checks(self, cmd: str, payload: dict) -> None:
+        """The run command's checks, before any route is picked (cmd_vel is refused here, as everywhere)."""
         check_command(cmd)
         from . import control
         if cmd not in control.CATALOGUE:
@@ -107,7 +97,26 @@ class RobotLink:
         on = list(payload) == ["state"] and type(payload["state"]) is int and payload["state"] == 1
         if cmd in ON_ONLY and not on:
             raise NoRoute(f"{cmd} is only {{\"state\": 1}}")
-        return self._send(cmd, payload, writing=False)
+
+    def read(self, cmd: str, payload: dict | None = None) -> str:
+        """A read request, cloud only and synchronous. Returns the route it went."""
+        check_read_only(cmd)
+        return self._send(cmd, payload or {}, reading=True)
+
+    async def aread(self, cmd: str, payload: dict | None = None) -> str:
+        """A read request that may take the BLE route: awaited, so a slow write never stalls the caller's loop."""
+        check_read_only(cmd)
+        return await self._asend(cmd, payload or {}, reading=True)
+
+    def command(self, cmd: str, payload: dict) -> str:
+        """A run command, cloud only and synchronous. Returns the route it went."""
+        self._command_checks(cmd, payload)
+        return self._send(cmd, payload)
+
+    async def acommand(self, cmd: str, payload: dict) -> str:
+        """A run command (Controller only) that may take the BLE route. Returns the route it went."""
+        self._command_checks(cmd, payload)
+        return await self._asend(cmd, payload)
 
     def write_command(self, cmd: str, payload: dict, route: str | None = None) -> str:
         """A captured write (MapWriter only). Returns the route it went. `route` is the write's route so far (MapWriter
@@ -120,22 +129,45 @@ class RobotLink:
             raise NoRoute(f"no {route} route to the robot")
         return self._send(cmd, payload, writing=True)
 
-    def _send(self, cmd: str, payload: dict, writing: bool = False) -> str:
-        route, transport = self._pick(cmd, writing=writing)
+    def _begin(self, cmd: str, reading: bool, writing: bool, ble: bool):
+        route, transport = self._pick(cmd, reading=reading, writing=writing, ble=ble)
         if route is None:
             raise NoRoute(self._why_none())
-        undo = self.mark_sent(cmd)       # before it goes: the echo can be handled before the send call returns
+        return route, transport, self.mark_sent(cmd)     # marked before it goes: the echo can be handled first
+
+    def _sent(self, cmd: str, route: str, reading: bool) -> str:
+        if not reading and cmd not in QUIET_COMMANDS:    # a keep-awake beat every 4 s is not "the last command"
+            self.last_command = {"cmd": cmd, "route": route, "at": time.time()}
+        return route
+
+    def _send(self, cmd: str, payload: dict, reading: bool = False, writing: bool = False) -> str:
+        route, transport, undo = self._begin(cmd, reading, writing, ble=False)
         try:
             transport.publish(cmd, payload)
-        except DeliveryUncertain:
-            raise                        # it may still arrive: its echo is still ours
         except BaseException:
             if callable(undo):
                 undo()                   # it never went, so it is not ours
             raise
-        if cmd not in QUIET_COMMANDS:    # a keep-awake beat every 4 s is not "the last command" (status shows that)
-            self.last_command = {"cmd": cmd, "route": route, "at": time.time()}
-        return route
+        return self._sent(cmd, route, reading)
+
+    async def _asend(self, cmd: str, payload: dict, reading: bool = False) -> str:
+        route, transport, undo = self._begin(cmd, reading, False, ble=True)
+        try:
+            if route == ROUTE_BLE:
+                await transport.publish(cmd, payload)    # awaited on this loop; the cloud's publish never blocks
+            else:
+                transport.publish(cmd, payload)
+        except DeliveryUncertain:
+            raise                        # it may still arrive: its echo is still ours
+        except asyncio.CancelledError:
+            if route != ROUTE_BLE and callable(undo):
+                undo()                   # a cloud publish has no await in it, so a cancel means it never went
+            raise                        # BLE: cancelled mid-write may be part out, so the mark stays (it expires)
+        except BaseException:
+            if callable(undo):
+                undo()                   # it never went, so it is not ours
+            raise
+        return self._sent(cmd, route, reading)
 
     def why_no_writes(self) -> str | None:
         """Why a map or settings write can't go out now (None when it can): the checks before a write ask this."""

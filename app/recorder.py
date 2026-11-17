@@ -409,10 +409,10 @@ class Recorder:
             return self.link.read_route() is not None
         return bool(self.transport and self.transport.connected)
 
-    def _send_read(self, cmd: str, payload: dict | None = None) -> str | None:
-        """Publish a read request through the link (the Yarbo cloud)."""
+    async def _send_read(self, cmd: str, payload: dict | None = None) -> str | None:
+        """Publish a read request through the link (the Yarbo cloud, or BLE: awaited on this loop)."""
         if self.link is not None:
-            route = self.link.read(cmd, payload)
+            route = await self.link.aread(cmd, payload)
         else:
             self.transport.request(cmd, payload)
             route = "demo"
@@ -429,7 +429,7 @@ class Recorder:
             self._pending.setdefault(n, []).append(fut)
         self._sent[cmd] = time.time()
         try:
-            self._send_read(cmd, payload)
+            await self._send_read(cmd, payload)
             return await asyncio.wait_for(fut, timeout)
         finally:
             for n in names:
@@ -1098,7 +1098,7 @@ class Recorder:
         s[f"gap_s_{k}"] += gap
         s[f"gap_max_{k}"] = max(s[f"gap_max_{k}"], gap)
 
-    def _poll_wifi(self, now: float) -> None:
+    async def _poll_wifi(self, now: float) -> None:
         """While a surveyed run moves: ask for the Wi-Fi list every WIFI_POLL_S, never with an ask still out (a slow
         robot is not given more scans to do), and count the moving time the test is judged on."""
         if not self._surveying():
@@ -1123,10 +1123,14 @@ class Recorder:
                 and now - self._wifi_answer_at >= WIFI_DUP_S):
             try:
                 self._sent["get_wifi_list"] = self._wifi_asked = now
-                self._send_read("get_wifi_list")
+                # Waiting is set before the send: over BLE the send is awaited, and the answer can be handled
+                # before it returns (as with a request's future); a send that fails takes it back.
                 self._wifi_waiting = (now, self.t.get("x"), self.t.get("y"))
                 s["asked"] += 1
+                await self._send_read("get_wifi_list")
             except Exception as exc:
+                self._wifi_waiting = None
+                s["asked"] -= 1
                 log.warning("Wi-Fi list request failed: %s", exc)
 
     def _on_wifi(self, data: dict, ts: float) -> None:
@@ -1251,7 +1255,7 @@ class Recorder:
                     self._plan_asked, self._plan_due = now, False
                     try:
                         self._sent["get_plan_feedback"] = now
-                        self._send_read("get_plan_feedback")
+                        await self._send_read("get_plan_feedback")
                     except Exception as exc:
                         log.warning("plan status request failed: %s", exc)
             if plan_flags_active(self.t) and self._plan_asked and now - max(self.plan_at, self.activity_at) > 300:
@@ -1262,7 +1266,7 @@ class Recorder:
             elif self.plan_at > self.activity_at:
                 self._plan_silent = False
             try:
-                self._poll_wifi(now)
+                await self._poll_wifi(now)
             except Exception:
                 log.exception("Wi-Fi survey poll failed")
             interval = self.cfg.poll_active_s if self.run_id else self.cfg.poll_idle_s
@@ -1271,7 +1275,7 @@ class Recorder:
                 self.last_poll_at = now
                 try:
                     self._sent["get_device_msg"] = now
-                    self._send_read("get_device_msg")
+                    await self._send_read("get_device_msg")
                 except Exception as exc:
                     log.warning("poll failed: %s", exc)
 
