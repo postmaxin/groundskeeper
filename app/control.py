@@ -455,7 +455,7 @@ class Controller:
                 fut = self._expect(cmd)
                 if cmd in ("start_plan", "resume"):
                     self.start_out = {"cmd": cmd, "at": time.time()}   # before the send: a send that fails half-way holds too
-                route = self.link.command(cmd, payload)
+                route = await self.link.acommand(cmd, payload)
                 # A run-neutral command (RUN_NEUTRAL) must not look like a person taking over (the guards,
                 # ops._people_cmd_at, would stop retrying a pause or dock that didn't take).
                 if actor != "guard" and cmd not in RUN_NEUTRAL:

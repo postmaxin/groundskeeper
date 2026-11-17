@@ -38,9 +38,15 @@ def reply(*nets, state=0):
             "data": {"wifi_list": [{"wifi_name": n, "signal": str(s), "security": "WPA2", "saved": sv} for n, s, sv in nets]}}
 
 
+def poll(r, now):
+    asyncio.run(r._poll_wifi(now))       # async since the send is awaited (it may go by BLE)
+
+
 def tick(r, t0, t1):
-    for now in range(int(t0), int(t1)):
-        r._poll_wifi(float(now))
+    async def go():
+        for now in range(int(t0), int(t1)):
+            await r._poll_wifi(float(now))
+    asyncio.run(go())
 
 
 def test_get_wifi_list_is_an_allowed_read():
@@ -51,13 +57,13 @@ def test_no_polling_when_off_between_runs_or_parked(tmp_path):
     st = Store(str(tmp_path))
     r = bare(st, run_id=None)
     st.set_setting("wifi_survey", "on")
-    r._poll_wifi(1000.0)                                            # no run
+    poll(r, 1000.0)                                            # no run
     r.run_id = 1
     r.activity = "charging_break"
-    r._poll_wifi(1001.0)                                            # parked mid-plan
+    poll(r, 1001.0)                                            # parked mid-plan
     r.activity = "mowing"
     st.set_setting("wifi_survey", "off")
-    r._poll_wifi(1002.0)
+    poll(r, 1002.0)
     assert r.transport.sent == [] and r.wifi_survey is None
 
 

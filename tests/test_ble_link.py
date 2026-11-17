@@ -1,6 +1,8 @@
 """The optional BLE route behind RobotLink (ADR 0012): off unless the setting AND a connected adapter are there, only
 run commands and reads, never a map write, cmd_vel or the cloud-video commands, one route per send. A fake adapter
 stands in for the device and a scripted robot answers through it: no Bluetooth, no robot, synthetic data."""
+import asyncio
+import functools
 import json
 import threading
 
@@ -12,6 +14,14 @@ from app.link import NoRoute, RobotLink
 from app.recorder import COUNTED_OWN
 
 SN = "YB0000DEMO0001"
+
+
+def arun(fn):
+    """Run an async test body on its own event loop (the repo's tests use asyncio.run, not a plugin)."""
+    @functools.wraps(fn)
+    def wrapper(*a, **k):
+        return asyncio.run(fn(*a, **k))
+    return wrapper
 
 
 class FakeBleAdapter(ble.BleAdapter):
@@ -74,13 +84,13 @@ class Rec:
 def rig():
     made = []
 
-    def make(cloud="signed out", enabled=True, connected=True, replies=None, adapter=True):
+    async def make(cloud="signed out", enabled=True, connected=True, replies=None, adapter=True):
         got, marked = [], []
         ad = FakeBleAdapter(connected=connected, replies=replies)
         tr = ble.BleTransport(ad, lambda t, d, ts: got.append((t, d)), lambda: SN) if adapter else None
         made.append(tr)
         if tr and connected:
-            tr.connect("Yarbo-test")                  # binds the link to SN, as Ops will
+            await tr.connect("Yarbo-test")            # binds the link to SN, as Ops will
         cl = FakeCloud(cloud)
         lk = RobotLink(Rec(), cl, None, mark_sent=marked.append, ble=tr, ble_enabled=lambda: enabled)
         return lk, cl, ad, got, marked
@@ -88,62 +98,75 @@ def rig():
     yield make
     for t in made:
         if t:
-            t.close()
+            asyncio.run(t.close())
 
 
-def test_a_run_command_goes_over_ble_when_enabled_and_connected(rig):
-    lk, cl, ad, got, marked = rig()
-    assert lk.command("pause", {}) == "ble"
+@arun
+async def test_a_run_command_goes_over_ble_when_enabled_and_connected(rig):
+    lk, cl, ad, got, marked = await rig()
+    assert await lk.acommand("pause", {}) == "ble"
     assert ad.sent_topics() == [("pause", {})] and cl.sent == [] and marked == ["pause"]
     assert lk.last_command["route"] == "ble" and lk.state == "connected" and lk.status()["ble"] is True
 
 
-def test_a_read_goes_over_ble_and_its_reply_reassembles_into_the_normal_message_path(rig):
+@arun
+async def test_a_read_goes_over_ble_and_its_reply_reassembles_into_the_normal_message_path(rig):
     reply = json.dumps({"topic": "get_map", "data": {"x": "y" * 1500}}).encode()      # many Packets at this MTU
-    lk, cl, ad, got, _ = rig(replies={"get_map": reply})
-    assert lk.read("get_map") == "ble"
+    lk, cl, ad, got, _ = await rig(replies={"get_map": reply})
+    assert await lk.aread("get_map") == "ble"
     assert len(ad.writes) == 1 and cl.sent == []
     # the topic and body the recorder resolves a waiting request from (device/data_feedback, body["topic"])
     assert got == [(f"snowbot/{SN}/device/data_feedback", {"topic": "get_map", "data": {"x": "y" * 1500}})]
 
 
-def test_a_long_command_is_chunked_with_the_codec_at_the_adapters_mtu(rig):
-    lk, cl, ad, *_ = rig()
+@arun
+async def test_a_long_command_is_chunked_with_the_codec_at_the_adapters_mtu(rig):
+    lk, cl, ad, *_ = await rig()
     ad._mtu = 130                                          # 10 bytes of body per Packet
-    lk.command("start_plan", {"id": 12345, "note": "z" * 50})
+    await lk.acommand("start_plan", {"id": 12345, "note": "z" * 50})
     assert len(ad.writes) > 1 and ad.sent_topics() == [("start_plan", {"id": 12345, "note": "z" * 50})]
 
 
-def test_nothing_goes_by_ble_with_the_setting_off_which_is_the_default(rig):
-    lk, cl, ad, *_ = rig(enabled=False)
-    for send in (lambda: lk.command("pause", {}), lambda: lk.read("get_map")):
+@arun
+async def test_nothing_goes_by_ble_with_the_setting_off_which_is_the_default(rig):
+    lk, cl, ad, *_ = await rig(enabled=False)
+    for send in (lambda: lk.acommand("pause", {}), lambda: lk.aread("get_map")):
         with pytest.raises(NoRoute):
-            send()
+            await send()
     assert ad.writes == [] and lk.read_route() is None and lk.status()["ble"] is False
     plain = RobotLink(Rec(), FakeCloud("signed out"), None)             # no transport at all: the same as before
     assert plain.ble_up() is False and "ble" not in plain.status()
     with pytest.raises(NoRoute):
+        await plain.acommand("pause", {})
+    with pytest.raises(NoRoute):
         plain.command("pause", {})
 
 
-def test_the_setting_alone_is_not_enough(rig):
-    lk, *_ = rig(adapter=False)
+@arun
+async def test_the_setting_alone_is_not_enough(rig):
+    lk, *_ = await rig(adapter=False)
     with pytest.raises(NoRoute):
-        lk.command("pause", {})
-    lk2, cl2, ad2, *_ = rig(connected=False)
+        await lk.acommand("pause", {})
+    lk2, cl2, ad2, *_ = await rig(connected=False)
     with pytest.raises(NoRoute):
-        lk2.read("get_map")
+        await lk2.aread("get_map")
     assert ad2.writes == [] and lk2.ble_up() is False
 
 
-def test_the_setting_must_be_exactly_true(rig):
-    lk, *_ = rig(enabled="yes")
+@arun
+async def test_the_setting_must_be_exactly_true(rig):
+    lk, *_ = await rig(enabled="yes")
     assert lk.ble_up() is False
 
 
 @pytest.mark.parametrize("cmd", sorted(control.HARD_BLOCKED | {"cmd_vel", "cmd_roller"}))
-def test_blocked_commands_are_refused_the_same_with_ble_on(rig, cmd):
-    lk, cl, ad, *_ = rig()
+@arun
+async def test_blocked_commands_are_refused_the_same_with_ble_on(rig, cmd):
+    lk, cl, ad, *_ = await rig()
+    with pytest.raises(ReadOnlyViolation):
+        await lk.acommand(cmd, {})
+    with pytest.raises(ReadOnlyViolation):
+        await lk.aread(cmd)
     for door in (lk.command, lk.write_command):
         with pytest.raises(ReadOnlyViolation):
             door(cmd, {})
@@ -152,16 +175,18 @@ def test_blocked_commands_are_refused_the_same_with_ble_on(rig, cmd):
     assert ad.writes == [] and cl.sent == []
 
 
-def test_the_transport_itself_refuses_what_the_link_would_never_hand_it(rig):
-    lk, cl, ad, *_ = rig()
+@arun
+async def test_the_transport_itself_refuses_what_the_link_would_never_hand_it(rig):
+    lk, cl, ad, *_ = await rig()
     for cmd in ("cmd_vel", "save_nogozone", "smart_vision_control", "preview_snowbot_area_path", "made_up"):
         with pytest.raises(ConnectionError):
-            lk.ble.publish(cmd, {})
+            await lk.ble.publish(cmd, {})
     assert ad.writes == []
 
 
-def test_a_map_write_never_goes_by_ble_even_with_it_on_and_the_cloud_down(rig):
-    lk, cl, ad, *_ = rig(cloud="signed out")
+@arun
+async def test_a_map_write_never_goes_by_ble_even_with_it_on_and_the_cloud_down(rig):
+    lk, cl, ad, *_ = await rig(cloud="signed out")
     assert lk.write_route() is None
     for cmd in sorted(mapwrite.WRITE_COMMANDS):
         with pytest.raises(NoRoute):
@@ -169,8 +194,9 @@ def test_a_map_write_never_goes_by_ble_even_with_it_on_and_the_cloud_down(rig):
     assert ad.writes == [] and cl.sent == [] and lk.why_no_writes()
 
 
-def test_a_map_write_stays_on_the_cloud_when_both_are_up(rig):
-    lk, cl, ad, *_ = rig(cloud="connected")
+@arun
+async def test_a_map_write_stays_on_the_cloud_when_both_are_up(rig):
+    lk, cl, ad, *_ = await rig(cloud="connected")
     assert lk.write_command("save_nogozone", {"id": 1}) == "cloud"
     assert cl.sent == ["save_nogozone"] and ad.writes == []
     assert lk.write_command("save_nogozone", {"id": 1}, route="cloud") == "cloud"
@@ -178,50 +204,62 @@ def test_a_map_write_stays_on_the_cloud_when_both_are_up(rig):
         lk.write_command("save_nogozone", {"id": 1}, route="ble")
 
 
-def test_the_cloud_video_commands_and_the_unencoded_preview_stay_off_ble(rig):
-    lk, cl, ad, *_ = rig()
+@arun
+async def test_the_cloud_video_commands_and_the_unencoded_preview_stay_off_ble(rig):
+    lk, cl, ad, *_ = await rig()
     for cmd in ("smart_vision_control", "set_working_state"):
         with pytest.raises(NoRoute):
-            lk.command(cmd, {"state": 1})
+            await lk.acommand(cmd, {"state": 1})
     with pytest.raises(NoRoute):
-        lk.read("preview_snowbot_area_path")
+        await lk.aread("preview_snowbot_area_path")
     assert ad.writes == []
     # what the own-echo accounting counts, and what only goes as {"state": 1}, can never be sent by BLE
     assert COUNTED_OWN <= ble.NEVER_ON_BLE and link.ON_ONLY <= ble.NEVER_ON_BLE
 
 
-def test_with_both_routes_up_the_cloud_carries_it_and_ble_gets_nothing(rig):
-    lk, cl, ad, _, marked = rig(cloud="connected")
-    assert lk.command("pause", {}) == "cloud" and lk.read("get_map") == "cloud"
+@arun
+async def test_the_synchronous_doors_never_take_the_ble_route(rig):
+    lk, cl, ad, *_ = await rig(cloud="signed out")          # BLE is up, the cloud is not: only the awaitable forms go
+    with pytest.raises(NoRoute):
+        lk.command("pause", {})
+    with pytest.raises(NoRoute):
+        lk.read("get_map")
+    assert ad.writes == []
+
+
+@arun
+async def test_with_both_routes_up_the_cloud_carries_it_and_ble_gets_nothing(rig):
+    lk, cl, ad, _, marked = await rig(cloud="connected")
+    assert await lk.acommand("pause", {}) == "cloud" and await lk.aread("get_map") == "cloud"
     assert cl.sent == ["pause", "get_map"] and ad.writes == [] and marked == ["pause", "get_map"]
 
 
-def test_a_send_that_fails_on_ble_is_not_repeated_on_the_cloud_and_takes_its_mark_back():
+@arun
+async def test_a_send_that_fails_on_ble_is_not_repeated_on_the_cloud_and_takes_its_mark_back():
     undone, ad = [], FakeBleAdapter()
     tr = ble.BleTransport(ad, lambda *a: None, lambda: SN)
-    tr.connect("Yarbo-test")
-    try:
-        cl = FakeCloud("signed out")
-        lk = RobotLink(Rec(), cl, None, mark_sent=lambda c: (lambda: undone.append(c)), ble=tr,
-                       ble_enabled=lambda: True)
-        ad.fail_after = 0
-        with pytest.raises(ConnectionError):
-            lk.command("pause", {})
-        cl.state, cl.connected = "connected", True            # the cloud returns: nothing repeats it by itself
-        assert cl.sent == [] and undone == ["pause"] and lk.last_command is None
-    finally:
-        tr.close()
+    await tr.connect("Yarbo-test")
+    cl = FakeCloud("signed out")
+    lk = RobotLink(Rec(), cl, None, mark_sent=lambda c: (lambda: undone.append(c)), ble=tr, ble_enabled=lambda: True)
+    ad.fail_after = 0
+    with pytest.raises(ConnectionError):
+        await lk.acommand("pause", {})
+    cl.state, cl.connected = "connected", True            # the cloud returns: nothing repeats it by itself
+    assert cl.sent == [] and undone == ["pause"] and lk.last_command is None
+    await tr.close()
 
 
-def test_one_command_is_one_send_with_one_mark_whatever_the_route(rig):
-    lk, cl, ad, _, marked = rig(cloud="signed out")
-    lk.command("pause", {})
-    lk.read("get_device_msg")
+@arun
+async def test_one_command_is_one_send_with_one_mark_whatever_the_route(rig):
+    lk, cl, ad, _, marked = await rig(cloud="signed out")
+    await lk.acommand("pause", {})
+    await lk.aread("get_device_msg")
     assert marked == ["pause", "get_device_msg"] and len(ad.sent_topics()) == 2 and cl.sent == []
 
 
-def test_an_incoming_message_without_a_serial_or_with_junk_is_dropped(rig):
-    lk, cl, ad, got, _ = rig()
+@arun
+async def test_an_incoming_message_without_a_serial_or_with_junk_is_dropped(rig):
+    lk, cl, ad, got, _ = await rig()
     lk.ble._sn = lambda: None
     for pkt in ble_packet.encode_message("get_map", b"{}", 200):
         lk.ble._notified(pkt)
@@ -231,8 +269,6 @@ def test_an_incoming_message_without_a_serial_or_with_junk_is_dropped(rig):
 
 
 def test_the_setting_is_off_by_default_and_switched_on_by_a_person(tmp_path, monkeypatch):
-    import asyncio
-
     from fastapi import HTTPException
     from app import main
     from tests.test_settings_api import fake_request
@@ -245,58 +281,110 @@ def test_the_setting_is_off_by_default_and_switched_on_by_a_person(tmp_path, mon
     assert r.store.setting("ble_enabled") is True
 
 
-def test_the_transport_runs_its_adapter_off_the_callers_thread(rig):
-    lk, cl, ad, *_ = rig()
+@arun
+async def test_the_write_runs_on_the_callers_loop_and_thread_with_no_thread_of_its_own(rig):
+    lk, cl, ad, *_ = await rig()
     seen = []
     orig = ad.write
 
     async def write(data):
-        seen.append(threading.current_thread().name)
+        seen.append((threading.current_thread(), asyncio.get_running_loop()))
         await orig(data)
 
     ad.write = write
-    lk.command("pause", {})
-    assert seen == ["yarbo-ble"]
+    await lk.acommand("pause", {})
+    assert seen == [(threading.current_thread(), asyncio.get_running_loop())]
+    assert not [t for t in threading.enumerate() if t.name == "yarbo-ble"]
 
 
-def test_a_link_made_for_one_robot_is_no_route_once_another_is_selected(rig):
-    lk, cl, ad, got, _ = rig(replies={"get_map": b"{}"})
+@arun
+async def test_a_slow_ble_write_does_not_block_the_event_loop(rig):
+    """The point of #77: while a write is in flight the loop keeps running other tasks."""
+    lk, cl, ad, *_ = await rig()
+    release, started, ticks = asyncio.Event(), asyncio.Event(), []
+    orig = ad.write
+
+    async def slow(data):
+        started.set()
+        await release.wait()
+        await orig(data)
+
+    async def ticker():
+        while True:
+            ticks.append(1)
+            await asyncio.sleep(0.01)
+
+    ad.write = slow
+    tick = asyncio.create_task(ticker())
+    send = asyncio.create_task(lk.acommand("pause", {}))
+    await started.wait()
+    n = len(ticks)
+    await asyncio.sleep(0.15)                                   # the write is still in flight
+    assert not send.done() and len(ticks) >= n + 5              # and the loop kept running other tasks
+    release.set()
+    assert await send == "ble"
+    tick.cancel()
+    assert ad.sent_topics() == [("pause", {})]
+
+
+@arun
+async def test_sends_do_not_interleave_their_chunks(rig):
+    lk, cl, ad, *_ = await rig()
+    ad._mtu = 130                                          # 10 bytes of body per Packet: many writes each
+    real = ad.write
+
+    async def slow(data):
+        await asyncio.sleep(0)                             # a chance to switch tasks between every chunk
+        await real(data)
+
+    ad.write = slow
+    await asyncio.gather(lk.acommand("start_plan", {"id": 1, "note": "a" * 60}),
+                         lk.aread("get_map", {"note": "b" * 60}), lk.acommand("pause", {}))
+    # each message arrives whole: the scripted robot's reassembler would drop a torn one
+    assert sorted(t for t, _ in ad.sent_topics()) == ["get_map", "pause", "start_plan"]
+
+
+@arun
+async def test_a_link_made_for_one_robot_is_no_route_once_another_is_selected(rig):
+    lk, cl, ad, got, _ = await rig(replies={"get_map": b"{}"})
     serial = [SN]
     lk.ble._sn = lambda: serial[0]
-    assert lk.command("pause", {}) == "ble"
+    assert await lk.acommand("pause", {}) == "ble"
     serial[0] = "YB0000DEMO0002"                              # the selection changed; the link did not
     assert lk.ble_up() is False
     with pytest.raises(NoRoute):
-        lk.command("pause", {})
+        await lk.acommand("pause", {})
     n = len(ad.writes)
     for pkt in ble_packet.encode_message("get_map", b"{}", 200):
         lk.ble._notified(pkt)
     assert len(ad.writes) == n and got == []
 
 
-def test_a_timed_out_write_may_have_gone_so_nothing_else_is_sent_until_reconnect(rig, monkeypatch):
-    lk, cl, ad, got, marked = rig()
+@arun
+async def test_a_timed_out_write_may_have_gone_so_nothing_else_is_sent_until_reconnect(rig, monkeypatch):
+    lk, cl, ad, got, marked = await rig()
     monkeypatch.setattr(ble, "SEND_TIMEOUT_S", 0.2)
     started = []
 
     async def hang(data):
         started.append(1)
-        await __import__("asyncio").sleep(30)
+        await asyncio.sleep(30)
 
     real, ad.write = ad.write, hang
     with pytest.raises(ConnectionError, match="may or may not"):
-        lk.command("pause", {})
+        await lk.acommand("pause", {})
     assert started == [1] and lk.ble_up() is False and marked == ["pause"]       # the mark stays: it may arrive
     ad.write = real
     with pytest.raises(NoRoute):
-        lk.command("pause", {})                                # nothing overlaps the one that may still be out
-    lk.ble.connect("Yarbo-test")                               # a fresh link clears it
-    assert lk.command("pause", {}) == "ble"
+        await lk.acommand("pause", {})                         # nothing follows the one that may still be out
+    await lk.ble.connect("Yarbo-test")                         # a fresh link clears it
+    assert await lk.acommand("pause", {}) == "ble"
 
 
-def test_a_compressed_body_over_the_limit_is_dropped_not_inflated_again(rig, monkeypatch):
+@arun
+async def test_a_compressed_body_over_the_limit_is_dropped_not_inflated_again(rig, monkeypatch):
     import zlib
-    lk, cl, ad, got, _ = rig()
+    lk, cl, ad, got, _ = await rig()
     monkeypatch.setattr(ble_packet, "MAX_BODY", 1000)
     bomb = zlib.compress(b"[" + b"0," * 5000 + b"0]")      # inflates past the limit, so it is handed back as is
     for pkt in ble_packet.encode_message("get_map", bomb, 200):
@@ -304,38 +392,27 @@ def test_a_compressed_body_over_the_limit_is_dropped_not_inflated_again(rig, mon
     assert got == []
 
 
-def test_a_send_queued_behind_a_timed_out_one_does_not_follow_it(rig, monkeypatch):
-    import asyncio
-    import time
-    lk, cl, ad, *_ = rig()
+@arun
+async def test_a_send_queued_behind_a_timed_out_one_does_not_follow_it(rig, monkeypatch):
+    lk, cl, ad, *_ = await rig()
     monkeypatch.setattr(ble, "SEND_TIMEOUT_S", 0.3)
-    started, errs = [], []
+    started = []
 
     async def hang(data):
         started.append(1)
         await asyncio.sleep(30)
 
     ad.write = hang
-
-    def send():
-        try:
-            lk.ble.publish("pause", {})
-        except ConnectionError as e:
-            errs.append(type(e).__name__)
-
-    a = threading.Thread(target=send)
-    a.start()
-    time.sleep(0.1)
-    b = threading.Thread(target=send)          # passes the connected check, then waits for the write lock
-    b.start()
-    a.join(5)
-    b.join(5)
-    assert started == [1] and sorted(errs) == ["ConnectionError", "DeliveryUncertain"]
+    a = asyncio.create_task(lk.ble.publish("pause", {}))
+    await asyncio.sleep(0.05)
+    b = asyncio.create_task(lk.ble.publish("pause", {}))       # passes the connected check, then waits for the lock
+    out = await asyncio.gather(a, b, return_exceptions=True)
+    assert started == [1] and sorted(type(e).__name__ for e in out) == ["ConnectionError", "DeliveryUncertain"]
 
 
-def test_the_deadline_covers_the_whole_message_not_each_chunk(rig, monkeypatch):
-    import asyncio
-    lk, cl, ad, *_ = rig()
+@arun
+async def test_the_deadline_covers_the_whole_message_not_each_chunk(rig, monkeypatch):
+    lk, cl, ad, *_ = await rig()
     ad._mtu = 130                                          # 10 bytes of body per Packet: many writes
     monkeypatch.setattr(ble, "SEND_TIMEOUT_S", 0.3)
     real = ad.write
@@ -346,17 +423,50 @@ def test_the_deadline_covers_the_whole_message_not_each_chunk(rig, monkeypatch):
 
     ad.write = slow
     with pytest.raises(ble.DeliveryUncertain):
-        lk.command("start_plan", {"id": 1, "note": "z" * 200})
+        await lk.acommand("start_plan", {"id": 1, "note": "z" * 200})
     assert 1 <= len(ad.writes) < 8 and lk.ble_up() is False
 
 
-def test_a_possibly_delivered_pause_still_counts_as_a_persons_takeover(rig, monkeypatch):
-    import asyncio
+@arun
+async def test_a_send_cancelled_mid_write_keeps_its_mark_and_blocks_the_link(rig):
+    lk, cl, ad, got, marked = await rig()
+    started = asyncio.Event()
+
+    async def hang(data):
+        started.set()
+        await asyncio.sleep(30)
+
+    ad.write = hang
+    t = asyncio.create_task(lk.acommand("pause", {}))
+    await started.wait()
+    t.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await t
+    assert marked == ["pause"] and lk.last_command is None and lk.ble_up() is False
+
+
+@arun
+async def test_a_cloud_send_cancelled_before_it_goes_takes_its_mark_back():
+    undone = []
+    cl = FakeCloud("connected")
+    lk = RobotLink(Rec(), cl, None, mark_sent=lambda c: (lambda: undone.append(c)))
+
+    def cancelled(cmd, payload):
+        raise asyncio.CancelledError()
+
+    cl.publish = cancelled
+    with pytest.raises(asyncio.CancelledError):
+        await lk.acommand("pause", {})
+    assert undone == ["pause"]
+
+
+@arun
+async def test_a_possibly_delivered_pause_still_counts_as_a_persons_takeover(rig, monkeypatch):
     from app.store import Store
     import tempfile
     store = Store(tempfile.mkdtemp())
     store.set_setting("control_enabled", True)
-    lk, cl, ad, *_ = rig()
+    lk, cl, ad, *_ = await rig()
     monkeypatch.setattr(ble, "SEND_TIMEOUT_S", 0.2)
     ad.write = lambda data: asyncio.sleep(30)
 
@@ -368,23 +478,15 @@ def test_a_possibly_delivered_pause_still_counts_as_a_persons_takeover(rig, monk
     c = control.Controller(store, lk, context, lambda cmd: asyncio.get_running_loop().create_future(),
                            lambda: {"planning": 1, "planning_paused": 0})
     before = c.last_human_cmd_at
-    out = asyncio.run(c.send("pause", wait=False))
+    out = await c.send("pause", wait=False)
     assert out["sent"] is False and out["uncertain"] is True and c.last_human_cmd_at > before
 
 
-def test_a_reconnect_after_a_timeout_tears_the_old_link_down_first(rig, monkeypatch):
-    import asyncio
-    lk, cl, ad, *_ = rig()
+@arun
+async def test_a_reconnect_after_a_timeout_tears_the_old_link_down_first(rig, monkeypatch):
+    lk, cl, ad, *_ = await rig()
     monkeypatch.setattr(ble, "SEND_TIMEOUT_S", 0.2)
     order = []
-
-    async def hang(data):
-        try:
-            await asyncio.sleep(30)
-        finally:
-            await asyncio.sleep(0.2)                    # slow to give way once cancelled
-            order.append("write settled")
-
     real_dis, real_con = ad.disconnect, ad.connect
 
     async def dis():
@@ -395,33 +497,8 @@ def test_a_reconnect_after_a_timeout_tears_the_old_link_down_first(rig, monkeypa
         order.append("connect")
         await real_con(prefix)
 
-    ad.write, ad.disconnect, ad.connect = hang, dis, con
+    ad.write, ad.disconnect, ad.connect = lambda data: asyncio.sleep(30), dis, con
     with pytest.raises(ble.DeliveryUncertain):
-        lk.ble.publish("pause", {})
-    lk.ble.connect("Yarbo-test")
-    assert order == ["disconnect", "write settled", "connect"] and lk.ble_up()
-
-
-def test_a_reconnect_is_refused_while_a_cancelled_write_is_still_running(rig, monkeypatch):
-    import asyncio
-    lk, cl, ad, *_ = rig()
-    monkeypatch.setattr(ble, "SEND_TIMEOUT_S", 0.2)
-    stuck = []
-
-    async def hang(data):
-        try:
-            await asyncio.sleep(30)
-        except asyncio.CancelledError:
-            await asyncio.sleep(0.6)                    # slow to give way after the cancel
-            stuck.append(1)
-
-    ad.write = hang
-    real_wait = asyncio.wait
-    monkeypatch.setattr(ble.asyncio, "wait", lambda tasks, timeout=None: real_wait(tasks, timeout=0.3))
-    with pytest.raises(ble.DeliveryUncertain):
-        lk.ble.publish("pause", {})
-    with pytest.raises(ConnectionError, match="has not settled"):
-        lk.ble.connect("Yarbo-test")
-    assert lk.ble_up() is False and stuck == []
-    __import__("time").sleep(0.8)                        # let it end before the rig closes the loop
-    assert stuck == [1]
+        await lk.ble.publish("pause", {})
+    await lk.ble.connect("Yarbo-test")
+    assert order == ["disconnect", "connect"] and lk.ble_up()

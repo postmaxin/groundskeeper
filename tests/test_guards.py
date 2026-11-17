@@ -106,9 +106,10 @@ WRITE_DOOR = {"app/link.py": None, "app/ops.py": {"Ops.__init__"}}
 def test_only_the_controller_sends_commands_through_the_link():
     for p in APP:
         allowed = COMMAND_USES.get(rel(p), set())
-        bad = [(f, n) for f, n in _uses(p, "command") if allowed is not None and f not in allowed]
-        assert not bad, (f"{rel(p)} uses .command at {bad}: only Controller.send sends run "
-                         "commands, through app.link.RobotLink (AGENTS.md → Safety)")
+        for attr in ("command", "acommand"):         # acommand: the awaitable form, which may go by BLE (ADR 0012)
+            bad = [(f, n) for f, n in _uses(p, attr) if allowed is not None and f not in allowed]
+            assert not bad, (f"{rel(p)} uses .{attr} at {bad}: only Controller.send sends run "
+                             "commands, through app.link.RobotLink (AGENTS.md → Safety)")
 
 
 def test_only_the_map_writer_gets_the_write_door():
@@ -128,6 +129,10 @@ def test_the_guard_sees_handoffs_and_lambdas(tmp_path):
                    "    def tick(self):\n"
                    "        MapWriter(self.store, self.link.command)\n", encoding="utf-8")
     assert _uses(bad, "command") == [("Controller.send.<lambda>", 3), ("Ops.tick", 7)]
+    bad.write_text("class Ops:\n"
+                   "    async def tick(self):\n"
+                   "        await self.link.acommand('pause', {})\n", encoding="utf-8")
+    assert _uses(bad, "acommand") == [("Ops.tick", 3)]
 
 
 def test_the_guard_places_defaults_and_decorators_outside_the_function(tmp_path):

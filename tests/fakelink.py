@@ -17,3 +17,6 @@ class FakeLink:
     def command(self, cmd, payload):
         self.t.publish(cmd, payload)
         return self.route
+
+    async def acommand(self, cmd, payload):
+        return self.command(cmd, payload)

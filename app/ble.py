@@ -6,10 +6,11 @@ sends bytes it is handed and refuses anything RobotLink would never hand it (`al
 first. Map writes are not carried (ADR 0004: their BLE encodings are not captured), nor the cloud-video keep-alive
 commands (NEVER_ON_BLE).
 
-`BleTransport` has the shape of `CloudTransport` as RobotLink uses it: `publish(cmd, payload)` raising
-ConnectionError when it did not go, `state`, `connected` and `takes_commands`; incoming messages are handed to the same
-`on_message(topic, decoded, ts)` the cloud path uses (Ops._from_cloud), with the topic spelled as the cloud spells a
-robot message, so DeviceMSG and replies are handled once, in one place.
+`BleTransport` has the shape of `CloudTransport` as RobotLink uses it, except that `publish(cmd, payload)` is a
+coroutine, awaited on the application's own event loop (no thread of its own, so a slow write never stalls the loop),
+raising ConnectionError when it did not go, `state`, `connected` and `takes_commands`; incoming messages are handed
+to the same `on_message(topic, decoded, ts)` the cloud path uses (Ops._from_cloud), with the topic spelled as the
+cloud spells a robot message, so DeviceMSG and replies are handled once, in one place.
 
 The device I/O is a `BleAdapter`, shaped for bleak (BlueZ) but library-agnostic. This PR has none that touches
 Bluetooth: tests use a fake. The bleak adapter is a later PR and needs a robot and a capture (ADR 0012). Framing is
@@ -17,7 +18,6 @@ app/ble_packet.py's; nothing here re-implements it.
 """
 import abc
 import asyncio
-import concurrent.futures
 import json
 import logging
 import threading
@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 #    (recorder.COUNTED_OWN) expects the cloud's echo, which a BLE send would never produce;
 #  * preview_snowbot_area_path is protobuf over BLE in the official app (ADR 0012 / 0004): not captured, so cloud only.
 NEVER_ON_BLE = frozenset({"smart_vision_control", "set_working_state", "preview_snowbot_area_path"})
-SEND_TIMEOUT_S = 5.0     # for all of one message's writes together: the caller waits this long at most
+SEND_TIMEOUT_S = 5.0     # for all of one message's writes together: the awaiting caller waits this long at most
 
 
 class DeliveryUncertain(ConnectionError):
@@ -47,7 +47,8 @@ class BleAdapter(abc.ABC):
     `mtu` is the agreed ATT MTU in bytes (what `ble_packet.encode_message` is given). `is_connected` is True only while
     a link is up. `write` is one GATT write-without-response of one whole Packet and raises on failure. The callback set
     by `set_notify_callback` receives the raw bytes of each notification (one Packet) and must be safe to call from
-    the adapter's own thread or loop."""
+    the adapter's own thread or loop. `connect`, `disconnect` and `write` are awaited on the application's event loop
+    and must give way promptly when cancelled (a timed-out write is cancelled and awaited)."""
 
     @property
     @abc.abstractmethod
@@ -91,13 +92,10 @@ class BleTransport:
         self.published = 0
         self.error = ""
         self._bound_sn: str | None = None    # the robot this link was made for; a different selected serial is no link
-        self._uncertain = False              # a write timed out: it may still be on the air, so no send until reconnect
+        self._uncertain = False              # a write timed out: it may be part on the air, so no send until reconnect
         self._reasm = ble_packet.Reassembler()
         self._rlock = threading.Lock()   # the Reassembler is fed from the adapter's thread
-        self._wlock = threading.Lock()   # one message's chunks are written without another's between them
-        self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._loop.run_forever, name="yarbo-ble", daemon=True)
-        self._thread.start()
+        self._wlock = asyncio.Lock()     # one message's chunks are written without another's between them
         adapter.set_notify_callback(self._notified)
 
     # -- state, as RobotLink reads it from the cloud transport ----------------------------------------------------
@@ -111,57 +109,35 @@ class BleTransport:
     def state(self) -> str:
         return "connected" if self.connected else "disconnected"
 
-    def _run(self, coro, timeout: float):
-        if threading.current_thread() is self._thread:
-            coro.close()
-            raise RuntimeError("BleTransport called from its own loop")
-        fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        try:
-            return fut.result(timeout)
-        except concurrent.futures.TimeoutError:
-            fut.cancel()                 # asks the adapter to stop; whether the bytes went is then unknown
-            raise
-
-    def connect(self, name_prefix: str) -> None:
+    async def connect(self, name_prefix: str) -> None:
         """Connect for the robot selected now (Ops's serial); a later change of serial drops the link to it."""
         sn = self._sn()
         if not sn:
             raise ConnectionError("no robot serial to bind the BLE link to")
-        with self._wlock:                # not while a send is in progress
+        async with self._wlock:          # not while a send is in progress
             try:
-                if self._uncertain:      # an old write may be pending: end that link, and let it settle, first
-                    self._run(self._settle(), 10.0)
-                self._run(self.adapter.connect(name_prefix), 30.0)
+                if self._uncertain:      # an old write may be part out: end that link before making another
+                    await asyncio.wait_for(self.adapter.disconnect(), 10.0)
+                await asyncio.wait_for(self.adapter.connect(name_prefix), 30.0)
             except Exception as exc:
-                self.error = str(exc)
+                self.error = str(exc) or type(exc).__name__
                 raise
         with self._rlock:
             self._reasm = ble_packet.Reassembler()       # nothing half-received from an earlier link counts
         self._bound_sn, self._uncertain, self.error = sn, False, ""
 
-    async def _settle(self) -> None:
-        """Tear the old link down and give a cancelled write the loop's turns to finish before it is replaced."""
-        await self.adapter.disconnect()
-        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-        if pending:
-            _, still = await asyncio.wait(pending, timeout=5.0)
-            if still:
-                raise ConnectionError("an earlier BLE write has not settled; the link stays unusable")
-
-    def close(self) -> None:
+    async def close(self) -> None:
+        self._bound_sn = None
         try:
             if self.adapter.is_connected:
-                self._run(self.adapter.disconnect(), 10.0)
+                await asyncio.wait_for(self.adapter.disconnect(), 10.0)
         except Exception:
             log.warning("BLE disconnect failed")
-        self._bound_sn = None
-        self._loop.call_soon_threadsafe(self._loop.stop)
-        self._thread.join(2.0)
 
     # -- out ---------------------------------------------------------------------------------------------------------
-    def publish(self, cmd: str, payload: dict) -> None:
+    async def publish(self, cmd: str, payload: dict) -> None:
         """Only app.link.RobotLink calls this, after its checks. Raises ConnectionError when the message did not all go;
-        it is never sent again (the link does not retry or fall back to the cloud)."""
+        it is never sent again (the link does not retry or fall back to the cloud). Awaited on the caller's loop."""
         if not allowed(cmd):
             raise ConnectionError(f"BLE does not carry {cmd}")
         if not self.connected:
@@ -171,22 +147,24 @@ class BleTransport:
             chunks = ble_packet.encode_message(cmd, body, self.adapter.mtu, self.compress)
         except ValueError as exc:
             raise ConnectionError(f"BLE could not frame {cmd}: {exc}") from exc
-        with self._wlock:
+        async with self._wlock:
             if not self.connected:       # re-checked: a send queued behind one that timed out must not follow it
                 raise ConnectionError(f"BLE is {self.state}")
-            deadline = time.monotonic() + SEND_TIMEOUT_S
             try:
-                for chunk in chunks:
-                    left = deadline - time.monotonic()
-                    if left <= 0:        # out of time: what went is on the air, the rest never will
-                        raise concurrent.futures.TimeoutError()
-                    self._run(self.adapter.write(chunk), left)
-            except concurrent.futures.TimeoutError as exc:
+                await asyncio.wait_for(self._write_all(chunks), SEND_TIMEOUT_S)   # the whole message, not each chunk
+            except asyncio.CancelledError:
+                self._uncertain = True   # the caller gave up mid-write: part may be out, so nothing follows it
+                raise
+            except TimeoutError as exc:
                 self._uncertain = True   # part or all may be out: no other message follows it on this link
                 raise DeliveryUncertain("BLE write timed out; the message may or may not have been delivered") from exc
             except Exception as exc:
                 raise ConnectionError(f"BLE write failed: {exc}") from exc
         self.published += 1
+
+    async def _write_all(self, chunks: list[bytes]) -> None:
+        for chunk in chunks:
+            await self.adapter.write(chunk)
 
     # -- in ----------------------------------------------------------------------------------------------------------
     def _notified(self, raw: bytes) -> None:
