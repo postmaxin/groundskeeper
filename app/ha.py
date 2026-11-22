@@ -186,7 +186,9 @@ def summary(status: dict, ops_status: dict, last_run: dict | None, upcoming: lis
 # position, as /api/stream already does for an API token; the integration sends it only to its card, never into an
 # entity, so Home Assistant's recorder does not keep a history of it. Bump LIVE_API as for SUMMARY_API.
 LIVE_API = 1
-POSE_KEYS = ("t", "lon", "lat", "heading")
+# pitch, roll (degrees) and speed (m/s) are for the card's 3D robot, which leans with the ground and keeps moving
+# between samples, as the panel's own 3D view does (web/robot3d.js).
+POSE_KEYS = ("t", "lon", "lat", "heading", "pitch", "roll", "speed")
 
 
 def pose(p: dict | None) -> dict | None:
@@ -196,13 +198,24 @@ def pose(p: dict | None) -> dict | None:
     return {k: p.get(k) for k in POSE_KEYS}
 
 
+def _status_pose(robot: dict) -> dict | None:
+    """The status's position with the tilt and speed the status keeps beside it (speed there is [left, right]), in
+    the shape of a position sample (recorder: the mean of the two wheels)."""
+    pos = robot.get("position")
+    if not pos:
+        return None
+    wheels = [v for v in (robot.get("speed") or []) if isinstance(v, (int, float))]
+    return {**pos, "pitch": robot.get("pitch"), "roll": robot.get("roll"),
+            "speed": round(sum(wheels) / len(wheels), 3) if wheels else None}
+
+
 def live(status: dict, follow: dict | None, map_sha: str | None) -> dict:
     """The state event of /api/ha/stream: the robot's state, its last known position, the current run, which
     camera covers it (Ops.follow_camera) and the map's version."""
     run = status.get("run")
     return {
         "api": LIVE_API, "state": status["state"], "activity": status.get("activity"),
-        "position": pose(status["robot"].get("position")),
+        "position": pose(_status_pose(status["robot"])),
         "run": {"id": run["id"], "distance_m": run.get("distance_m")} if run else None,
         "follow": {"camera": follow.get("camera"), "covered": bool(follow.get("covered"))} if follow else None,
         "map": map_sha,

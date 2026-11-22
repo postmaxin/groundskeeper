@@ -65,5 +65,6 @@ All optional. Each is set in Settings and has a Test button.
   robot is named by a hash of it. The [Home Assistant integration](https://github.com/Groundskeeper-robot/groundskeeper-ha)
   reads it. Its map card follows the robot with `GET /api/ha/stream` (server-sent events): every 5 s the state,
   the robot's last known position, the current run, the camera that covers it and the map's version, and each new
-  position sample in between. Unlike the summary it carries the robot's position, as `/api/stream` already does for
-  any API token; the integration keeps it out of Home Assistant's history.
+  position sample in between (with the robot's heading, pitch, roll and speed, for a 3D view of the robot). Unlike
+  the summary it carries the robot's position, as `/api/stream` already does for any API token; the integration
+  keeps it out of Home Assistant's history.

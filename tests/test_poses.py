@@ -85,3 +85,24 @@ def test_status_position_carries_the_robot_time(tmp_path):
     r = _recorder(tmp_path)
     _pose(r, 1.0, T0 + 300, 1000.0)
     assert r.status()["robot"]["position"]["t"] == T0 + 300
+
+
+# -- ADR 0009: the head is what the last message that named one said, with that message's time --------------------
+def test_the_head_is_dated_by_the_message_that_named_it(tmp_path):
+    r = _recorder(tmp_path)
+    assert r.head_type is None and r.head_at == 0.0
+    r._ingest({"HeadMsg": {"head_type": 1}, "BatteryMSG": {"capacity": 80}}, 1000.0, full=True)
+    assert (r.head_type, r.head_at) == (1, 1000.0)
+    r._ingest({"BatteryMSG": {"capacity": 79}}, 1300.0, full=True)       # a full reply that names no head
+    assert r.t["head_type"] == 1 and r.snapshot_at == 1300.0             # the merged snapshot still says snow blower
+    assert (r.head_type, r.head_at) == (1, 1000.0)                       # the run rules see how old that is
+    r._ingest({"HeadMsg": {"head_type": 5}}, 1310.0, full=False)         # a partial update names the mower
+    assert (r.head_type, r.head_at) == (5, 1310.0)
+
+
+def test_a_head_type_that_is_not_a_whole_number_is_no_head(tmp_path):
+    for i, junk in enumerate(["1", "1.0", "1 x", True, 1.0, None, [1]]):
+        r = _recorder(tmp_path / str(i))
+        r._ingest({"HeadMsg": {"head_type": 1}}, 1000.0, full=True)
+        r._ingest({"HeadMsg": {"head_type": junk}}, 1001.0, full=True)
+        assert (r.head_type, r.head_at) == (None, 1001.0), f"{junk!r} was taken for a head type"

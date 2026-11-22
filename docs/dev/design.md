@@ -306,9 +306,14 @@ A skipped window records why and what would fix it.
 - The area settings editor holds the mower's record, so it is read-only on an area labelled only for other heads
   (a snow blower's driveway) and when the area's labels cannot be read; an unlabelled area stays editable
   (`areasettings.other_head_block`).
-- The start checks and guards do not depend on the head yet: "Lawn dry" and the rain guard apply to a snow head too
-  (#126, #127), and the UI shows the same controls and wording for every head (#134). The direction is
-  [ADR 0009](decisions/0009-head-aware-run-rules.md).
+- Two mowing rules are relaxed for the snow blower, and only for it, while a message has named it within the
+  Robot online limit (`control.snow_blower`; `Recorder.head_type` and `head_at`, kept apart from the merged
+  snapshot, whose head outlives the message it came in): "Lawn dry" is listed but not checked, and the rain guard
+  only notifies
+  ([ADR 0009](decisions/0009-head-aware-run-rules.md)). Every other head, no head and a stale report get the
+  mowing rules. Snow rules of its own are not built (#126). The UI shows the same controls and wording for every
+  head (#134), except the 3D model, which carries the Snow Blower when that is the head (`web/robot3d.js`
+  `r3dHead`: live the attached head, in a replay the run's).
 
 ---
 
@@ -644,12 +649,13 @@ the panel's write support are summarised in [`map-writes.md`](map-writes.md).
 - **Home Assistant integration** (the HACS one, read with an API token, #12): `GET /api/ha/summary` (state, battery,
   lawn, runs, schedule and the start check; no position) and `GET /api/ha/stream`, the live feed for its map card. The
   stream is server-sent events: `state` on connect and every 5 s (`app/ha.py` `live`: `api`, state, activity, last known
-  `position` {t, lon, lat, heading}, current `run` {id, distance_m}, `follow` {camera, covered} from the follow-cam, and
-  `map`, the newest map version's sha) and `pose` with the position samples that came since the last check (a JSON
-  array, one or more, oldest first; each {t, lon, lat, heading}). Both are versioned by `api` (`SUMMARY_API`,
-  `LIVE_API`: bumped only when a field changes meaning or goes away). The stream carries the robot's position, as
-  `/api/stream` does for the same callers; the integration sends it only to its card and never into an entity, so Home
-  Assistant keeps no history of it. A metrics-only token reads neither, and the MCP server has no route to them.
+  `position` {t, lon, lat, heading, pitch, roll, speed}, current `run` {id, distance_m}, `follow` {camera, covered} from
+  the follow-cam, and `map`, the newest map version's sha) and `pose` with the position samples that came since the last
+  check (a JSON array, one or more, oldest first; each {t, lon, lat, heading, pitch, roll, speed}: tilt in degrees and
+  speed in m/s, for the card's 3D robot). Both are versioned by `api` (`SUMMARY_API`, `LIVE_API`: bumped only when a
+  field changes meaning or goes away). The stream carries the robot's position, as `/api/stream` does for the same
+  callers; the integration sends it only to its card and never into an entity, so Home Assistant keeps no history of it.
+  A metrics-only token reads neither, and the MCP server has no route to them.
 - **Home Assistant, in:** weather and soil sensors, presence.
 - **Webhooks:** run and alert events with a JSON payload.
 - **MCP server** (`/mcp`, streamable HTTP, bearer token, off until a token is created). Three tiers:

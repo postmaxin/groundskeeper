@@ -4,7 +4,8 @@
    pitch read positive nose-down and the roll positive left side up. On a ground drawn taller than it is, the tilt is
    drawn taller to match (atan(height x tan(angle))). Zoomed out it keeps a minimum size on screen. It is lit from
    the north-north-west whichever way it faces, as the ground's shading is, and stands on a soft shadow. The model is
-   a Yarbo core with the Lawn Mower Pro; the mower hangs on the core's hitch and lies on the ground under it.
+   a Yarbo core with the Lawn Mower Pro; the mower hangs on the core's hitch and lies on the ground under it. With the
+   Snow Blower as the head (type 1: live the attached head, in a replay the run's) the core carries that instead.
    Live, it takes every position sample the robot sends (the stream's pose events, #35: ~1 a second while the phone
    app is open, else the panel's own reads),
    in the robot's own time order: a late one from the backlog after a dropout is dropped instead of drawn as a detour.
@@ -25,6 +26,7 @@ const R3D = {
   glide: null,        // a replay step: {from, to, t0, ms}
   mode: "live",       // live (the robot now) | replay (a selected run's replay point)
   colour: null,
+  head: null,         // the attached head's type, from the last live status (null: none heard)
   raf: 0, last: 0,
   follow: { on: false, offset: 45, cam: null, turning: false, hands: false, wheelAt: 0 },   // cam: the heading the camera has turned to
 };
@@ -183,7 +185,76 @@ function r3dBuild(THREE) {
   for (const side of [1, -1]) madd(new THREE.BoxGeometry(0.15, 0.012, 0.026), light, side * 0.17, MY + 0.262, 0.128);   // headlights
   madd(slab(0.13, 0.06, 0.055, 0.012, 0.006), black, 0, MY + 0.225, 0.16);  // the sensor box between them
   madd(new THREE.BoxGeometry(0.46, 0.012, 0.014), red, 0, MY + 0.297, 0.062);   // red strip under the front
+
+  // The Snow Blower, drawn instead of the mower when it is the head (r3dHead). It is fixed to the core's front and
+  // does not turn about the hitch. An impeller box on the hitch, the auger housing open to the front between two
+  // side plates with their yellow panels, the guard bar round its top, the wire guard before the mouth, the chute.
+  const snow = new THREE.Group();
+  snow.visible = false;
+  g.add(snow);
+  R3D.snow = snow;
+  const sadd = put(snow, [0, 0, 0]);
+  // A flat plate cut to an outline of [y, z] points, `t` thick across the robot.
+  const cut = (pts, t) => {
+    const o = new THREE.Shape();
+    pts.forEach(([y, z], i) => (i ? o.lineTo(y, z) : o.moveTo(y, z)));
+    const geo = new THREE.ExtrudeGeometry(o, { depth: t, bevelEnabled: false });
+    geo.rotateY(Math.PI / 2);                              // as the belts: the outline's across -> along...
+    geo.rotateX(Math.PI / 2);                              // ...its height -> up, its depth -> across
+    geo.translate(-t / 2, 0, 0);
+    return geo;
+  };
+  // A round bar through [x, y, z] points, the corners eased.
+  const tube = (pts, r) => new THREE.TubeGeometry(
+    new THREE.CatmullRomCurve3(pts.map((q) => new THREE.Vector3(...q)), false, "catmullrom", 0.15), 64, r, 8);
+  const across = (geo) => { geo.rotateZ(Math.PI / 2); return geo; };        // three's cylinders stand along y
+  const SY = 0.36, SZ = 0.17;                                               // the auger's shaft
+  sadd(slab(0.34, 0.22, 0.315, 0.04, 0.012), black, 0, 0.12, 0.08);         // impeller box, on the core's front
+  sadd(new THREE.BoxGeometry(0.64, 0.03, 0.34), tread, 0, 0.225, 0.20);     // housing: the back wall
+  sadd(new THREE.BoxGeometry(0.64, 0.26, 0.02), tread, 0, 0.35, 0.02);      // ...the floor
+  sadd(slab(0.66, 0.24, 0.05, 0.02, 0.01), black, 0, 0.32, 0.345);          // ...the top
+  sadd(slab(0.66, 0.09, 0.10, 0.02, 0.012), black, 0, 0.455, 0.30);         // ...and the beam over the mouth
+  const cheek = cut([[0.19, 0.04], [0.44, 0], [0.51, 0.05], [0.50, 0.33], [0.43, 0.40], [0.19, 0.40]], 0.03);
+  const shield = cut([[0.34, 0.05], [0.45, 0.03], [0.487, 0.07], [0.48, 0.27], [0.42, 0.33], [0.34, 0.27]], 0.012);
+  const flight = across(new THREE.CylinderGeometry(0.13, 0.13, 0.012, 20));
+  for (const side of [1, -1]) {
+    sadd(cheek, black, side * 0.335, 0, 0);                                 // side plates
+    sadd(shield, yellow, side * 0.353, 0, 0);                               // their yellow panels
+    sadd(new THREE.BoxGeometry(0.12, 0.012, 0.03), light, side * 0.2, 0.502, 0.35);     // headlights, in the beam
+    // auger flights, leaning to the middle
+    for (const x of [0.07, 0.17, 0.27]) sadd(flight, graphite, side * x, SY, SZ).rotation.z = side * 0.45;
+  }
+  sadd(across(new THREE.CylinderGeometry(0.02, 0.02, 0.60, 10)), graphite, 0, SY, SZ);
+  sadd(tube([[-0.35, 0.17, 0.30], [-0.35, 0.19, 0.45], [-0.35, 0.47, 0.46], [-0.29, 0.53, 0.46], [0.29, 0.53, 0.46],
+             [0.35, 0.47, 0.46], [0.35, 0.19, 0.45], [0.35, 0.17, 0.30]], 0.019), graphite, 0, 0, 0);   // guard bar
+  const wire = tube([[-0.33, 0.47, 0], [-0.31, 0.57, 0], [-0.22, 0.61, 0],
+                     [0.22, 0.61, 0], [0.31, 0.57, 0], [0.33, 0.47, 0]], 0.006);
+  for (const z of [0.05, 0.10, 0.15]) sadd(wire, graphite, 0, 0, z);        // wire guard before the mouth
+  sadd(slab(0.50, 0.035, 0.025, 0.012, 0.006), yellow, 0, 0.455, 0.40);     // the yellow scraper bar, across the front
+  // The chute: a collar, the column leaning back and the deflector on top, with its yellow joint. Drawn thrown to
+  // the left front; the real one turns, and which reading gives its angle is not known yet (#132).
+  const chute = new THREE.Group();
+  chute.position.set(0, 0.16, 0.39);
+  chute.rotation.z = 0.5;
+  snow.add(chute);
+  const cadd = put(chute, [0, 0, 0]);
+  cadd(upright(new THREE.CylinderGeometry(0.085, 0.10, 0.05, 20)), graphite, 0, 0, 0.025);
+  cadd(slab(0.13, 0.11, 0.27, 0.04, 0.012), black, 0, -0.01, 0.04).rotation.x = 0.22;
+  cadd(slab(0.14, 0.12, 0.13, 0.04, 0.012), black, 0, -0.065, 0.285).rotation.x = -0.6;
+  cadd(across(new THREE.CylinderGeometry(0.036, 0.036, 0.05, 16)), yellow, -0.085, -0.07, 0.30);
+  cadd(across(new THREE.CylinderGeometry(0.02, 0.02, 0.012, 12)), graphite, -0.114, -0.07, 0.30);
   return g;
+}
+
+// Which head is drawn: the Snow Blower when it is the head (type 1), else the mower. Live that is the attached
+// head, in a replay the head the run was driven with.
+function r3dHead() {
+  const t = R3D.mode === "replay" && state.run ? (state.run.info || {}).head_type : R3D.head;
+  const snow = Number(t) === 1;
+  if (!R3D.snow || R3D.snow.visible === snow) return;
+  R3D.snow.visible = snow;
+  R3D.mower.visible = !snow;
+  if (state.map) state.map.triggerRepaint();
 }
 
 function r3dLayer(THREE) {
@@ -204,6 +275,7 @@ function r3dLayer(THREE) {
       this.scene.add(sun);
       this.robot = r3dBuild(THREE);
       this.scene.add(this.robot);
+      r3dHead();
       this.renderer = new THREE.WebGLRenderer({ canvas: map.getCanvas(), context: gl, antialias: true });
       this.renderer.autoClear = false;
     },
@@ -235,7 +307,7 @@ function r3dLayer(THREE) {
 // life the model is drawn (zoomed out), so the ground is read where the drawn parts are.
 function r3dMowerOnGround(map, p, k) {
   const m = R3D.mower;
-  if (!m) return;
+  if (!m || !m.visible) return;                                             // the snow blower is fixed to the core
   const h = (p.heading || 0) * R3D_DEG, [kx, ky] = r3dMetres(p.lat);
   const ground = (x, y) => map.queryTerrainElevation(                       // at x right, y ahead of the robot (m)
     [p.lon + (k * (x * Math.cos(h) + y * Math.sin(h))) / kx, p.lat + (k * (y * Math.cos(h) - x * Math.sin(h))) / ky]);
@@ -310,6 +382,7 @@ async function robot3dSync() {
     });
   }
   r3dDots(mode === "live", mode === "replay");
+  r3dHead();
   if (mode === "replay" && state.run) robot3dReplay(state.run.rows[Math.min(state.replayIndex, state.run.rows.length - 1)]);
   else if (R3D.fix && !R3D.pose) R3D.pose = { ...R3D.fix };
   r3dKick();
@@ -317,6 +390,7 @@ async function robot3dSync() {
 
 // A live status: where the robot is now. Called with status.robot.
 function robot3dLive(robot) {
+  if (robot) { R3D.head = robot.head_type ?? null; r3dHead(); }             // no head heard: back to the mower
   const p = robot && robot.position;
   if (!p) return;
   const sp = (robot.speed || []).filter((v) => typeof v === "number");

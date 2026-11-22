@@ -1,6 +1,6 @@
 # 0009. Run rules depend on the attached head
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-11 (revised before acceptance)
 - **Links:** #126, #127, #128, #136
 
@@ -39,7 +39,13 @@ sensor is on the mower module, so with the snow blower attached the panel's rain
   common, so revisit this once snow runs have been recorded.
 - Each relaxed rule needs a guard test for the snow blower and for a head that does not relax it (leaf blower, none,
   unknown).
-- Becomes Accepted in the PR that builds it (#126, #127), which names the code and tests below.
+- A pause from another guard is not resumed automatically while rain is still reported: auto-resume waits for every
+  guard to clear, a notify-only one included. In a long storm a person resumes it.
+- The head and its age come from the last message that itself named a head, not from the merged snapshot, which
+  keeps an old head for as long as later messages leave it out.
+- Accepted with the PR that built it (#126, #127).
 
 ## Enforced by
-To be added with #126 and #127: `app/control.py` (`check`), `app/ops.py` (guards), `tests/test_guards.py`.
+`app/control.py` (`snow_blower`, `check`), `app/ops.py` (`_guard_tick`), `app/recorder.py` (`head_type`,
+`head_at`), `app/areasettings.py` (`other_head_block`), `tests/test_head_rules.py` (the start and resume checks
+for each head), `tests/test_runs.py` (the rain guard for each head), `tests/test_poses.py` (the head and its age).

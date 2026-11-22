@@ -33,6 +33,8 @@ Each one is checked, in order:
    a minute). Pause, stop and return to dock never wait.
 
 Hard checks can never be overridden. A wet lawn is a soft check you can override by hand; the scheduler cannot.
+With the snow blower attached the lawn is not checked at all, for anyone: the list shows **Lawn dry** as "not for
+the snow blower". Every other check applies to every head.
 Every attempt, sent or refused, is in [Events](#events) with the checks it passed or failed.
 
 ## Guards during a run
@@ -54,6 +56,12 @@ it left before sunset. On a real mow, Return to dock ended the plan; the next sc
 in the morning, once the run rules pass. If a plan stays open instead, every try to go out before sunrise is sent
 home too.
 Resuming after a guard is off unless you switch it on, because resuming spins the blades.
+
+**With the snow blower attached:** sleet and wet snow read as rain, and that is when it is needed. So the rain
+guard only notifies, whatever it is set to (set to ignore, it stays silent), and stopping the run is your call.
+The other guards work as they do for mowing. This is fixed, not a setting, and it applies only while the robot has
+named the snow blower as its head within the last 2 minutes: any other head, no head, or no such report gets the
+mowing rules. With resume after a guard pause switched on, a pause is not resumed while rain is still reported.
 
 ## Map writes
 

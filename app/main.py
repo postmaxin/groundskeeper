@@ -447,7 +447,8 @@ def ha_live_state(request: Request) -> dict:
 async def ha_stream(request: Request):
     """The live feed for a Home Assistant map card (#12, §17), lighter than /api/stream: a `state` event (ha.live: state,
     position, run, follow camera, map version) on connect and every HA_LIVE_STATE_S, and the new position samples
-    as a `pose` event: an array, oldest first, each with only time, longitude, latitude and heading. Nothing is asked of the robot or Frigate."""
+    as a `pose` event: an array, oldest first, each with only time, longitude, latitude, heading, pitch, roll and
+    speed. Nothing is asked of the robot or Frigate."""
     r = rec(request)
 
     async def events():
