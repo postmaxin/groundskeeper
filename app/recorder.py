@@ -80,6 +80,7 @@ STALL_ALERT_S = 180       # progressing but within STALL_RADIUS_M this long = pr
 FIX_HOLD_S = 10           # after waiting for an RTK fix, the fix must hold this long before the wait is over
 STALL_GAP_S = 60          # a longer gap in the data starts a fresh comparison (no stall measured across an outage)
 LOST_CONTACT_S = 120      # no data at all this long during a run = lost contact
+_NO_HEAD = object()       # telemetry.get default: this message names no head
 POSES_KEPT = 64           # position samples kept for /api/stream's pose events (~1 a second while it moves)
 POSE_RESET_S = 30         # nothing newer by the robot's clock this long: take the next sample anyway (its clock was set back)
 WIFI_POLL_S = 30          # Wi-Fi survey: one scan this often while a run is moving
@@ -138,6 +139,9 @@ class Recorder:
 
         self.snapshot: dict = {}
         self.snapshot_at = 0.0          # last full get_device_msg reply
+        # ADR 0009: the head as the last message that itself carried one named it, and when. The snapshot is merged,
+        # so its head_type outlives the message it came in; the run rules read this pair instead.
+        self.head_type, self.head_at = None, 0.0
         self.update_at = 0.0            # last update of any kind
         self.heartbeat: dict = {}
         self.heartbeat_at = 0.0
@@ -624,6 +628,9 @@ class Recorder:
     def _ingest(self, snap: dict, ts: float, full: bool) -> None:
         telemetry.deep_merge(self.snapshot, snap)
         self.update_at = ts
+        head = telemetry.get(snap, "HeadMsg.head_type", _NO_HEAD)
+        if head is not _NO_HEAD:         # anything but a whole number is no head type at all (ADR 0009: fail closed)
+            self.head_type, self.head_at = (head if type(head) is int else None), ts
         if full:
             self.snapshot_at = ts
         t = telemetry.extract(self.snapshot)
@@ -950,6 +957,7 @@ class Recorder:
         self.wifi_survey, self._wifi_waiting = None, None
         self.replies = {}                # its map backups and Wi-Fi lists are not the next robot's
         self.snapshot, self.snapshot_at, self.update_at, self.t = {}, 0.0, 0.0, {}
+        self.head_type, self.head_at = None, 0.0
         self.heartbeat, self.heartbeat_at = {}, 0.0
         self.poses.clear()
         self._pose_rt, self._pose_at = None, 0.0

@@ -10,6 +10,34 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 - **An optional Bluetooth route behind the panel's one doorway** (part of #73): off by default (`ble_enabled`) and
   with no Bluetooth driver yet, so nothing changes for anyone. It is only a second path for run commands and reads
   when the cloud is down; map writes, `cmd_vel` and the camera keep-awake never use it. See ADR 0012.
+- **The 3D robot carries the Snow Blower when that is the head** (part of #134): the auger housing with its guard
+  bar, the wire guard and the chute, in place of the Lawn Mower Pro. Live it follows the attached head; a replay
+  shows the head the run was driven with. The chute is drawn in one place.
+
+## 0.20.2 — 2026-11-13
+
+### Added
+
+- **Tilt and speed in the Home Assistant live feed** (#12): each position in `GET /api/ha/stream` now also carries the
+  robot's pitch, roll and speed, for a 3D view on the integration's map card that leans the robot with the ground
+  and keeps it moving between samples, as the panel's own 3D view does. No new position data: the same samples
+  as before, with three more numbers each.
+
+### Changed
+
+- **Lawn dry is not checked with the snow blower attached** (#126). Falling or fresh snow reads as a wet lawn, so with
+  "Lawn must be dry" on, every snow start was refused. Now the check list shows Lawn dry as "not for the snow
+  blower", for a person, the scheduler, an assistant and an API token alike. Every other start check applies to every
+  head as before.
+- **The rain guard only notifies with the snow blower attached** (#127). Sleet and wet snow read as rain, which sent a
+  snow run home during the storm it was clearing. Now it carries on and you get a notification, whatever the guard is
+  set to (ignore stays silent). Mowing is unchanged.
+- Both apply only while the robot has named the snow blower as its head within the last 2 minutes: any other head, no
+  head, or no such report gets the mowing rules (ADR 0009).
+
+## 0.20.1 — 2026-11-13
+
+### Added
 
 - **A live feed for the Home Assistant integration's map card** (#12): `GET /api/ha/stream` (server-sent events,
   read with an API token) sends the robot's state, last known position, current run, the camera that covers it
@@ -39,7 +67,7 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
   See Integrations. Not on the MCP server.
 - **Pre-release images for testing** (`ghcr.io/groundskeeper-robot/groundskeeper-dev`): `:edge` after every merge
   and `:nightly` once a night, in their own package so they never replace `:latest` or a release. Settings → This
-  panel shows the channel beside the version, for example `0.20.1 · nightly · 1a756d0`. See the README.
+  panel shows the channel beside the version, for example `0.20.3 · nightly · 1a756d0`. See the README.
 - **A Cameras tile on Live** shows the robot's own cameras (front, left, right, back), one at a time, while the tile
   is open. It switches the cameras on (Control on, never off), plays the stream with Agora's SDK from this panel
   (the panel asks the SDK not to send usage statistics or upload logs, and switches off its remote configuration; a

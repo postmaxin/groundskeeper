@@ -520,6 +520,28 @@ def _ops(tmp_path, monkeypatch):
     return Ops(cfg, Recorder(cfg, store, Imagery(env.data_dir), None))
 
 
+def test_the_start_checks_get_the_head_and_the_age_of_the_message_that_named_it(tmp_path, monkeypatch):
+    """ADR 0009: without these two in the context every head gets the mowing rules, silently."""
+    import time
+    o = _ops(tmp_path, monkeypatch)
+    ctx = run(o.context({}))
+    assert ctx["head_type"] is None and ctx["head_age_s"] is None             # nothing heard yet
+    assert not control.snow_blower(ctx["head_type"], ctx["head_age_s"])
+    o.rec._ingest({"HeadMsg": {"head_type": 1}}, time.time() - 30, full=True)
+    ctx = run(o.context({}))
+    assert ctx["head_type"] == 1 and 29 <= ctx["head_age_s"] <= 40
+    assert control.snow_blower(ctx["head_type"], ctx["head_age_s"])
+    o.rec.head_at = time.time() - control.ONLINE_S - 1                           # nothing has named it since
+    ctx = run(o.context({}))
+    assert not control.snow_blower(ctx["head_type"], ctx["head_age_s"])
+    o.rec.head_at = time.time() + 30                                             # the clock went back a little
+    ctx = run(o.context({}))
+    assert ctx["head_age_s"] < 0 and not control.snow_blower(ctx["head_type"], ctx["head_age_s"])
+    monkeypatch.setattr(time, "time", lambda: o.rec.head_at - 0.01)             # by a hundredth of a second
+    ctx = run(o.context({}))
+    assert ctx["head_age_s"] < 0 and not control.snow_blower(ctx["head_type"], ctx["head_age_s"])
+
+
 def test_ops_wires_the_start_and_the_writer_to_each_other(tmp_path, monkeypatch):
     import time
     o = _ops(tmp_path, monkeypatch)

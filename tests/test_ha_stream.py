@@ -17,7 +17,8 @@ def test_the_state_event_has_the_position_run_follow_camera_and_map_version():
     run = {"id": 12, "started": 1.0, "distance_m": 40.2, "points": 9}
     s = ha.live(robot_status(run=run), FOLLOW, "abc123")
     assert s == {"api": ha.LIVE_API, "state": "docked", "activity": "idle",
-                 "position": {"t": 1, "lon": -76.49, "lat": 38.98, "heading": 90},
+                 "position": {"t": 1, "lon": -76.49, "lat": 38.98, "heading": 90, "pitch": None, "roll": None,
+                              "speed": None},
                  "run": {"id": 12, "distance_m": 40.2}, "follow": {"camera": "garden", "covered": True},
                  "map": "abc123"}
 
@@ -30,8 +31,18 @@ def test_no_fix_no_run_no_camera_no_map():
 
 
 def test_a_pose_keeps_only_what_a_map_needs():
-    p = {"seq": 4, "t": 9.5, "lon": 1.0, "lat": 2.0, "heading": 45, "pitch": 3, "roll": 1, "speed": 0.4}
-    assert ha.pose(p) == {"t": 9.5, "lon": 1.0, "lat": 2.0, "heading": 45}
+    p = {"seq": 4, "t": 9.5, "lon": 1.0, "lat": 2.0, "heading": 45, "pitch": 3, "roll": 1, "speed": 0.4, "x": 7.0}
+    assert ha.pose(p) == {"t": 9.5, "lon": 1.0, "lat": 2.0, "heading": 45, "pitch": 3, "roll": 1, "speed": 0.4}
+
+
+def test_the_state_position_carries_tilt_and_the_mean_wheel_speed():
+    status = robot_status()
+    status["robot"].update(pitch=2.5, roll=-1.0, speed=[0.4, 0.6])
+    pos = ha.live(status, None, None)["position"]
+    assert (pos["pitch"], pos["roll"], pos["speed"]) == (2.5, -1.0, 0.5)
+    assert "x" not in pos and "y" not in pos
+    status["robot"].update(speed=[None, None])
+    assert ha.live(status, None, None)["position"]["speed"] is None
 
 
 class FakeRec:
@@ -86,7 +97,8 @@ def test_a_token_gets_a_state_event_then_only_the_new_poses(client):
     events = _events(r.text)
     assert [e[0] for e in events] == ["state", "pose"]
     assert events[0][1]["follow"] == {"camera": "garden", "covered": True}
-    assert events[1][1] == [{"t": 3.0, "lon": 1.2, "lat": 2.2, "heading": 20}]   # after the seq at connect only
+    assert events[1][1] == [{"t": 3.0, "lon": 1.2, "lat": 2.2, "heading": 20, "pitch": 1, "roll": 0,
+                             "speed": 0.3}]   # after the seq at connect only
 
 
 def test_the_stream_is_locked(client):

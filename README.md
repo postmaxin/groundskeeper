@@ -14,6 +14,9 @@ pauses or docks it only when every safety check passes.
 > Yarbo**. It controls a machine with spinning blades: read [Safety](#safety) before switching control on, and use
 > it at your own risk.
 
+**Use Home Assistant?** The [Groundskeeper integration](https://github.com/Groundskeeper-robot/groundskeeper-ha)
+(HACS) shows the robot there through this panel: a mower entity, sensors and a map card.
+
 ![Live: the robot mid-mow on aerial imagery, its track coloured by RTK fix, the plan's progress and the lawn conditions](docs/screenshots/live.png)
 
 | | |
@@ -88,6 +91,9 @@ More: [Integrations](docs/user/integrations.md), [Safety](docs/user/safety.md).
   scheduled start, a "ready to mow" note with a camera snapshot for you to confirm.
 - **Sensors back into Home Assistant:** state, battery, RTK, whether it is mowing, the link, lawn conditions
   and the last run, for your own dashboards and automations.
+- **The Home Assistant integration:** [groundskeeper-ha](https://github.com/Groundskeeper-robot/groundskeeper-ha),
+  installed through HACS, adds a mower entity and a map card that follows the robot. Its Commands option (off by
+  default) lets Home Assistant start, pause and dock, each still passing the panel's checks.
 
 More: [Integrations](docs/user/integrations.md).
 

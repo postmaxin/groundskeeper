@@ -49,7 +49,9 @@ are pink, edge passes violet.
   small 3D model of a Yarbo with the Lawn Mower Pro: it faces where it is heading, leans with its own tilt, stands on
   a soft shadow and glides between updates instead of jumping. The mower in front follows the drawn ground under it
   (the panel works that out from the ground; the robot does not report it), and the beacon on top shows the status
-  colour. A single stray position is ignored; a real jump (the
+  colour. With the Snow Blower attached the model carries that instead (in a replay, the head the run was driven
+  with); its chute is drawn in one place and does not turn with the real one.
+  A single stray position is ignored; a real jump (the
   robot carried, or back after a long gap) is taken once the next update agrees. In a replay it drives the run. **Follow** (in 3D) puts the camera behind the robot and a little to one
   side and keeps it there as the robot turns; right-drag moves the camera round it, and a drag or Fit yard lets go.
 - **Signal:** HaLow strength, RTK fixed share or satellites across the yard (30 days of runs, 2 m cells), or
