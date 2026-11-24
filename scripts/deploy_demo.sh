@@ -22,6 +22,7 @@ BUILD=$(git rev-parse --short HEAD)$(git diff --quiet HEAD -- app catalog web do
 echo "==> building yarbo-panel:demo on $HOST"
 tar --exclude=.venv --exclude=data --exclude=web/vendor --exclude=__pycache__ --exclude=.pytest_cache \
     --exclude=.git -cf - Dockerfile .dockerignore requirements.txt docker app catalog web docs/user CHANGELOG.md \
+    LICENSE THIRD_PARTY_NOTICES.md \
   | ssh "$HOST" "docker build -q --build-arg PANEL_BUILD=$BUILD -t yarbo-panel:demo - >/dev/null && echo built"
 
 echo "==> recreating yarbo-panel-demo"

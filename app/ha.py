@@ -6,6 +6,7 @@ are re-created on every push; they need no HA-side configuration.
 import asyncio
 import hashlib
 import logging
+import math
 import re
 
 from urllib.parse import urlsplit
@@ -193,9 +194,10 @@ POSE_KEYS = ("t", "lon", "lat", "heading", "pitch", "roll", "speed")
 
 def pose(p: dict | None) -> dict | None:
     """A position sample (or the status's position) cut to what a map needs, or None without a fix."""
-    if not p or p.get("lon") is None or p.get("lat") is None:
+    if not p or any(p.get(k) is None or (isinstance(p[k], float) and not math.isfinite(p[k])) for k in ("lon", "lat")):
         return None
-    return {k: p.get(k) for k in POSE_KEYS}
+    # NaN and infinity are not JSON: json.dumps would write them bare and a strict parser would drop the event.
+    return {k: None if isinstance(v, float) and not math.isfinite(v) else v for k in POSE_KEYS for v in [p.get(k)]}
 
 
 def _status_pose(robot: dict) -> dict | None:

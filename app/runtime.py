@@ -6,6 +6,7 @@ keeps reading cfg.frigate_url and gets the live value whichever layer it came fr
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import math
 import os
@@ -27,6 +28,9 @@ ENV_NAMES = {"frigate_url": "FRIGATE_URL",
              "poll_idle_s": "POLL_IDLE_S", "poll_active_s": "POLL_ACTIVE_S", "map_refresh_s": "MAP_REFRESH_S",
              "raw_every_s": "RAW_EVERY_S", "raw_keep_days": "RAW_KEEP_DAYS", "run_idle_end_s": "RUN_IDLE_END_S"}
 SECRETS = {("home_assistant", "token")}
+# A secret that is sent to an address: it only goes to the address it was given with. A change that would point it at
+# another one must bring the secret too, as the test route already asks, so a session cannot redirect a saved token.
+SENT_TO = {("home_assistant", "token"): "url"}
 # DEMO=1 talks to no robot, Home Assistant, Frigate or Tempest: these groups keep the environment's (empty) values.
 DEMO_LOCKED = ("frigate", "home_assistant", "weather")
 # false stored here means "switched off", even when the environment has a value
@@ -103,6 +107,16 @@ def _check(group: str, field: str, v):
             raise ValueError(f"{field} cannot be switched off; leave it blank for the default")
         return False
     return VALIDATE[(group, field)](v)
+
+
+def _same(a, b) -> bool:
+    """Two addresses are the same place (a trailing slash aside)."""
+    return str(a or "").rstrip("/") == str(b or "").rstrip("/")
+
+
+def _same_secret(a, b) -> bool:
+    """Two secrets in effect are the same one. Compared in constant time: a session can set one side."""
+    return isinstance(a, str) and isinstance(b, str) and hmac.compare_digest(a.encode(), b.encode())
 
 
 class Runtime:
@@ -185,9 +199,34 @@ class Runtime:
             out[group] = g
         return out
 
+    def _in_effect(self, group: str, field: str, stored: dict):
+        v = stored.get(field)
+        return v if v is not None else getattr(self.env, GROUPS[group][field])
+
+    def _keep_secrets_home(self, group: str, values: dict, after: dict) -> None:
+        """Refuse a change after which a secret would go to an address it did not go to before, unless this same
+        change gives the secret. The environment's secret may also go to the environment's own address: that pair was
+        set together, outside the panel. Without that, switching the environment's secret off, changing the address
+        and handing the secret back would send it to the new address in two allowed steps."""
+        before = self._stored.get(group, {})
+        for (g, secret), address in SENT_TO.items():
+            if g != group or (isinstance(values.get(secret), str) and values[secret]):
+                continue
+            sent, to = self._in_effect(group, secret, after), self._in_effect(group, address, after)
+            if not sent or not to:
+                continue                                            # nothing would be sent
+            was, went = self._in_effect(group, secret, before), self._in_effect(group, address, before)
+            if _same_secret(sent, was) and _same(to, went):
+                continue                                            # the same secret to the same address as before
+            if after.get(secret) is None and _same(to, getattr(self.env, GROUPS[group][address])):
+                continue                                            # the environment's secret to its own address
+            raise ValueError(f"paste the {secret} as well to use a different address: "
+                             f"the saved one only goes to the saved address")
+
     def set(self, group: str, values: dict) -> list[str]:
         """Apply a partial update to one group. A field left out is unchanged; null clears the user's value (the
-        environment applies again); anything else is validated and stored. Returns the fields that changed."""
+        environment applies again); anything else is validated and stored. A new address for a secret in effect needs
+        the secret in the same change (SENT_TO). Returns the fields that changed."""
         if group not in GROUPS:
             raise KeyError(group)
         if not isinstance(values, dict):
@@ -209,6 +248,7 @@ class Runtime:
             if current.get(field) != clean:
                 current[field] = clean
                 changed.append(field)
+        self._keep_secrets_home(group, values, current)
         if changed:
             if current:
                 self._stored[group] = current
