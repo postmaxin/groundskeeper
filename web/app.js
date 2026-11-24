@@ -1922,6 +1922,13 @@ function queueReplayTrack() {
   requestAnimationFrame(() => { replayDrawQueued = false; drawReplayTrack(); });
 }
 
+// Replay rate for the stretch after one sample: hurried over a track gap or where the robot is known to stand still.
+// A sample with no speed (no wheel-speed telemetry) is unknown, not stationary, so it keeps the chosen rate.
+function replayRate(sp, span, speed) {
+  const still = sp !== null && sp !== undefined && Math.abs(sp) <= 0.03;
+  return span > TRACK_GAP_S || still ? Math.max(speed * 20, 600) : speed;
+}
+
 function playButton() {
   const playing = !!state.replayTimer;
   return h("button", { type: "button", class: "btn pri playbtn", id: "playbtn", "aria-label": playing ? "Pause replay" : "Play replay",
@@ -1990,7 +1997,7 @@ function togglePlay() {
       // Spend the tick sample by sample, each at its own rate, so a hurried stretch ends where the robot moves again.
       while (left > 0 && i < rows.length - 1) {
         const span = rows[i + 1][0] - rows[i][0];
-        const rate = span > TRACK_GAP_S || !(Math.abs(rows[i][spAt] || 0) > 0.03) ? Math.max(speed * 20, 600) : speed;
+        const rate = replayRate(rows[i][spAt], span, speed);
         const need = (rows[i + 1][0] - state.replayT) / rate;
         if (need > left) { state.replayT += left * rate; break; }
         left -= Math.max(0, need);

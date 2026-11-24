@@ -228,6 +228,72 @@ def test_the_saved_token_only_goes_to_the_saved_address(tmp_path):
     assert e.value.status_code == 400 and "secret" not in e.value.detail
 
 
+@pytest.mark.parametrize("where", ["setting", "env"])
+def test_a_new_address_needs_the_token_too(tmp_path, where):
+    """Saving another address without the token would send the saved token there."""
+    if where == "env":
+        req, r, o = fake_request(tmp_path, ha_url="http://192.0.2.10:8123", ha_token="secret")
+    else:
+        req, r, o = fake_request(tmp_path)
+        run(main.put_integration(req, "home_assistant", {"url": "http://192.0.2.10:8123", "token": "secret"}))
+    before, applied = r.store.setting("integrations"), list(r.applied)
+    tries = [{"url": "https://attacker.example"}]
+    if where == "env":                                  # null hands the token back to the environment's: still sent
+        tries.append({"url": "https://attacker.example", "token": None})
+    for values in tries:
+        with pytest.raises(HTTPException) as e:
+            run(main.put_integration(req, "home_assistant", values))
+        assert e.value.status_code == 400 and "token" in e.value.detail and "secret" not in e.value.detail
+    assert req.app.state.cfg.ha_url == "http://192.0.2.10:8123" and req.app.state.cfg.ha_token == "secret"
+    assert r.store.setting("integrations") == before and r.applied == applied       # nothing kept, nothing applied
+    out = run(main.put_integration(req, "home_assistant", {"url": "https://ha.example", "token": "new-secret"}))
+    assert set(out["changed"]) == {"url", "token"} and r.applied[-1] == ("ha", "https://ha.example", "new-secret")
+
+
+@pytest.mark.parametrize("first", [{"token": "other"}, {"token": False}])
+def test_the_environments_token_does_not_follow_a_new_address_in_two_steps(tmp_path, first):
+    """Replacing or switching off the environment's token lets the address change; handing the token back to the
+    environment afterwards must not send it there."""
+    req, r, o = fake_request(tmp_path, ha_url="http://192.0.2.10:8123", ha_token="secret")
+    run(main.put_integration(req, "home_assistant", {"url": "https://attacker.example", **first}))
+    assert req.app.state.cfg.ha_token != "secret"
+    before, applied = r.store.setting("integrations"), list(r.applied)
+    with pytest.raises(HTTPException) as e:
+        run(main.put_integration(req, "home_assistant", {"token": None}))
+    assert e.value.status_code == 400 and "token" in e.value.detail and "secret" not in e.value.detail
+    assert req.app.state.cfg.ha_token != "secret"
+    assert r.store.setting("integrations") == before and r.applied == applied       # nothing kept, nothing applied
+    # back to the environment's pair, address and token together or one after the other: that is where it was sent
+    out = run(main.put_integration(req, "home_assistant", {"url": None, "token": None}))
+    assert set(out["changed"]) == {"url", "token"} and r.applied[-1] == ("ha", "http://192.0.2.10:8123", "secret")
+
+
+def test_the_environments_token_can_be_switched_off_and_on_at_its_own_address(tmp_path):
+    req, r, o = fake_request(tmp_path, ha_url="http://192.0.2.10:8123", ha_token="secret")
+    assert run(main.put_integration(req, "home_assistant", {"token": False}))["changed"] == ["token"]
+    assert run(main.put_integration(req, "home_assistant", {"token": None}))["changed"] == ["token"]
+    assert r.applied[-1] == ("ha", "http://192.0.2.10:8123", "secret")
+
+
+def test_a_new_address_may_drop_the_saved_token(tmp_path):
+    req, r, o = fake_request(tmp_path)
+    run(main.put_integration(req, "home_assistant", {"url": "http://192.0.2.10:8123", "token": "secret"}))
+    out = run(main.put_integration(req, "home_assistant", {"url": "http://192.0.2.11:8123", "token": None}))
+    assert set(out["changed"]) == {"url", "token"} and r.applied[-1] == ("ha", "http://192.0.2.11:8123", None)
+
+
+def test_the_address_may_change_alone_when_no_token_would_follow_it(tmp_path):
+    req, r, o = fake_request(tmp_path)
+    assert run(main.put_integration(req, "home_assistant", {"url": "http://192.0.2.10:8123"}))["changed"] == ["url"]
+    run(main.put_integration(req, "home_assistant", {"token": "secret"}))
+    assert run(main.put_integration(req, "home_assistant", {"url": "http://192.0.2.10:8123/"}))["changed"] == []
+    assert run(main.put_integration(req, "home_assistant", {"url": False}))["changed"] == ["url"]   # off: sent nowhere
+    with pytest.raises(HTTPException):
+        run(main.put_integration(req, "home_assistant", {"url": "http://192.0.2.11:8123"}))         # back on elsewhere
+    off = {"url": "http://192.0.2.11:8123", "token": False}                                        # token off: allowed
+    assert run(main.put_integration(req, "home_assistant", off))["changed"]
+
+
 def test_condition_thresholds_are_validated(tmp_path):
     req, r, _ = fake_request(tmp_path)
     out = run(main.put_setting(req, "conditions", {"lookback_h": 12, "raining_window_s": 300}))

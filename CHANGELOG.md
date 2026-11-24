@@ -10,9 +10,39 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
 - **An optional Bluetooth route behind the panel's one doorway** (part of #73): off by default (`ble_enabled`) and
   with no Bluetooth driver yet, so nothing changes for anyone. It is only a second path for run commands and reads
   when the cloud is down; map writes, `cmd_vel` and the camera keep-awake never use it. See ADR 0012.
+
+## 0.20.3 — 2026-11-23
+
+### Security
+
+- **A new Home Assistant address needs the token again** (GHSA-fw48-fr97-8r8h). Saving only a new address in
+  Settings → Home Assistant sent the saved token to that address. Now the token has to be pasted with it, as Test
+  already asked; switching the address off, or removing the token with it, still works on its own. A token from the
+  `HA_TOKEN` environment variable is covered too: taking it up again in Settings only sends it to the address it had
+  before or to the environment's own, not to one saved in between.
+
+### Added
+
 - **The 3D robot carries the Snow Blower when that is the head** (part of #134): the auger housing with its guard
   bar, the wire guard and the chute, in place of the Lawn Mower Pro. Live it follows the attached head; a replay
   shows the head the run was driven with. The chute is drawn in one place.
+
+### Fixed
+
+- **The Home Assistant live feed no longer sends NaN or infinity** (#164): a position sample whose pitch, roll or speed
+  was not a finite number went into `GET /api/ha/stream` as a bare `NaN` or `Infinity`, which is not JSON and which a
+  strict parser rejects. Those values are now sent as null, like a missing one.
+- **A NaN or infinite longitude or latitude is no fix in the Home Assistant live feed** (#175): the position of such a
+  sample was sent with `"lon": null` or `"lat": null`; now the feed reports no position, like a sample without a fix.
+- **`scripts/deploy.sh` and `scripts/deploy_demo.sh` build again on a remote host** (#165). Their build context left out
+  `LICENSE` and `THIRD_PARTY_NOTICES.md`, which the Dockerfile copies, so the build failed. A test now checks that
+  every local file the Dockerfile copies is in both scripts' file lists.
+- **Replay no longer races through samples that have no speed** (#166). A run recorded without wheel-speed telemetry was
+  fast-forwarded at 600× even with 1× chosen, because a missing speed counted as standing still. Only a known
+  speed near zero (or a gap in the track) is hurried now.
+- **Help text for the snow blower's relaxed rules** (#167): the start-check text now says Lawn dry is skipped only
+  while the robot named the snow blower as its head within the last 2 minutes, and Settings → Run rules says the rain
+  guard stays silent when set to Ignore, as the code does (ADR 0009).
 
 ## 0.20.2 — 2026-11-13
 
@@ -67,7 +97,7 @@ robot card. Before 0.9.0 the panel had no version numbers; those changes are lis
   See Integrations. Not on the MCP server.
 - **Pre-release images for testing** (`ghcr.io/groundskeeper-robot/groundskeeper-dev`): `:edge` after every merge
   and `:nightly` once a night, in their own package so they never replace `:latest` or a release. Settings → This
-  panel shows the channel beside the version, for example `0.20.3 · nightly · 1a756d0`. See the README.
+  panel shows the channel beside the version, for example `0.20.4 · nightly · 1a756d0`. See the README.
 - **A Cameras tile on Live** shows the robot's own cameras (front, left, right, back), one at a time, while the tile
   is open. It switches the cameras on (Control on, never off), plays the stream with Agora's SDK from this panel
   (the panel asks the SDK not to send usage statistics or upload logs, and switches off its remote configuration; a

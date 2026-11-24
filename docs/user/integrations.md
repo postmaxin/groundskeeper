@@ -19,6 +19,7 @@ All optional. Each is set in Settings and has a Test button.
   presence and publishes `sensor.yarbo_panel_*` entities every minute. In Docker, use HA's IP address: `.local`
   names often do not resolve inside a container, and Test says so. Presence is picked from a list: an alarm panel
   (armed away or on vacation = nobody home), `zone.home` (people in it), or a person, tracker or group of them.
+  To change the address, paste the token again with it: the saved token only goes to the address it was saved for.
 - **Notifications** ([Notifications](#settings/alerts)): an HA notify service, picked from the ones your Home
   Assistant has (the companion app's phones first), and/or a webhook. Alerts: robot
   error, stuck, head changed, cloud needs sign-in, maintenance due, schedule confirmations.

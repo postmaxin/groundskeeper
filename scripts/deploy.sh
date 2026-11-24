@@ -48,6 +48,7 @@ fi
 echo "==> building yarbo-panel:$TAG on $HOST"
 tar --exclude=.venv --exclude=data --exclude=web/vendor --exclude=__pycache__ --exclude=.pytest_cache \
     --exclude=.git -cf - Dockerfile .dockerignore requirements.txt docker app catalog web docs/user CHANGELOG.md \
+    LICENSE THIRD_PARTY_NOTICES.md \
   | ssh "$HOST" "docker build -q --build-arg PANEL_BUILD=$BUILD -t yarbo-panel:$TAG -t yarbo-panel:latest - >/dev/null && echo built"
 
 echo "==> stack files"

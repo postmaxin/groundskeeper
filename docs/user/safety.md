@@ -34,7 +34,8 @@ Each one is checked, in order:
 
 Hard checks can never be overridden. A wet lawn is a soft check you can override by hand; the scheduler cannot.
 With the snow blower attached the lawn is not checked at all, for anyone: the list shows **Lawn dry** as "not for
-the snow blower". Every other check applies to every head.
+the snow blower". That holds only while the robot has named the snow blower as its head within the last 2 minutes
+(see Guards during a run). Every other check applies to every head.
 Every attempt, sent or refused, is in [Events](#events) with the checks it passed or failed.
 
 ## Guards during a run
